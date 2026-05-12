@@ -26,7 +26,7 @@ def capture_once(config: AppConfig, adb: AdbClient | None = None) -> CaptureResu
     if config.capture.method != "eufy_native":
         raise ValueError(f"unsupported capture method: {config.capture.method}")
 
-    adb = adb or AdbClient(config.adb_serial)
+    adb = adb or adb_client_from_config(config)
     started = time.monotonic()
     before = newest_android_jpeg(adb, config.android_screenshot_dir)
 
@@ -94,7 +94,7 @@ def build_output_path(config: AppConfig) -> Path:
 
 
 def save_debug_screencap(config: AppConfig, adb: AdbClient | None = None) -> Path:
-    adb = adb or AdbClient(config.adb_serial)
+    adb = adb or adb_client_from_config(config)
     tz = ZoneInfo(config.filenames.timezone)
     relative = datetime.now(tz).strftime("%Y/%m/%d/debug-%Y-%m-%d_%H-%M-%S.png")
     output_path = config.output_dir / relative
@@ -109,3 +109,9 @@ def save_debug_screencap(config: AppConfig, adb: AdbClient | None = None) -> Pat
 
 def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def adb_client_from_config(config: AppConfig) -> AdbClient:
+    if config.adb_connect:
+        AdbClient.connect(config.adb_connect)
+    return AdbClient(config.adb_serial)

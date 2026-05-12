@@ -14,6 +14,13 @@ class DoctorCheck:
 
 def run_doctor(config: AppConfig) -> list[DoctorCheck]:
     checks: list[DoctorCheck] = []
+    if config.adb_connect:
+        try:
+            result = AdbClient.connect(config.adb_connect, timeout=20)
+            checks.append(DoctorCheck("ok", f"ADB connected to {config.adb_connect}: {result.stdout.strip()}"))
+        except Exception as exc:
+            return [DoctorCheck("error", f"ADB cannot connect to {config.adb_connect}: {exc}")]
+
     adb = AdbClient(config.adb_serial)
 
     try:

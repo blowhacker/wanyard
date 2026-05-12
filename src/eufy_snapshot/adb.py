@@ -16,6 +16,22 @@ class AdbClient:
         self.serial = serial
         self.adb_path = adb_path
 
+    @classmethod
+    def connect(cls, target: str, adb_path: str = "adb", timeout: float | None = 30) -> CommandResult:
+        proc = subprocess.run(
+            [adb_path, "connect", target],
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+            text=True,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"adb connect {target} failed ({proc.returncode}): {proc.stderr.strip()}")
+        output = f"{proc.stdout}\n{proc.stderr}".lower()
+        if "unable" in output or "failed" in output or "cannot" in output:
+            raise RuntimeError(f"adb connect {target} failed: {(proc.stdout + proc.stderr).strip()}")
+        return CommandResult(stdout=proc.stdout, stderr=proc.stderr, returncode=proc.returncode)
+
     def run(
         self,
         *args: str,

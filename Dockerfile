@@ -20,6 +20,6 @@ RUN pip install --no-cache-dir .
 
 COPY config.yaml ./config.yaml
 
-EXPOSE 8080
+EXPOSE 8091
 ENTRYPOINT ["eufy-snapshot"]
 CMD ["serve"]

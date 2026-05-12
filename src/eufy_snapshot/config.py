@@ -36,6 +36,7 @@ class FilenameConfig:
 @dataclass(frozen=True)
 class AppConfig:
     adb_serial: str = "emulator-5554"
+    adb_connect: str | None = None
     interval_seconds: float = 30
     output_dir: Path = Path("snapshots")
     camera_name: str = "Front Door"
@@ -62,6 +63,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
 
     base = {
         "adb_serial": data.get("adb_serial", AppConfig.adb_serial),
+        "adb_connect": data.get("adb_connect", AppConfig.adb_connect),
         "interval_seconds": data.get("interval_seconds", AppConfig.interval_seconds),
         "output_dir": Path(data.get("output_dir", AppConfig.output_dir)),
         "camera_name": data.get("camera_name", AppConfig.camera_name),
@@ -122,6 +124,8 @@ def _parse_scalar(value: str) -> Any:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     lowered = value.lower()
+    if lowered in {"null", "none", "~"}:
+        return None
     if lowered == "true":
         return True
     if lowered == "false":
