@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from dataclasses import dataclass
 
 
@@ -17,20 +18,32 @@ class AdbClient:
         self.adb_path = adb_path
 
     @classmethod
-    def connect(cls, target: str, adb_path: str = "adb", timeout: float | None = 30) -> CommandResult:
-        proc = subprocess.run(
-            [adb_path, "connect", target],
-            capture_output=True,
-            check=False,
-            timeout=timeout,
-            text=True,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"adb connect {target} failed ({proc.returncode}): {proc.stderr.strip()}")
-        output = f"{proc.stdout}\n{proc.stderr}".lower()
-        if "unable" in output or "failed" in output or "cannot" in output:
-            raise RuntimeError(f"adb connect {target} failed: {(proc.stdout + proc.stderr).strip()}")
-        return CommandResult(stdout=proc.stdout, stderr=proc.stderr, returncode=proc.returncode)
+    def connect(
+        cls,
+        target: str,
+        adb_path: str = "adb",
+        timeout: float | None = 90,
+        retry_interval: float = 2,
+    ) -> CommandResult:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        last_error = ""
+        while True:
+            proc = subprocess.run(
+                [adb_path, "connect", target],
+                capture_output=True,
+                check=False,
+                timeout=10,
+                text=True,
+            )
+            output = f"{proc.stdout}\n{proc.stderr}"
+            lowered = output.lower()
+            if proc.returncode == 0 and not any(word in lowered for word in ("unable", "failed", "cannot")):
+                return CommandResult(stdout=proc.stdout, stderr=proc.stderr, returncode=proc.returncode)
+
+            last_error = output.strip() or f"exit code {proc.returncode}"
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RuntimeError(f"adb connect {target} failed: {last_error}")
+            time.sleep(retry_interval)
 
     def run(
         self,
