@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from .capture import capture_once, save_debug_screencap
+from .capture import CaptureNotReady, capture_once, save_debug_screencap
 from .config import AppConfig
 from .index import ImageIndex
 
@@ -45,6 +45,8 @@ def run_loop(
             capture_once(config)
             if image_index:
                 image_index.refresh()
+        except CaptureNotReady as exc:
+            LOG.warning("capture not ready: %s", exc)
         except TimeoutError:
             LOG.exception("capture timed out")
             if config.capture.debug_screencap_on_failure:

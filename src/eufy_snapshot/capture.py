@@ -22,11 +22,16 @@ class CaptureResult:
     elapsed_seconds: float
 
 
+class CaptureNotReady(RuntimeError):
+    pass
+
+
 def capture_once(config: AppConfig, adb: AdbClient | None = None) -> CaptureResult:
     if config.capture.method != "eufy_native":
         raise ValueError(f"unsupported capture method: {config.capture.method}")
 
     adb = adb or adb_client_from_config(config)
+    ensure_eufy_installed(config, adb)
     started = time.monotonic()
     before = newest_android_jpeg(adb, config.android_screenshot_dir)
 
@@ -91,6 +96,12 @@ def build_output_path(config: AppConfig) -> Path:
     now = datetime.now(tz)
     relative = now.strftime(config.filenames.pattern)
     return config.output_dir / relative
+
+
+def ensure_eufy_installed(config: AppConfig, adb: AdbClient) -> None:
+    package = adb.shell(f"pm path {config.eufy_package}", check=False).strip()
+    if not package:
+        raise CaptureNotReady(f"Eufy package is not installed: {config.eufy_package}")
 
 
 def save_debug_screencap(config: AppConfig, adb: AdbClient | None = None) -> Path:
