@@ -1,0 +1,23 @@
+adb_serial: emulator-5554
+interval_seconds: 30
+output_dir: snapshots
+camera_name: Front Door
+android_screenshot_dir: /sdcard/Pictures/EufyPicDir
+eufy_package: com.oceanwing.battery.cam
+
+capture:
+  method: eufy_native
+  tap_x: 340
+  tap_y: 2210
+  wait_timeout_seconds: 10
+  debug_screencap_on_failure: true
+
+web:
+  host: 0.0.0.0
+  port: 8091
+  auto_refresh_seconds: 10
+  max_index_items: 10000
+
+filenames:
+  timezone: Europe/London
+  pattern: "%Y/%m/%d/%Y-%m-%d_%H-%M-%S.jpg"

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Eufy Snapshot</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <main class="viewer">
+      <section class="image-stage">
+        <img id="snapshot" alt="Latest Eufy camera snapshot">
+        <div id="empty" class="empty">No snapshots captured yet</div>
+      </section>
+      <aside class="panel">
+        <div class="status-row">
+          <div>
+            <div class="label">Selected</div>
+            <div id="timestamp" class="timestamp">--</div>
+          </div>
+          <div id="refreshStatus" class="refresh">Auto</div>
+        </div>
+        <div class="controls">
+          <button id="prev" title="Previous snapshot" aria-label="Previous snapshot">‹</button>
+          <input id="timeline" type="range" min="0" max="0" value="0" aria-label="Snapshot timeline">
+          <button id="next" title="Next snapshot" aria-label="Next snapshot">›</button>
+        </div>
+        <select id="dateSelect" aria-label="Snapshot date"></select>
+        <div id="thumbs" class="thumbs" aria-label="Recent snapshots"></div>
+      </aside>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

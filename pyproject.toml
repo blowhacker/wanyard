@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eufy-snapshot"
+version = "0.1.0"
+description = "Capture Eufy app snapshots through ADB and serve them over a LAN web viewer."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+]
+
+[project.scripts]
+eufy-snapshot = "eufy_snapshot.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+eufy_snapshot = ["static/*"]
