@@ -966,10 +966,8 @@ function renderHumansGrid() {
   sharedHead.appendChild(pills);
   els.humansPanel.appendChild(sharedHead);
 
-  const perSource = Math.ceil(state.humanCount / Math.max(1, sections.length));
-
   for (const { src, humans: allH } of sections) {
-    const humans = allH.slice(0, perSource);
+    const humans = allH.slice(0, state.humanCount);
     const head = document.createElement("div");
     head.className = "humans-panel-source-label";
     head.textContent = src.name;
