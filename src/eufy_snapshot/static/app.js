@@ -657,7 +657,7 @@ function buildFrame(image, frameCount = 1) {
 
   frame.addEventListener("click", () => {
     const idx = pathIndex.get(image.path);
-    if (idx !== undefined) { state.selected = idx; render(); }
+    if (idx !== undefined) { stopPlay(); state.selected = idx; render(); }
   });
 
   return frame;
@@ -784,6 +784,17 @@ function stepFrame(delta) {
     : Math.max(0, Math.min(n - 1, state.selected + delta));
   render();
 }
+
+// Single click on image → toggle play/pause
+els.snapshot.addEventListener("click", togglePlay);
+
+// Double-click on image → fullscreen (dblclick fires after two clicks,
+// the two single-clicks cancel each other: pause then play → no net change)
+els.snapshot.addEventListener("dblclick", () => {
+  const stage = document.querySelector(".image-stage");
+  if (document.fullscreenElement) document.exitFullscreen();
+  else stage.requestFullscreen().catch(() => {});
+});
 
 els.prev.addEventListener("click", () => { stopPlay(); stepFrame(-1); });
 els.next.addEventListener("click", () => { stopPlay(); stepFrame(+1); });
