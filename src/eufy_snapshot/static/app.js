@@ -27,6 +27,7 @@ const state = {
   detectionEnabled:   false,
   humansOnly:         localStorage.getItem("humansOnly") === "1",
   live:               false,
+  humanCount:         parseInt(localStorage.getItem("humanCount") || "6", 10),
   inPoint:            null,
   outPoint:           null,
   density:            parseInt(localStorage.getItem("density") || "3", 10),
@@ -933,7 +934,7 @@ function renderHumansGrid() {
       .map((img, i) => ({ img, dist: Math.abs(i - state.selected) }))
       .filter(({ img }) => img.has_human && img.boxes?.length && img.source_id === src.id)
       .sort((a, b) => a.dist - b.dist)
-      .slice(0, 3)
+      .slice(0, state.humanCount)
       .sort((a, b) => state.images.indexOf(a.img) - state.images.indexOf(b.img))
       .map(h => h.img);
     if (humans.length) sections.push({ src, humans });
@@ -943,10 +944,35 @@ function renderHumansGrid() {
   els.humansPanel.hidden = false;
   els.humansPanel.innerHTML = "";
 
-  for (const { src, humans } of sections) {
+  // Shared header with count pills
+  const sharedHead = document.createElement("div");
+  sharedHead.className = "humans-panel-head";
+  const sharedLabel = document.createElement("span");
+  sharedLabel.textContent = "RECENT HUMANS";
+  sharedHead.appendChild(sharedLabel);
+  const pills = document.createElement("div");
+  pills.className = "human-count-pills";
+  for (const n of [4, 6, 12]) {
+    const btn = document.createElement("button");
+    btn.className = "human-count-btn" + (state.humanCount === n ? " active" : "");
+    btn.textContent = n;
+    btn.addEventListener("click", () => {
+      state.humanCount = n;
+      localStorage.setItem("humanCount", n);
+      renderHumansGrid();
+    });
+    pills.appendChild(btn);
+  }
+  sharedHead.appendChild(pills);
+  els.humansPanel.appendChild(sharedHead);
+
+  const perSource = Math.ceil(state.humanCount / Math.max(1, sections.length));
+
+  for (const { src, humans: allH } of sections) {
+    const humans = allH.slice(0, perSource);
     const head = document.createElement("div");
-    head.className = "humans-panel-head";
-    head.textContent = src.name.toUpperCase();
+    head.className = "humans-panel-source-label";
+    head.textContent = src.name;
     els.humansPanel.appendChild(head);
 
     const grid = document.createElement("div");
