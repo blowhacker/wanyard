@@ -890,7 +890,11 @@ els.loopBtn.addEventListener("click", () => {
   els.loopBtn.classList.toggle("active", state.loop);
 });
 els.jumpLatest.addEventListener("click", () => {
-  state.selected = state.images.length - 1; render();
+  const srcId = state.images[state.selected]?.source_id;
+  const idx = srcId
+    ? [...state.images].map((img, i) => ({ img, i })).filter(({ img }) => img.source_id === srcId).at(-1)?.i
+    : state.images.length - 1;
+  if (idx != null) { state.selected = idx; render(); }
 });
 
 
