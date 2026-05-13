@@ -51,7 +51,7 @@ class CaptureWorker:
                 t = threading.Thread(
                     target=run_loop,
                     kwargs=dict(config=self.config, image_index=self.image_index,
-                                should_stop=self._stop.is_set, source_db=self.source_db),
+                                should_stop=self._stop.is_set, source_db=None),
                     name="capture-worker",
                     daemon=True,
                 )
