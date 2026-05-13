@@ -252,11 +252,28 @@ function renderFilmstrip() {
       label.title = group.sourceName;
       const framesEl = document.createElement("div");
       framesEl.className = "frames";
+
+      // Pixel-position scrub: x offset → proportional index into full image list
+      framesEl.addEventListener("mousemove", (e) => {
+        if (els.snapshot.style.display === "none") return;
+        const strip = stripState.get(sourceId);
+        if (!strip?.srcImages?.length) return;
+        const rect = framesEl.getBoundingClientRect();
+        const x = framesEl.scrollLeft + (e.clientX - rect.left);
+        const ratio = Math.min(1, Math.max(0, x / Math.max(1, framesEl.scrollWidth)));
+        const img = strip.srcImages[Math.min(strip.srcImages.length - 1, Math.floor(ratio * strip.srcImages.length))];
+        if (img) showPreview(img);
+      });
+      framesEl.addEventListener("mouseleave", restoreSelected);
+
       stripEl.appendChild(label);
       stripEl.appendChild(framesEl);
       els.filmstrip.appendChild(stripEl);
-      stripState.set(sourceId, { paths: [], framesEl, stripEl, lastTs: null });
+      stripState.set(sourceId, { paths: [], framesEl, stripEl, lastTs: null, srcImages: [] });
     }
+
+    // Keep srcImages up to date (all frames for this source, unsampled)
+    stripState.get(sourceId).srcImages = group.items;
 
     const strip = stripState.get(sourceId);
     const sampled = d.sampleMinutes > 0
@@ -339,22 +356,21 @@ function buildFrame(image) {
     if (idx !== undefined) { state.selected = idx; render(); }
   });
 
-  frame.addEventListener("mouseenter", () => {
-    if (els.snapshot.style.display === "none") return;
-    els.snapshot.src = image.url;
-    if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(image.timestamp);
-    if (els.hudSource)    els.hudSource.textContent = image.source_name.toUpperCase();
-  });
-
-  frame.addEventListener("mouseleave", () => {
-    const sel = state.images[state.selected];
-    if (!sel) return;
-    els.snapshot.src = `${sel.url}?t=${encodeURIComponent(sel.timestamp)}`;
-    if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(sel.timestamp);
-    if (els.hudSource)    els.hudSource.textContent = sel.source_name.toUpperCase();
-  });
-
   return frame;
+}
+
+function showPreview(img) {
+  els.snapshot.src = img.url;
+  if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(img.timestamp);
+  if (els.hudSource)    els.hudSource.textContent = img.source_name.toUpperCase();
+}
+
+function restoreSelected() {
+  const sel = state.images[state.selected];
+  if (!sel) return;
+  els.snapshot.src = `${sel.url}?t=${encodeURIComponent(sel.timestamp)}`;
+  if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(sel.timestamp);
+  if (els.hudSource)    els.hudSource.textContent = sel.source_name.toUpperCase();
 }
 
 function buildHourMarker(date) {
@@ -377,11 +393,9 @@ function startPlay() {
 
   state.playTimer = setInterval(() => {
     const vis = state.visibleIndices;
-    if (!vis.length) { stopPlay(); return; }
+    if (!vis.length) return;
     const pos = vis.indexOf(state.selected);
-    const next = pos < 0 ? 0 : pos + 1;
-    if (next >= vis.length) { stopPlay(); return; }
-    state.selected = vis[next];
+    state.selected = vis[pos < 0 ? 0 : (pos + 1) % vis.length];  // loops
     render();
   }, 50); // 20fps
 }
