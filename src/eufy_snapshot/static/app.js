@@ -64,6 +64,9 @@ const els = {
   hudTimestamp:      document.getElementById("hudTimestamp"),
 };
 
+// Calendar display state (persists across re-renders)
+const calState = { year: new Date().getFullYear(), month: new Date().getMonth() };
+
 // ── Filmstrip internal state ──────────────────────────────
 
 const stripState  = new Map();  // sourceId → { paths, framesEl, stripEl, lastTs, srcImages }
@@ -227,10 +230,7 @@ function renderSourceMeta() {
 function renderDateSelector(dates) {
   els.dateCtrl.innerHTML = "";
 
-  if (dates.length === 0) {
-    els.dateField.style.display = "none";
-    return;
-  }
+  if (dates.length === 0) { els.dateField.style.display = "none"; return; }
   els.dateField.style.display = "";
 
   if (dates.length === 1) {
@@ -242,21 +242,122 @@ function renderDateSelector(dates) {
     return;
   }
 
-  // Chips for any number of dates (horizontally scrollable)
-  const row = document.createElement("div");
-  row.className = "date-chips";
+  if (dates.length <= 7) {
+    // Scrollable chips for up to a week
+    const row = document.createElement("div");
+    row.className = "date-chips";
+    row.appendChild(makeDateChip("", "ALL"));
+    for (const d of dates) row.appendChild(makeDateChip(d, formatDateLabel(d)));
+    els.dateCtrl.appendChild(row);
+    requestAnimationFrame(() => {
+      const active = row.querySelector(".date-chip.active");
+      if (active) active.scrollIntoView({ inline: "nearest", block: "nearest" });
+    });
+    return;
+  }
 
-  // "ALL" chip
-  row.appendChild(makeDateChip("", "ALL"));
-  for (const d of dates) row.appendChild(makeDateChip(d, formatDateLabel(d)));
+  // Calendar grid for 8+ dates
+  const dateSet = new Set(dates);
+  // Sync calState to selected date's month if set
+  if (state.date) {
+    const d = new Date(state.date + "T12:00:00");
+    calState.year  = d.getFullYear();
+    calState.month = d.getMonth();
+  } else {
+    // Default to month of latest date
+    const latest = dates[dates.length - 1];
+    const d = new Date(latest + "T12:00:00");
+    calState.year  = d.getFullYear();
+    calState.month = d.getMonth();
+  }
+  els.dateCtrl.appendChild(buildCalendar(dateSet));
+}
 
-  els.dateCtrl.appendChild(row);
+function buildCalendar(dateSet) {
+  const { year, month } = calState;
+  const today      = new Date().toISOString().slice(0, 10);
+  const firstDay   = new Date(year, month, 1).getDay();
+  const daysInMonth= new Date(year, month + 1, 0).getDate();
+  const monthLabel = new Date(year, month).toLocaleDateString(undefined, { month: "short", year: "numeric" });
 
-  // Scroll active chip into view
-  requestAnimationFrame(() => {
-    const active = row.querySelector(".date-chip.active");
-    if (active) active.scrollIntoView({ inline: "nearest", block: "nearest" });
+  const container = document.createElement("div");
+  container.className = "date-calendar";
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "cal-header";
+
+  const prevBtn = document.createElement("button");
+  prevBtn.className = "cal-nav"; prevBtn.textContent = "‹";
+  prevBtn.addEventListener("click", () => {
+    calState.month--;
+    if (calState.month < 0) { calState.month = 11; calState.year--; }
+    els.dateCtrl.innerHTML = "";
+    els.dateCtrl.appendChild(buildCalendar(dateSet));
   });
+
+  const nextBtn = document.createElement("button");
+  nextBtn.className = "cal-nav"; nextBtn.textContent = "›";
+  // Disable next if already at current month
+  const now = new Date();
+  if (year > now.getFullYear() || (year === now.getFullYear() && month >= now.getMonth())) {
+    nextBtn.disabled = true;
+  }
+  nextBtn.addEventListener("click", () => {
+    calState.month++;
+    if (calState.month > 11) { calState.month = 0; calState.year++; }
+    els.dateCtrl.innerHTML = "";
+    els.dateCtrl.appendChild(buildCalendar(dateSet));
+  });
+
+  const label = document.createElement("span");
+  label.className = "cal-month-label"; label.textContent = monthLabel;
+
+  header.appendChild(prevBtn); header.appendChild(label); header.appendChild(nextBtn);
+  container.appendChild(header);
+
+  // Day-of-week labels
+  const labelsRow = document.createElement("div");
+  labelsRow.className = "cal-grid";
+  for (const l of ["S","M","T","W","T","F","S"]) {
+    const cell = document.createElement("div");
+    cell.className = "cal-day-label"; cell.textContent = l;
+    labelsRow.appendChild(cell);
+  }
+  container.appendChild(labelsRow);
+
+  // Day cells
+  const grid = document.createElement("div");
+  grid.className = "cal-grid";
+
+  // Empty leading cells
+  for (let i = 0; i < firstDay; i++) {
+    const empty = document.createElement("div");
+    empty.className = "cal-day empty"; grid.appendChild(empty);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const cell    = document.createElement("div");
+    const hasData = dateSet.has(dateStr);
+    cell.className = "cal-day"
+      + (hasData     ? " has-data" : "")
+      + (dateStr === state.date ? " active"  : "")
+      + (dateStr === today      ? " today"   : "");
+    cell.textContent = String(day);
+    if (hasData) {
+      cell.addEventListener("click", () => {
+        stopPlay();
+        state.date = dateStr;
+        state.selected = -1;
+        loadImages(false);
+      });
+    }
+    grid.appendChild(cell);
+  }
+
+  container.appendChild(grid);
+  return container;
 }
 
 function makeDateChip(date, label) {
