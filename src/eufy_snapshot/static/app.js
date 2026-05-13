@@ -911,7 +911,7 @@ function humanThumbStyle(img, box) {
   // Show a fixed VIEW_H fraction of frame height, derive VIEW_W to match cell AR.
   const CELL_AR  = 133 / 78;
   const IMG_AR   = 2304 / 1296;
-  const VIEW_H   = Math.max(0.25, Math.min(0.7, (box.y2 - box.y1) * 4)); // ~4x box height, clamped
+  const VIEW_H   = Math.max(0.12, Math.min(0.35, (box.y2 - box.y1) * 2)); // ~2x box height, clamped
   const VIEW_W   = Math.min(1, VIEW_H * CELL_AR / IMG_AR); // match cell aspect ratio
   const cx = (box.x1 + box.x2) / 2, cy = (box.y1 + box.y2) / 2;
   const vx1 = Math.max(0, Math.min(1 - VIEW_W, cx - VIEW_W / 2));
