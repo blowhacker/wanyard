@@ -933,7 +933,7 @@ async function exportRange() {
 
   if (!frames.length) { alert("No frames in range"); return; }
 
-  const fps        = Math.min(30, Math.round(1000 / SPEEDS[state.playSpeed].ms));
+  const fps        = Math.min(60, Math.round(1000 / SPEEDS[state.playSpeed].ms));
   const sourceName = frames[0]?.source_name || srcId || "export";
   const fmtTs = ts => ts ? ts.slice(0, 19).replace("T", "_").replaceAll(":", "-") : "";
   const startTs    = fmtTs(frames[0]?.timestamp);

@@ -246,6 +246,7 @@ def make_app(
         r = await asyncio.to_thread(subprocess.run, [
             ffmpeg, "-y", "-f", "concat", "-safe", "0",
             "-i", concat_f.name,
+            "-r", str(fps),
             "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
             "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
             out_f,
