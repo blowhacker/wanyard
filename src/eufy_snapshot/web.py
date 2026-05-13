@@ -202,11 +202,89 @@ def make_app(
         media_type = "image/avif" if path.suffix == ".avif" else None
         return FileResponse(path, headers={"Cache-Control": _IMG_CACHE}, media_type=media_type)
 
+    async def api_export(request: Request) -> Response:
+        import os
+        import re
+        import tempfile
+        from starlette.background import BackgroundTask
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+        paths       = body.get("paths", [])
+        fps         = max(1, min(60, int(body.get("fps", 12))))
+        source_name = str(body.get("source_name", "export"))
+        start_ts    = str(body.get("start_ts", ""))
+        end_ts      = str(body.get("end_ts", ""))
+        humans_only = bool(body.get("humans_only", False))
+
+        if not paths:
+            return JSONResponse({"error": "no paths provided"}, status_code=400)
+
+        odir = image_index.output_dir
+        abs_paths = []
+        for p in paths:
+            resolved = image_index.resolve_image_path(p)
+            if resolved is None:
+                return JSONResponse({"error": f"path not found: {p}"}, status_code=400)
+            abs_paths.append(str(resolved))
+
+        ffmpeg = shutil.which("ffmpeg")
+        out_f  = tempfile.mktemp(suffix=".mp4")
+        work_dir = tempfile.mkdtemp()
+
+        def _decode_frame(args):
+            idx, src = args
+            dst = os.path.join(work_dir, f"{idx:06d}.jpg")
+            subprocess.run(
+                [ffmpeg, "-y", "-i", src, "-frames:v", "1", "-q:v", "2", dst],
+                capture_output=True, timeout=15, check=False,
+            )
+
+        from concurrent.futures import ThreadPoolExecutor
+        await asyncio.to_thread(
+            lambda: list(ThreadPoolExecutor(max_workers=4).map(
+                _decode_frame, enumerate(abs_paths)
+            ))
+        )
+
+        r = await asyncio.to_thread(subprocess.run, [
+            ffmpeg, "-y",
+            "-framerate", str(fps),
+            "-i", os.path.join(work_dir, "%06d.jpg"),
+            "-r", str(fps),
+            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            out_f,
+        ], capture_output=True, timeout=300, check=False)
+
+        import shutil as _shutil
+        _shutil.rmtree(work_dir, ignore_errors=True)
+
+        if r.returncode != 0 or not os.path.exists(out_f):
+            err = r.stderr.decode("utf-8", errors="replace")[-300:]
+            return JSONResponse({"error": f"ffmpeg: {err}"}, status_code=500)
+
+        def _cleanup():
+            try:
+                os.unlink(out_f)
+            except OSError:
+                pass
+
+        src_slug  = re.sub(r"[^a-z0-9]+", "-", source_name.lower()).strip("-")
+        human_tag = "-human" if humans_only else ""
+        fname     = f"{src_slug}_{start_ts}_{end_ts}{human_tag}.mp4"
+        return FileResponse(out_f, media_type="video/mp4", filename=fname,
+                            background=BackgroundTask(_cleanup))
+
     routes = [
         Route("/api/health",                api_health),
         Route("/api/sources",               api_sources,        methods=["GET", "POST"]),
         Route("/api/sources/{source_id}",   api_delete_source,  methods=["DELETE"]),
         Route("/api/images/latest",         api_images_latest),
+        Route("/api/export",                api_export,         methods=["POST"]),
         Route("/api/images",                api_images),
         Route("/thumbs/{path:path}",        serve_thumb),
         Route("/images/{path:path}",        serve_image),

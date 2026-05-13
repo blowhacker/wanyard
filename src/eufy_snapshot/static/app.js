@@ -26,6 +26,8 @@ const state = {
   dbEnabled:          false,
   detectionEnabled:   false,
   humansOnly:         localStorage.getItem("humansOnly") === "1",
+  inPoint:            null,
+  outPoint:           null,
   density:            parseInt(localStorage.getItem("density") || "3", 10),
   playSpeed:          parseInt(localStorage.getItem("playSpeed") || "1", 10),
   playing:            false,
@@ -67,6 +69,11 @@ const els = {
   hudTimestamp:      document.getElementById("hudTimestamp"),
   humansOnlyBtn:     document.getElementById("humansOnlyBtn"),
   humansOnlyField:   document.getElementById("humansOnlyField"),
+  exportField:       document.getElementById("exportField"),
+  inBtn:             document.getElementById("inBtn"),
+  outBtn:            document.getElementById("outBtn"),
+  clearRangeBtn:     document.getElementById("clearRangeBtn"),
+  exportBtn:         document.getElementById("exportBtn"),
 };
 
 // Calendar display state (persists across re-renders)
@@ -666,6 +673,19 @@ function renderFilmstrip() {
   for (const [sourceId, strip] of stripState) {
     strip.stripEl.classList.toggle("strip--active", sourceId === selectedSrcId);
   }
+
+  // Range highlight
+  const inIdx  = state.inPoint  ? pathIndex.get(state.inPoint)  : null;
+  const outIdx = state.outPoint ? pathIndex.get(state.outPoint) : null;
+  const lo = (inIdx != null && outIdx != null) ? Math.min(inIdx, outIdx) : (inIdx ?? outIdx);
+  const hi = (inIdx != null && outIdx != null) ? Math.max(inIdx, outIdx) : (inIdx ?? outIdx);
+  for (const [p, el] of frameElMap) {
+    const idx = pathIndex.get(p);
+    el.classList.toggle("frame--in-range",  idx != null && lo != null && hi != null && idx >= lo && idx <= hi);
+    el.classList.toggle("frame--in-point",  idx != null && idx === inIdx);
+    el.classList.toggle("frame--out-point", idx != null && idx === outIdx);
+  }
+  updateExportBtn();
 }
 
 function buildFrame(image, frameCount = 1) {
@@ -756,9 +776,15 @@ function _fmtSpeed(secPerSec) {
 
 function startPlay() {
   const srcId = state.images[state.selected]?.source_id;
-  const queue = srcId
+  let queue = srcId
     ? state.visibleIndices.filter(i => state.images[i]?.source_id === srcId)
     : state.visibleIndices;
+  if (state.inPoint || state.outPoint) {
+    const inIdx  = state.inPoint  ? (pathIndex.get(state.inPoint)  ?? 0) : 0;
+    const outIdx = state.outPoint ? (pathIndex.get(state.outPoint) ?? state.images.length - 1) : state.images.length - 1;
+    const lo = Math.min(inIdx, outIdx), hi = Math.max(inIdx, outIdx);
+    queue = queue.filter(i => i >= lo && i <= hi);
+  }
   if (!queue.length) return;
 
   state.playing = true;
@@ -819,9 +845,15 @@ function updateStaleness(latestTimestamp) {
 function stepFrame(delta) {
   if (!state.images.length) return;
   const srcId = state.images[state.selected]?.source_id;
-  const queue = srcId
+  let queue = srcId
     ? state.visibleIndices.filter(i => state.images[i]?.source_id === srcId)
     : state.visibleIndices;
+  if (state.inPoint || state.outPoint) {
+    const inIdx  = state.inPoint  ? (pathIndex.get(state.inPoint)  ?? 0) : 0;
+    const outIdx = state.outPoint ? (pathIndex.get(state.outPoint) ?? state.images.length - 1) : state.images.length - 1;
+    const lo = Math.min(inIdx, outIdx), hi = Math.max(inIdx, outIdx);
+    queue = queue.filter(i => i >= lo && i <= hi);
+  }
   if (!queue.length) return;
   const pos = Math.max(0, queue.indexOf(state.selected));
   const next = state.loop
@@ -854,12 +886,132 @@ els.jumpLatest.addEventListener("click", () => {
 });
 
 
+// ── Range / Export ────────────────────────────────────────
+
+function setInPoint() {
+  const img = state.images[state.selected];
+  if (!img) return;
+  state.inPoint = state.inPoint === img.path ? null : img.path;
+  renderFilmstrip();
+}
+
+function setOutPoint() {
+  const img = state.images[state.selected];
+  if (!img) return;
+  state.outPoint = state.outPoint === img.path ? null : img.path;
+  renderFilmstrip();
+}
+
+function clearRange() {
+  state.inPoint = null;
+  state.outPoint = null;
+  renderFilmstrip();
+}
+
+function updateExportBtn() {
+  if (!els.exportBtn) return;
+  const hasAny = state.inPoint || state.outPoint;
+  const ready  = state.inPoint && state.outPoint;
+  els.exportBtn.disabled = !ready;
+  if (els.inBtn)         els.inBtn.classList.toggle("active",  !!state.inPoint);
+  if (els.outBtn)        els.outBtn.classList.toggle("active", !!state.outPoint);
+  if (els.clearRangeBtn) els.clearRangeBtn.hidden = !hasAny;
+  updateRangeOverlay();
+}
+
+function updateRangeOverlay() {
+  // Remove all existing overlays
+  for (const el of document.querySelectorAll(".range-overlay")) el.remove();
+  if (!state.inPoint || !state.outPoint) return;
+
+  const inEl  = frameElMap.get(state.inPoint);
+  const outEl = frameElMap.get(state.outPoint);
+  if (!inEl || !outEl) return;
+
+  const framesEl = inEl.closest(".frames");
+  if (!framesEl || outEl.closest(".frames") !== framesEl) return;
+
+  const lo = Math.min(inEl.offsetLeft,  outEl.offsetLeft);
+  const hi = Math.max(inEl.offsetLeft  + inEl.offsetWidth,
+                      outEl.offsetLeft + outEl.offsetWidth);
+
+  const overlay = document.createElement("div");
+  overlay.className = "range-overlay";
+  overlay.style.left   = `${lo}px`;
+  overlay.style.top    = `${inEl.offsetTop}px`;
+  overlay.style.width  = `${hi - lo}px`;
+  overlay.style.height = `${inEl.offsetHeight}px`;
+  framesEl.appendChild(overlay);
+}
+
+async function exportRange() {
+  if (!state.inPoint || !state.outPoint) return;
+
+  // Build the exact same frame queue play would use
+  const srcId = state.images[state.selected]?.source_id;
+  const inIdx  = pathIndex.get(state.inPoint);
+  const outIdx = pathIndex.get(state.outPoint);
+  if (inIdx == null || outIdx == null) return;
+  const lo = Math.min(inIdx, outIdx), hi = Math.max(inIdx, outIdx);
+  const frames = state.visibleIndices
+    .filter(i => state.images[i]?.source_id === srcId && i >= lo && i <= hi)
+    .map(i => state.images[i]);
+
+  if (!frames.length) { alert("No frames in range"); return; }
+
+  const fps        = Math.min(60, Math.round(1000 / SPEEDS[state.playSpeed].ms));
+  const sourceName = frames[0]?.source_name || srcId || "export";
+  const fmtTs = ts => ts ? ts.slice(0, 19).replace("T", "_").replaceAll(":", "-") : "";
+  const startTs    = fmtTs(frames[0]?.timestamp);
+  const endTs      = fmtTs(frames[frames.length - 1]?.timestamp);
+
+  els.exportBtn.disabled = true;
+  els.exportBtn.classList.add("exporting");
+  els.exportBtn.textContent = "EXPORTING";
+  try {
+    const resp = await fetch("/api/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        paths:       frames.map(f => f.path),
+        fps,
+        source_name: sourceName,
+        start_ts:    startTs,
+        end_ts:      endTs,
+        humans_only: state.humansOnly,
+      }),
+    });
+    if (!resp.ok) {
+      const p = await resp.json().catch(() => ({}));
+      alert(p.error || "Export failed");
+      return;
+    }
+    const blob     = await resp.blob();
+    const url      = URL.createObjectURL(blob);
+    const srcSlug  = sourceName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const humanTag = state.humansOnly ? "-human" : "";
+    const fname    = `${srcSlug}_${startTs}_${endTs}${humanTag}.mp4`;
+    const a        = document.createElement("a");
+    a.href = url; a.download = fname; a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert("Export failed: " + err.message);
+  } finally {
+    els.exportBtn.classList.remove("exporting");
+    els.exportBtn.disabled = !state.inPoint || !state.outPoint;
+    els.exportBtn.textContent = "MP4";
+  }
+}
+
 document.addEventListener("keydown", e => {
   const tag = e.target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
   if (e.key === " ")            { e.preventDefault(); togglePlay(); }
   else if (e.key === "ArrowLeft")  { stopPlay(); stepFrame(-1); }
   else if (e.key === "ArrowRight") { stopPlay(); stepFrame(+1); }
+  else if (e.key === "i" || e.key === "I") { setInPoint(); }
+  else if (e.key === "o" || e.key === "O") { setOutPoint(); }
+  else if (e.key === "Escape")  { clearRange(); }
 });
 
 els.addSourceForm.addEventListener("submit", async e => {
@@ -942,6 +1094,11 @@ function formatTimestamp(timestamp) {
 buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
+
+if (els.inBtn)        els.inBtn.addEventListener("click",  setInPoint);
+if (els.outBtn)       els.outBtn.addEventListener("click",  setOutPoint);
+if (els.clearRangeBtn) els.clearRangeBtn.addEventListener("click", clearRange);
+if (els.exportBtn)    els.exportBtn.addEventListener("click", exportRange);
 
 loadHealth().finally(() => {
   loadSources().then(() => loadImages(false)).finally(startAutoRefresh);

@@ -904,6 +904,7 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 
 .frames {
   flex: 1;
+  position: relative;
   display: flex;
   gap: 2px;
   align-items: center;
@@ -967,6 +968,85 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 }
 
 .frame.selected .frame-ts { color: var(--amber-bright); }
+
+/* ── RANGE / EXPORT ─────────────────────────────────────── */
+
+.fb-export {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-lo);
+}
+
+.range-btn {
+  height: 28px;
+  width: auto;
+  padding: 0 8px;
+  font-family: var(--font);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r);
+  color: var(--text-lo);
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
+}
+.range-btn:hover  { border-color: var(--amber-border); color: var(--amber); }
+.range-btn.active { border-color: var(--amber-border); color: var(--amber); background: var(--amber-dim); }
+
+.range-clear-btn {
+  height: 28px;
+  width: 28px;
+  padding: 0;
+  font-family: var(--font);
+  font-size: 0.75rem;
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r);
+  color: var(--text-lo);
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+.range-clear-btn:hover { border-color: var(--red); color: var(--red); }
+
+.export-btn {
+  height: 28px;
+  width: auto;
+  padding: 0 10px;
+  font-family: var(--font);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  background: transparent;
+  border: 1px solid var(--border-lo);
+  border-radius: var(--r);
+  color: var(--text-mid);
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
+}
+.export-btn:not(:disabled):not(.exporting):hover { border-color: var(--green); color: var(--green); }
+.export-btn:disabled { opacity: 0.3; cursor: default; filter: none; }
+.export-btn.exporting {
+  border-color: var(--amber-border);
+  color: var(--amber);
+  opacity: 1;
+  cursor: wait;
+  animation: pulse-g 1s ease-in-out infinite;
+}
+
+.frame--in-range { background: rgba(42, 172, 106, 0.12); }
+
+.range-overlay {
+  position: absolute;
+  pointer-events: none;
+  border: 3px solid var(--green);
+  border-radius: 5px;
+  z-index: 3;
+  box-sizing: border-box;
+}
 
 /* ── FILTER BAR ──────────────────────────────────────────── */
 
