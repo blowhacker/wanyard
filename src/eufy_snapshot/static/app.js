@@ -924,12 +924,14 @@ function humanThumbStyle(img, box) {
 
 function renderHumansGrid() {
   if (!els.humanGrid || !els.humansPanel) return;
-  // Show last 6 human frames at or before the selected frame
-  const humans = state.images
-    .slice(0, state.selected + 1)
-    .reverse()
-    .filter(img => img.has_human && img.boxes?.length)
-    .slice(0, 6);
+  // Show 3 before + 3 after current frame, sorted chronologically
+  const allHumans = state.images
+    .map((img, i) => ({ img, dist: Math.abs(i - state.selected) }))
+    .filter(({ img }) => img.has_human && img.boxes?.length)
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 6)
+    .sort((a, b) => state.images.indexOf(a.img) - state.images.indexOf(b.img));
+  const humans = allHumans.map(h => h.img);
   if (!humans.length) { els.humansPanel.hidden = true; return; }
   els.humansPanel.hidden = false;
   els.humanGrid.innerHTML = "";
