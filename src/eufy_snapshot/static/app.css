@@ -1011,13 +1011,25 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
   cursor: pointer;
   transition: border-color 0.1s, color 0.1s, background 0.1s;
 }
-.export-btn:not(:disabled):hover { border-color: var(--green); color: var(--green); }
+.export-btn:not(:disabled):not(.exporting):hover { border-color: var(--green); color: var(--green); }
 .export-btn:disabled { opacity: 0.3; cursor: default; filter: none; }
+.export-btn.exporting {
+  border-color: var(--amber-border);
+  color: var(--amber);
+  opacity: 1;
+  cursor: wait;
+  animation: pulse-g 1s ease-in-out infinite;
+}
 
-.frame--in-range  { background: rgba(192, 128, 32, 0.10); }
-.frame--in-point  { box-shadow: inset 2px 0 0 var(--amber); }
-.frame--out-point { box-shadow: inset -2px 0 0 var(--amber); }
-.frame--in-point.frame--out-point { box-shadow: inset 2px 0 0 var(--amber), inset -2px 0 0 var(--amber); }
+.frame--in-range {
+  background: rgba(42, 172, 106, 0.08);
+  border-top-color:    var(--green);
+  border-bottom-color: var(--green);
+  border-left-color:   transparent;
+  border-right-color:  transparent;
+}
+.frame--in-point  { border-left-color:  var(--green) !important; }
+.frame--out-point { border-right-color: var(--green) !important; }
 
 /* ── FILTER BAR ──────────────────────────────────────────── */
 

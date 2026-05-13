@@ -913,7 +913,8 @@ async function exportRange() {
   if (!state.inPoint || !state.outPoint) return;
   const srcId = state.images[state.selected]?.source_id || "all";
   els.exportBtn.disabled = true;
-  els.exportBtn.textContent = "…";
+  els.exportBtn.classList.add("exporting");
+  els.exportBtn.textContent = "EXPORTING";
   try {
     const resp = await fetch("/api/export", {
       method: "POST",
@@ -939,6 +940,7 @@ async function exportRange() {
   } catch (err) {
     alert("Export failed: " + err.message);
   } finally {
+    els.exportBtn.classList.remove("exporting");
     els.exportBtn.disabled = !state.inPoint || !state.outPoint;
     els.exportBtn.textContent = "MP4";
   }
