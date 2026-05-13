@@ -92,7 +92,7 @@ class ImageIndex:
 
     def _scan_images(self) -> Iterable[ImageItem]:
         for path in self.output_dir.rglob("*.jpg"):
-            if not path.is_file():
+            if not path.is_file() or ".thumbs" in path.parts:
                 continue
             timestamp = timestamp_from_path(path, self.tz)
             if timestamp is None:
