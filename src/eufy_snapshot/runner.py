@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from .capture import CaptureNotReady, capture_once, grab_rtsp_temp, save_debug_screencap
+from .capture import CaptureNotReady, capture_once, grab_rtsp_temp
 from .config import AppConfig, SourceConfig
 from .index import ImageIndex
 
@@ -116,11 +116,6 @@ def run_loop(
                 LOG.warning("capture not ready for %s: %s", source.name, exc)
             except TimeoutError:
                 LOG.exception("capture timed out for %s", source.name)
-                if source.type == "eufy_native" and source.capture.debug_screencap_on_failure:
-                    try:
-                        save_debug_screencap(config)
-                    except Exception:
-                        LOG.exception("failed to save debug screencap")
             except Exception:
                 LOG.exception("capture failed for %s", source.name)
             finally:

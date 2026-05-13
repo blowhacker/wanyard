@@ -652,6 +652,7 @@ function renderFilmstrip() {
 
   // O(1) highlight update
   const selectedPath = state.images[state.selected]?.path;
+  const selectedSrcId = state.images[state.selected]?.source_id;
   if (currentSelectedEl !== frameElMap.get(selectedPath)) {
     if (currentSelectedEl) currentSelectedEl.classList.remove("selected");
     currentSelectedEl = frameElMap.get(selectedPath) || null;
@@ -659,6 +660,11 @@ function renderFilmstrip() {
   }
   if (currentSelectedEl) {
     _centerFrame(currentSelectedEl, !state.playing);
+  }
+
+  // Highlight active strip
+  for (const [sourceId, strip] of stripState) {
+    strip.stripEl.classList.toggle("strip--active", sourceId === selectedSrcId);
   }
 }
 
@@ -811,11 +817,17 @@ function updateStaleness(latestTimestamp) {
 // ── Controls ──────────────────────────────────────────────
 
 function stepFrame(delta) {
-  const n = state.images.length;
-  if (!n) return;
-  state.selected = state.loop
-    ? (state.selected + delta + n) % n
-    : Math.max(0, Math.min(n - 1, state.selected + delta));
+  if (!state.images.length) return;
+  const srcId = state.images[state.selected]?.source_id;
+  const queue = srcId
+    ? state.visibleIndices.filter(i => state.images[i]?.source_id === srcId)
+    : state.visibleIndices;
+  if (!queue.length) return;
+  const pos = Math.max(0, queue.indexOf(state.selected));
+  const next = state.loop
+    ? (pos + delta + queue.length) % queue.length
+    : Math.max(0, Math.min(queue.length - 1, pos + delta));
+  state.selected = queue[next];
   render();
 }
 

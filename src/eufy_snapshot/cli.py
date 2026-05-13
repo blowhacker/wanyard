@@ -9,11 +9,10 @@ import sys
 import threading
 from pathlib import Path
 
-from .capture import capture_once, save_debug_screencap
+from .capture import capture_once
 from .config import AppConfig, load_config
 from .db import SourceDB
 from .detect import DetectionStore, DetectionWorker
-from .doctor import run_doctor
 from .index import ImageIndex
 from .runner import CaptureWorker, run_loop
 from .web import make_app
@@ -24,10 +23,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s %(levelname)s %(message)s")
     config = load_config(args.config)
-    if args.command == "doctor":
-        return cmd_doctor(config)
-    if args.command == "capture-once":
-        return cmd_capture_once(config, args.source)
     if args.command == "run":
         run_loop(config, source_id=args.source)
         return 0
@@ -51,9 +46,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="logging verbosity",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("doctor", help="check emulator, Android version, and Eufy install")
-    capture_parser = sub.add_parser("capture-once", help="capture one snapshot from configured source(s)")
-    capture_parser.add_argument("--source", help="capture only this source id")
     run_parser = sub.add_parser("run", help="run the capture daemon only")
     run_parser.add_argument("--source", help="poll only this source id")
     sub.add_parser("web", help="run the web viewer only")
@@ -64,44 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
     hw.add_argument("--conf", type=float, default=0.35, help="YOLO confidence threshold (default 0.35)")
     return parser
 
-
-def cmd_doctor(config: AppConfig) -> int:
-    checks = run_doctor(config)
-    exit_code = 0
-    for check in checks:
-        print(f"{check.level.upper()}: {check.message}")
-        if check.level == "error":
-            exit_code = 1
-    return exit_code
-
-
-def cmd_capture_once(config: AppConfig, source_id: str | None = None) -> int:
-    sources = config.enabled_sources()
-    if source_id:
-        source = config.source_by_id(source_id)
-        if source is None:
-            logging.error("unknown source: %s", source_id)
-            return 1
-        sources = (source,)
-    exit_code = 0
-    for source in sources:
-        try:
-            result = capture_once(config, source)
-        except TimeoutError:
-            logging.exception("capture timed out for %s", source.name)
-            if source.type == "eufy_native" and source.capture.debug_screencap_on_failure:
-                try:
-                    save_debug_screencap(config)
-                except Exception:
-                    logging.exception("failed to save debug screencap")
-            exit_code = 1
-            continue
-        except Exception:
-            logging.exception("capture failed for %s", source.name)
-            exit_code = 1
-            continue
-        print(result.output_path)
-    return exit_code
 
 
 def cmd_web(config: AppConfig) -> int:

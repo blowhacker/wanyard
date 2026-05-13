@@ -8,24 +8,15 @@ from typing import Any
 
 try:
     import yaml
-except ModuleNotFoundError:  # pragma: no cover - exercised in minimal installs
+except ModuleNotFoundError:  # pragma: no cover
     yaml = None
-
-
-@dataclass(frozen=True)
-class CaptureConfig:
-    method: str = "eufy_native"
-    tap_x: int = 340
-    tap_y: int = 2210
-    wait_timeout_seconds: float = 10
-    debug_screencap_on_failure: bool = True
 
 
 @dataclass(frozen=True)
 class SourceConfig:
     id: str
     name: str
-    type: str = "eufy_native"
+    type: str = "rtsp"
     interval_seconds: float | None = None
     enabled: bool = True
     output_subdir: str | None = None
@@ -33,7 +24,6 @@ class SourceConfig:
     url_env: str | None = None
     rtsp_transport: str = "tcp"
     timeout_seconds: float = 20
-    capture: CaptureConfig = field(default_factory=CaptureConfig)
 
     def interval(self, default_seconds: float) -> float:
         return float(self.interval_seconds if self.interval_seconds is not None else default_seconds)
@@ -58,25 +48,19 @@ class FilenameConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
-    adb_serial: str = "emulator-5554"
-    adb_connect: str | None = None
     interval_seconds: float = 30
     detection_poll_seconds: float = 3.5
     output_dir: Path = Path("snapshots")
     db_path: Path | None = None
-    camera_name: str = "Front Door"
-    android_screenshot_dir: str = "/sdcard/Pictures/EufyPicDir"
-    eufy_package: str = "com.oceanwing.battery.cam"
-    capture: CaptureConfig = field(default_factory=CaptureConfig)
     web: WebConfig = field(default_factory=WebConfig)
     filenames: FilenameConfig = field(default_factory=FilenameConfig)
     sources: tuple[SourceConfig, ...] = field(default_factory=tuple)
 
     def enabled_sources(self) -> tuple[SourceConfig, ...]:
-        return tuple(source for source in self.sources if source.enabled)
+        return tuple(s for s in self.sources if s.enabled)
 
     def source_by_id(self, source_id: str) -> SourceConfig | None:
-        return next((source for source in self.sources if source.id == source_id), None)
+        return next((s for s in self.sources if s.id == source_id), None)
 
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:
@@ -90,76 +74,43 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
                 raise ValueError(f"{config_path} must contain a YAML mapping")
             data = loaded
 
-    capture = CaptureConfig(**_mapping(data.get("capture", {})))
     web = WebConfig(**_mapping(data.get("web", {})))
     filenames = FilenameConfig(**_mapping(data.get("filenames", {})))
-    sources = _load_sources(data, capture)
-
+    sources = _load_sources(data)
     db_path_raw = data.get("db_path")
-    base = {
-        "adb_serial": data.get("adb_serial", AppConfig.adb_serial),
-        "adb_connect": data.get("adb_connect", AppConfig.adb_connect),
-        "interval_seconds": data.get("interval_seconds", AppConfig.interval_seconds),
-        "detection_poll_seconds": data.get("detection_poll_seconds", AppConfig.detection_poll_seconds),
-        "output_dir": Path(data.get("output_dir", AppConfig.output_dir)),
-        "db_path": Path(db_path_raw) if db_path_raw else None,
-        "camera_name": data.get("camera_name", AppConfig.camera_name),
-        "android_screenshot_dir": data.get(
-            "android_screenshot_dir", AppConfig.android_screenshot_dir
-        ),
-        "eufy_package": data.get("eufy_package", AppConfig.eufy_package),
-        "capture": capture,
-        "web": web,
-        "filenames": filenames,
-        "sources": sources,
-    }
-    return AppConfig(**base)
+
+    return AppConfig(
+        interval_seconds=data.get("interval_seconds", AppConfig.interval_seconds),
+        detection_poll_seconds=data.get("detection_poll_seconds", AppConfig.detection_poll_seconds),
+        output_dir=Path(data.get("output_dir", AppConfig.output_dir)),
+        db_path=Path(db_path_raw) if db_path_raw else None,
+        web=web,
+        filenames=filenames,
+        sources=sources,
+    )
 
 
-def _load_sources(data: dict[str, Any], default_capture: CaptureConfig) -> tuple[SourceConfig, ...]:
+def _load_sources(data: dict[str, Any]) -> tuple[SourceConfig, ...]:
     sources_data = data.get("sources")
-    if sources_data is None:
-        camera_name = str(data.get("camera_name", AppConfig.camera_name))
-        return (
-            SourceConfig(
-                id=_slug(camera_name),
-                name=camera_name,
-                type=default_capture.method,
-                interval_seconds=float(data.get("interval_seconds", AppConfig.interval_seconds)),
-                output_subdir=None,
-                capture=default_capture,
-            ),
-        )
-    if not isinstance(sources_data, dict):
-        raise ValueError("sources must be a mapping of source_id to source config")
-    if not sources_data:
+    if not sources_data or not isinstance(sources_data, dict):
         return ()
 
     sources: list[SourceConfig] = []
     for source_id, raw_source in sources_data.items():
         source = _mapping(raw_source)
-        capture_data = {
-            **default_capture.__dict__,
-            **_mapping(source.get("capture", {})),
-        }
-        source_capture = CaptureConfig(**capture_data)
-        source_type = str(source.get("type", source.get("method", source_capture.method)))
         output_subdir = source.get("output_subdir", str(source_id))
-        sources.append(
-            SourceConfig(
-                id=str(source_id),
-                name=str(source.get("name", source_id)),
-                type=source_type,
-                interval_seconds=source.get("interval_seconds", data.get("interval_seconds")),
-                enabled=bool(source.get("enabled", True)),
-                output_subdir=None if output_subdir in {"", None} else str(output_subdir),
-                url=source.get("url") or source.get("rtsp_url"),
-                url_env=source.get("url_env") or source.get("rtsp_url_env"),
-                rtsp_transport=str(source.get("rtsp_transport", "tcp")),
-                timeout_seconds=float(source.get("timeout_seconds", 20)),
-                capture=source_capture,
-            )
-        )
+        sources.append(SourceConfig(
+            id=str(source_id),
+            name=str(source.get("name", source_id)),
+            type=str(source.get("type", "rtsp")),
+            interval_seconds=source.get("interval_seconds", data.get("interval_seconds")),
+            enabled=bool(source.get("enabled", True)),
+            output_subdir=None if output_subdir in {"", None} else str(output_subdir),
+            url=source.get("url") or source.get("rtsp_url"),
+            url_env=source.get("url_env") or source.get("rtsp_url_env"),
+            rtsp_transport=str(source.get("rtsp_transport", "tcp")),
+            timeout_seconds=float(source.get("timeout_seconds", 20)),
+        ))
     return tuple(sources)
 
 
@@ -243,8 +194,3 @@ def _parse_env_value(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     return value
-
-
-def _slug(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return slug or "camera"
