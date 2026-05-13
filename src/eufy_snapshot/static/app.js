@@ -1236,18 +1236,11 @@ async function startLiveStream() {
   const offer = await _livePC.createOffer();
   await _livePC.setLocalDescription(offer);
 
-  // Wait for ICE gathering
-  await new Promise(res => {
-    if (_livePC.iceGatheringState === "complete") { res(); return; }
-    _livePC.onicegatheringstatechange = () => {
-      if (_livePC.iceGatheringState === "complete") res();
-    };
-    setTimeout(res, 3000); // fallback
-  });
-
   try {
     const resp = await fetch(`${go2rtcBase}/api/webrtc?src=${srcId}`, {
-      method: "POST", body: _livePC.localDescription.sdp,
+      method: "POST",
+      headers: { "Content-Type": "application/sdp" },
+      body: offer.sdp,
     });
     if (!resp.ok) throw new Error(await resp.text());
     const answerSdp = await resp.text();

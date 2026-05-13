@@ -381,7 +381,11 @@ async def _register_go2rtc_streams(config, source_db) -> None:
     if not stream_lines:
         return
 
-    yaml_content = "api:\n  origin: '*'\n\nstreams:\n" + "\n".join(stream_lines) + "\n"
+    yaml_content = (
+        "api:\n  origin: '*'\n\n"
+        "webrtc:\n  candidates:\n    - stun:8555\n\n"
+        "streams:\n" + "\n".join(stream_lines) + "\n"
+    )
     config_path = Path(config_dir) / "go2rtc.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(yaml_content)
