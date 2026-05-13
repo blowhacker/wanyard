@@ -210,6 +210,20 @@ function render() {
 
 // ── Filmstrip ─────────────────────────────────────────────
 
+// O(n+m) scan: how many allItems fall in each sampled bucket.
+// Both arrays must be sorted by timestamp ascending.
+function countsBetween(allItems, sampledItems) {
+  const counts = new Array(sampledItems.length).fill(0);
+  const sampledTs = sampledItems.map(img => new Date(img.timestamp).getTime());
+  let si = 0;
+  for (const img of allItems) {
+    const t = new Date(img.timestamp).getTime();
+    while (si + 1 < sampledTs.length && sampledTs[si + 1] <= t) si++;
+    counts[si]++;
+  }
+  return counts;
+}
+
 function subsample(images, sampleMinutes) {
   const threshold = sampleMinutes * 60000;
   const result = [];
@@ -288,6 +302,7 @@ function renderFilmstrip() {
     const sampled = d.sampleMinutes > 0
       ? subsample(group.items, d.sampleMinutes)
       : group.items;
+    const counts = d.sampleMinutes > 0 ? countsBetween(group.items, sampled) : null;
 
     // Append-only check
     const isAppend =
@@ -314,7 +329,7 @@ function renderFilmstrip() {
         }
       }
 
-      strip.framesEl.appendChild(buildFrame(img));
+      strip.framesEl.appendChild(buildFrame(img, counts ? counts[i] : 1));
       strip.paths.push(img.path);
       strip.lastTs = ts;
     }
@@ -345,9 +360,14 @@ function renderFilmstrip() {
   }
 }
 
-function buildFrame(image) {
+function buildFrame(image, frameCount = 1) {
   const frame = document.createElement("div");
   frame.className = "frame";
+  if (frameCount > 1) {
+    const stacks = frameCount <= 8 ? 1 : frameCount <= 40 ? 2 : 3;
+    frame.dataset.stacks = String(stacks);
+    frame.title = `~${frameCount} frames`;
+  }
 
   const img = document.createElement("img");
   img.src = image.url.replace("/images/", "/thumbs/");

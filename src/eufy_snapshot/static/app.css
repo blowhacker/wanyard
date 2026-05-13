@@ -357,6 +357,19 @@ input[type="range"]::-moz-range-thumb {
   background: rgba(42, 172, 106, 0.08);
 }
 
+/* Frame-density indicator: amber left-edge stripe that widens with count */
+.frame[data-stacks]::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.frame[data-stacks="1"]::before { width: 2px; background: rgba(192,128,32,0.35); }
+.frame[data-stacks="2"]::before { width: 3px; background: rgba(192,128,32,0.65); }
+.frame[data-stacks="3"]::before { width: 4px; background: var(--amber); }
+.frame.selected[data-stacks]::before { background: var(--amber-bright); }
+
 /* Hour markers */
 .hour-mark {
   flex-shrink: 0;
