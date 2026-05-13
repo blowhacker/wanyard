@@ -6,6 +6,8 @@ build/
 dist/
 *.egg-info/
 snapshots/
+data/
 apk/*.apk
 apk/*.apkm
 apk/*.xapk
+.env

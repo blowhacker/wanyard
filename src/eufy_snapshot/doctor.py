@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 from dataclasses import dataclass
 
 from .adb import AdbClient
@@ -14,6 +16,35 @@ class DoctorCheck:
 
 def run_doctor(config: AppConfig) -> list[DoctorCheck]:
     checks: list[DoctorCheck] = []
+    enabled_sources = config.enabled_sources()
+    if not enabled_sources:
+        return [DoctorCheck("error", "no enabled capture sources configured")]
+
+    for source in enabled_sources:
+        checks.append(
+            DoctorCheck(
+                "ok",
+                f"source {source.id}: {source.name} ({source.type}, every {source.interval(config.interval_seconds):g}s)",
+            )
+        )
+
+    rtsp_sources = [source for source in enabled_sources if source.type == "rtsp"]
+    if rtsp_sources:
+        if shutil.which("ffmpeg"):
+            checks.append(DoctorCheck("ok", "ffmpeg is installed for RTSP capture"))
+        else:
+            checks.append(DoctorCheck("error", "ffmpeg is required for RTSP capture but was not found"))
+        for source in rtsp_sources:
+            if source.url or (source.url_env and os.environ.get(source.url_env)):
+                checks.append(DoctorCheck("ok", f"RTSP URL configured for source {source.id}"))
+            elif source.url_env:
+                checks.append(DoctorCheck("error", f"RTSP URL env var is missing for source {source.id}: {source.url_env}"))
+            else:
+                checks.append(DoctorCheck("error", f"RTSP source {source.id} has no url or url_env"))
+
+    if not any(source.type == "eufy_native" for source in enabled_sources):
+        return checks
+
     if config.adb_connect:
         try:
             result = AdbClient.connect(config.adb_connect, timeout=20)

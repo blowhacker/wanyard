@@ -122,6 +122,25 @@ select {
   padding: 0 10px;
 }
 
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field label {
+  color: #9aa29d;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.field-meta {
+  min-height: 18px;
+  color: #b7b0a2;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
 .thumbs {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
@@ -148,6 +167,117 @@ select {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+details.field > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+details.field > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.field > summary::after {
+  content: "›";
+  color: #9aa29d;
+  font-size: 1rem;
+  line-height: 1;
+  transition: transform 0.15s;
+}
+
+details[open].field > summary::after {
+  transform: rotate(90deg);
+}
+
+.db-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.db-source-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.83rem;
+  color: #d8d0c4;
+}
+
+.db-source-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-delete {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  line-height: 1;
+  color: #f87171;
+  border-color: #5a3535;
+  background: #2a1f1f;
+}
+
+.btn-delete:hover {
+  background: #3a2020;
+}
+
+.add-source-form {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.add-source-form input,
+.add-source-form select {
+  height: 34px;
+  font-size: 0.83rem;
+  padding: 0 8px;
+  border: 1px solid #3a4145;
+  border-radius: 6px;
+  background: #202529;
+  color: #f7f3ea;
+  width: 100%;
+}
+
+.add-source-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.add-source-row input[type="number"] {
+  width: 68px;
+  flex-shrink: 0;
+}
+
+.add-source-row select {
+  width: auto;
+  flex: 1;
+}
+
+.btn-add {
+  flex-shrink: 0;
+  height: 34px;
+  width: auto;
+  padding: 0 14px;
+  font-size: 0.83rem;
+}
+
+.source-error {
+  color: #f87171;
+  font-size: 0.8rem;
 }
 
 @media (max-width: 820px) {

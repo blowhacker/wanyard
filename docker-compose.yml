@@ -1,20 +1,13 @@
 services:
   emulator:
-    image: budtmo/docker-android:emulator_14.0
+    build:
+      context: ./emulator
     container_name: eufy-emulator
-    privileged: true
-    devices:
-      - /dev/kvm:/dev/kvm
-    environment:
-      EMULATOR_DEVICE: "Pixel 8"
-      WEB_VNC: "true"
-      WEB_VNC_PORT: "6080"
-      EMULATOR_ADDITIONAL_ARGS: "-no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect"
     ports:
       - "6080:6080"
       - "5555:5555"
     volumes:
-      - emulator-data:/root/.android
+      - emulator-data:/avd
 
   app:
     build: .
@@ -28,6 +21,7 @@ services:
     volumes:
       - ./config.compose.yaml:/app/config.yaml:ro
       - ./snapshots:/app/snapshots
+      - ./data:/app/data
 
 volumes:
   emulator-data:

@@ -12,6 +12,23 @@ capture:
   wait_timeout_seconds: 10
   debug_screencap_on_failure: true
 
+sources:
+  eufy_front_door:
+    name: Front Door Eufy App
+    type: eufy_native
+    enabled: false
+    interval_seconds: 30
+    output_subdir: eufy_front_door
+  rtsp_front_door:
+    name: Front Door RTSP
+    type: rtsp
+    enabled: true
+    interval_seconds: 30
+    output_subdir: rtsp_front_door
+    url_env: FRONT_DOOR_RTSP_URL
+    rtsp_transport: tcp
+    timeout_seconds: 20
+
 web:
   host: 0.0.0.0
   port: 8091

@@ -25,7 +25,32 @@
           <input id="timeline" type="range" min="0" max="0" value="0" aria-label="Snapshot timeline">
           <button id="next" title="Next snapshot" aria-label="Next snapshot">›</button>
         </div>
-        <select id="dateSelect" aria-label="Snapshot date"></select>
+        <div class="field">
+          <label for="sourceSelect">Source</label>
+          <select id="sourceSelect" aria-label="Snapshot source"></select>
+          <div id="sourceMeta" class="field-meta"></div>
+        </div>
+        <div class="field">
+          <label for="dateSelect">Date</label>
+          <select id="dateSelect" aria-label="Snapshot date"></select>
+        </div>
+        <details class="field" id="rtspPanel" hidden>
+          <summary><span class="label">RTSP Sources</span></summary>
+          <div id="dbSourceList" class="db-source-list"></div>
+          <form id="addSourceForm" class="add-source-form" autocomplete="off">
+            <input id="newSourceName" type="text" placeholder="Name" required>
+            <input id="newSourceUrl" type="text" placeholder="rtsp://host/stream" required>
+            <div class="add-source-row">
+              <input id="newSourceInterval" type="number" placeholder="30s" min="5" step="1">
+              <select id="newSourceTransport">
+                <option value="tcp">TCP</option>
+                <option value="udp">UDP</option>
+              </select>
+              <button type="submit" class="btn-add">Add</button>
+            </div>
+            <div id="addSourceError" class="source-error" hidden></div>
+          </form>
+        </details>
         <div id="thumbs" class="thumbs" aria-label="Recent snapshots"></div>
       </aside>
     </main>

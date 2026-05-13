@@ -9,6 +9,8 @@ from typing import Iterable
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
+from .config import SourceConfig
+
 
 JPEG_MAGIC = b"\xff\xd8\xff"
 TIMESTAMP_RE = re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})_(?P<time>\d{2}-\d{2}-\d{2})")
@@ -20,14 +22,23 @@ class ImageItem:
     url: str
     timestamp: str
     date: str
+    source_id: str
+    source_name: str
     size_bytes: int
 
 
 class ImageIndex:
-    def __init__(self, output_dir: Path, timezone: str, max_items: int = 10000) -> None:
+    def __init__(
+        self,
+        output_dir: Path,
+        timezone: str,
+        max_items: int = 10000,
+        sources: tuple[SourceConfig, ...] = (),
+    ) -> None:
         self.output_dir = output_dir
         self.tz = ZoneInfo(timezone)
         self.max_items = max_items
+        self.sources = {source.id: source for source in sources}
         self._lock = RLock()
         self._items: list[ImageItem] = []
 
@@ -43,19 +54,26 @@ class ImageIndex:
             self._items = items
             return list(self._items)
 
-    def items(self, date: str | None = None) -> list[ImageItem]:
+    def items(self, date: str | None = None, source_id: str | None = None) -> list[ImageItem]:
         with self._lock:
             items = list(self._items)
+        if source_id:
+            items = [item for item in items if item.source_id == source_id]
         if date:
             return [item for item in items if item.date == date]
         return items
 
-    def latest(self) -> ImageItem | None:
-        with self._lock:
-            return self._items[-1] if self._items else None
+    def latest(self, source_id: str | None = None) -> ImageItem | None:
+        items = self.items(source_id=source_id)
+        return items[-1] if items else None
 
-    def dates(self) -> list[str]:
-        return sorted({item.date for item in self.items()})
+    def dates(self, source_id: str | None = None) -> list[str]:
+        return sorted({item.date for item in self.items(source_id=source_id)})
+
+    def update_sources(self, sources: tuple[SourceConfig, ...]) -> None:
+        with self._lock:
+            for source in sources:
+                self.sources[source.id] = source
 
     def resolve_image_path(self, relative_path: str) -> Path | None:
         try:
@@ -80,13 +98,26 @@ class ImageIndex:
             if timestamp is None:
                 continue
             rel = path.relative_to(self.output_dir).as_posix()
+            source_id = self._source_id_for_relative_path(rel)
+            source = self.sources.get(source_id)
             yield ImageItem(
                 path=rel,
                 url=f"/images/{quote(rel)}",
                 timestamp=timestamp.isoformat(),
                 date=timestamp.date().isoformat(),
+                source_id=source_id,
+                source_name=source.name if source else source_id,
                 size_bytes=path.stat().st_size,
             )
+
+    def _source_id_for_relative_path(self, relative_path: str) -> str:
+        parts = PurePosixPath(relative_path).parts
+        for source in self.sources.values():
+            if source.output_subdir and parts and parts[0] == source.output_subdir:
+                return source.id
+        if len(self.sources) == 1:
+            return next(iter(self.sources))
+        return "unknown"
 
 
 def timestamp_from_path(path: Path, tz: ZoneInfo) -> datetime | None:

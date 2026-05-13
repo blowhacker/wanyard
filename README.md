@@ -14,6 +14,7 @@ Capture camera-only screenshots from the Eufy Android app through ADB and serve 
 python -m pip install -e .
 eufy-snapshot doctor
 eufy-snapshot capture-once
+eufy-snapshot capture-once --source rtsp_front_door
 eufy-snapshot run
 eufy-snapshot web
 eufy-snapshot serve
@@ -21,9 +22,36 @@ eufy-snapshot serve
 
 `serve` runs both the capture worker and the web viewer.
 
+## Sources
+
+`config.yaml` supports multiple named sources. Each source has its own capture method and interval, and the web viewer can filter snapshots by source.
+
+The current local RTSP source is configured as:
+
+```yaml
+sources:
+  rtsp_front_door:
+    name: Front Door RTSP
+    type: rtsp
+    enabled: true
+    interval_seconds: 30
+    output_subdir: rtsp_front_door
+    url_env: FRONT_DOOR_RTSP_URL
+    rtsp_transport: tcp
+    timeout_seconds: 20
+```
+
+Put the credentialed RTSP URL in `.env` or the runtime environment:
+
+```bash
+FRONT_DOOR_RTSP_URL=rtsp://user:password@camera-ip:554/stream1
+```
+
+RTSP capture requires `ffmpeg`.
+
 ## Docker
 
-The image includes Python app code and Android platform tools. The emulator remains on the host.
+The image includes Python app code, Android platform tools, and `ffmpeg`. The emulator remains on the host for `eufy_native` sources.
 
 ```bash
 docker build -t eufy-snapshot .
@@ -39,11 +67,13 @@ If Docker cannot resolve `host.docker.internal` on Linux, add `--add-host=host.d
 
 ## Bundled Emulator
 
-`docker-compose.yml` runs an Android 14/API 34 emulator container plus the snapshot app container.
+`docker-compose.yml` runs an Android 14/API 34 ARM64 emulator container plus the snapshot app container.
 
 ```bash
 docker compose up --build
 ```
+
+The first `docker compose build` downloads a ~2 GB ARM64 system image. The emulator's first boot takes 10–15 minutes (software ARM64 emulation, no KVM required). Subsequent starts are faster.
 
 Open:
 
@@ -57,15 +87,15 @@ adb_serial: eufy-emulator:5555
 adb_connect: eufy-emulator:5555
 ```
 
-After the emulator boots, install Eufy and log in through noVNC. To sideload a user-supplied APK:
+After the emulator boots, install Eufy and log in through noVNC. To sideload a user-supplied APK or APKM bundle:
 
 ```bash
 mkdir -p apk
-# place the APK at apk/eufy-security.apk
+# place the file at apk/eufy-security.apk or apk/eufy-security.apkm
 scripts/install_eufy_apk.sh
 ```
 
-Important platform note: the bundled emulator image needs hardware virtualization through `/dev/kvm`. This works on Linux hosts with KVM enabled. Docker Desktop on macOS generally cannot pass `/dev/kvm` through to Linux containers, so on macOS the reliable path is still the host-managed Android Studio emulator plus `docker run` for the app.
+The install script detects `.apkm` bundles (APKMirror format) and selects the correct ABI split automatically. Eufy ships ARM64-only native libraries, so the script always uses the `arm64-v8a` split regardless of host architecture.
 
 ## Web API
 
