@@ -906,7 +906,11 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
   padding: 3px 5px;
   scrollbar-width: thin;
   scrollbar-color: var(--border-sub) transparent;
+  cursor: grab;
+  user-select: none;
 }
+
+.frames.dragging { cursor: grabbing; }
 
 .frames::-webkit-scrollbar { height: 2px; }
 .frames::-webkit-scrollbar-track { background: transparent; }

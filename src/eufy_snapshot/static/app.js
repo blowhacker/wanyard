@@ -562,7 +562,26 @@ function renderFilmstrip() {
       const framesEl  = document.createElement("div");
       framesEl.className = "frames";
 
+      // Drag-to-scroll
+      let _dragX = 0, _dragScroll = 0, _dragging = false;
+      framesEl.addEventListener("mousedown", e => {
+        if (e.button !== 0) return;
+        _dragging = true; _dragX = e.pageX; _dragScroll = framesEl.scrollLeft;
+        framesEl.classList.add("dragging");
+        e.preventDefault();
+      });
+      document.addEventListener("mousemove", e => {
+        if (!_dragging) return;
+        framesEl.scrollLeft = _dragScroll - (e.pageX - _dragX);
+      });
+      document.addEventListener("mouseup", () => {
+        if (!_dragging) return;
+        _dragging = false; framesEl.classList.remove("dragging");
+      });
+
+      // Hover preview (suppressed while dragging)
       framesEl.addEventListener("mousemove", e => {
+        if (_dragging) return;
         if (els.snapshot.style.display === "none") return;
         const strip = stripState.get(sourceId);
         if (!strip?.srcImages?.length) return;
@@ -627,11 +646,8 @@ function renderFilmstrip() {
     currentSelectedEl = frameElMap.get(selectedPath) || null;
     if (currentSelectedEl) currentSelectedEl.classList.add("selected");
   }
-  if (currentSelectedEl) {
-    currentSelectedEl.scrollIntoView({
-      behavior: state.playing ? "instant" : "smooth",
-      block: "nearest", inline: "nearest",
-    });
+  if (currentSelectedEl && !state.playing) {
+    currentSelectedEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
   }
 }
 
