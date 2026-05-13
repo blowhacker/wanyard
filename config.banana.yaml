@@ -7,8 +7,6 @@ web:
   port: 8091
   auto_refresh_seconds: 30
   max_index_items: 10000
-  ssl_certfile: /app/data/cert.pem
-  ssl_keyfile: /app/data/key.pem
 
 filenames:
   timezone: Europe/London

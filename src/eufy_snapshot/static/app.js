@@ -27,6 +27,7 @@ const state = {
   density:          parseInt(localStorage.getItem("density") || "3", 10),
   playSpeed:        parseInt(localStorage.getItem("playSpeed") || "1", 10),
   playing:          false,
+  loop:             true,
   visibleIndices:   [],
 };
 
@@ -42,6 +43,7 @@ const els = {
   next:              document.getElementById("next"),
   densityBtns:       document.getElementById("densityBtns"),
   speedPills:        document.getElementById("speedPills"),
+  loopBtn:           document.getElementById("loopBtn"),
   frameCounter:      document.getElementById("frameCounter"),
   sourceField:       document.getElementById("sourceField"),
   sourceCtrl:        document.getElementById("sourceCtrl"),
@@ -696,7 +698,11 @@ function startPlay() {
     while (state.playing && _playId === id) {
       const t0 = performance.now();
 
-      pos = (pos + 1) % queue.length;
+      const next = pos + 1;
+      if (next >= queue.length) {
+        if (!state.loop) { stopPlay(); break; }
+      }
+      pos = next % queue.length;
       state.selected = queue[pos];
       preloadAhead(queue, pos);
       render();
@@ -736,6 +742,10 @@ els.next.addEventListener("click", () => {
   stopPlay(); state.selected = Math.min(state.images.length - 1, state.selected + 1); render();
 });
 els.playBtn.addEventListener("click", togglePlay);
+els.loopBtn.addEventListener("click", () => {
+  state.loop = !state.loop;
+  els.loopBtn.classList.toggle("active", state.loop);
+});
 els.jumpLatest.addEventListener("click", () => {
   state.selected = state.images.length - 1; render();
 });
