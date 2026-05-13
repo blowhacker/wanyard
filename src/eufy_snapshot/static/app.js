@@ -480,7 +480,7 @@ function render() {
   }
 
   const image = state.images[state.selected];
-  setMainSrc(`${image.url}?t=${encodeURIComponent(image.timestamp)}`);
+  setMainSrc(image.url);
   els.timestamp.textContent = `${image.source_name} · ${formatTimestamp(image.timestamp)}`;
   if (els.hudSource)    els.hudSource.textContent = image.source_name.toUpperCase();
   if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(image.timestamp);
@@ -665,7 +665,7 @@ function showPreview(img) {
 function restoreSelected() {
   const sel = state.images[state.selected];
   if (!sel) return;
-  els.snapshot.src = `${sel.url}?t=${encodeURIComponent(sel.timestamp)}`;
+  els.snapshot.src = sel.url;
   if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(sel.timestamp);
   if (els.hudSource)    els.hudSource.textContent = sel.source_name.toUpperCase();
 }
