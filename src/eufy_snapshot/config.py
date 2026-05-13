@@ -45,6 +45,8 @@ class WebConfig:
     port: int = 8080
     auto_refresh_seconds: int = 10
     max_index_items: int = 10000
+    ssl_certfile: str | None = None
+    ssl_keyfile: str | None = None
 
 
 @dataclass(frozen=True)

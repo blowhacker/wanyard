@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import signal
+import subprocess
 import sys
 import threading
-
-import uvicorn
+from pathlib import Path
 
 from .capture import capture_once, save_debug_screencap
 from .config import AppConfig, load_config
@@ -103,9 +104,7 @@ def cmd_web(config: AppConfig) -> int:
         config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
     )
     app = make_app(config, image_index, source_db=source_db)
-    print(f"Serving web viewer on http://{config.web.host}:{config.web.port}")
-    uvicorn.run(app, host=config.web.host, port=config.web.port,
-                log_level="warning", access_log=False)
+    _serve(app, config)
     return 0
 
 
@@ -117,10 +116,58 @@ def cmd_serve(config: AppConfig) -> int:
     )
     worker = CaptureWorker(config, image_index, source_db=source_db)
     app = make_app(config, image_index, source_db=source_db, capture_worker=worker)
-    print(f"Serving on http://{config.web.host}:{config.web.port}")
-    uvicorn.run(app, host=config.web.host, port=config.web.port,
-                log_level="warning", access_log=False)
+    _serve(app, config)
     return 0
+
+
+def _serve(app, config: AppConfig) -> None:
+    from hypercorn.asyncio import serve
+    from hypercorn.config import Config as HConfig
+
+    hcfg = HConfig()
+    hcfg.loglevel = "WARNING"
+    hcfg.accesslog = None
+
+    ssl_cert = config.web.ssl_certfile
+    ssl_key  = config.web.ssl_keyfile
+
+    if ssl_cert and ssl_key:
+        _ensure_cert(Path(ssl_cert), Path(ssl_key))
+        hcfg.certfile = ssl_cert
+        hcfg.keyfile  = ssl_key
+        hcfg.bind     = [f"{config.web.host}:{config.web.port}"]
+        scheme = "https"
+    else:
+        hcfg.bind = [f"{config.web.host}:{config.web.port}"]
+        scheme = "http"
+
+    print(f"Serving on {scheme}://{config.web.host}:{config.web.port}")
+    if scheme == "https":
+        print("  HTTP/2 enabled — accept the self-signed cert warning in your browser")
+
+    try:
+        import uvloop
+        uvloop.install()
+    except ImportError:
+        pass
+
+    asyncio.run(serve(app, hcfg))
+
+
+def _ensure_cert(certfile: Path, keyfile: Path) -> None:
+    if certfile.exists() and keyfile.exists():
+        return
+    certfile.parent.mkdir(parents=True, exist_ok=True)
+    logging.info("generating self-signed TLS certificate → %s", certfile)
+    subprocess.run(
+        [
+            "openssl", "req", "-x509", "-newkey", "rsa:2048",
+            "-keyout", str(keyfile), "-out", str(certfile),
+            "-days", "3650", "-nodes",
+            "-subj", "/CN=eufy-snapshot",
+        ],
+        check=True, capture_output=True,
+    )
 
 
 def _install_shutdown(callback) -> None:
