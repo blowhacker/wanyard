@@ -65,10 +65,17 @@ def capture_eufy_native(
 
     output_path = build_output_path(config, source)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    adb.pull(android_path, str(output_path))
+    tmp_path = output_path.with_name(f".{output_path.stem}.tmp.jpg")
+    adb.pull(android_path, str(tmp_path))
 
-    if output_path.stat().st_size <= 0 or not looks_like_jpeg(output_path):
-        raise RuntimeError(f"pulled file is not a non-empty JPEG: {output_path}")
+    if tmp_path.stat().st_size <= 0 or not looks_like_jpeg(tmp_path):
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"pulled file is not a non-empty JPEG: {tmp_path}")
+
+    if config.filenames.capture_format == "avif":
+        _convert_to_avif(tmp_path, output_path)
+    else:
+        tmp_path.replace(output_path)
 
     elapsed = time.monotonic() - started
     result = CaptureResult(
@@ -101,7 +108,7 @@ def capture_rtsp_frame(config: AppConfig, source: SourceConfig) -> CaptureResult
     started = time.monotonic()
     output_path = build_output_path(config, source)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = output_path.with_name(f".{output_path.stem}.tmp{output_path.suffix}")
+    tmp_path = output_path.with_name(f".{output_path.stem}.tmp.jpg")
     command = [
         ffmpeg,
         "-hide_banner",
@@ -137,7 +144,11 @@ def capture_rtsp_frame(config: AppConfig, source: SourceConfig) -> CaptureResult
     if tmp_path.stat().st_size <= 0 or not looks_like_jpeg(tmp_path):
         tmp_path.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg output is not a non-empty JPEG for {source.name}")
-    tmp_path.replace(output_path)
+
+    if config.filenames.capture_format == "avif":
+        _convert_to_avif(tmp_path, output_path)
+    else:
+        tmp_path.replace(output_path)
 
     elapsed = time.monotonic() - started
     result = CaptureResult(
@@ -186,10 +197,27 @@ def build_output_path(config: AppConfig, source: SourceConfig | None = None) -> 
     tz = ZoneInfo(config.filenames.timezone)
     now = datetime.now(tz)
     relative = now.strftime(config.filenames.pattern)
+    if config.filenames.capture_format == "avif":
+        relative = str(Path(relative).with_suffix(".avif"))
     base = config.output_dir
     if source and source.output_subdir:
         base = base / source.output_subdir
     return unique_path(base / relative)
+
+
+def _convert_to_avif(src: Path, dest: Path, quality: int = 50) -> None:
+    avifenc = shutil.which("avifenc")
+    if not avifenc:
+        raise CaptureNotReady("avifenc not found; install libavif-bin for AVIF capture")
+    r = subprocess.run(
+        [avifenc, "-q", str(quality), "-s", "6", str(src), str(dest)],
+        capture_output=True, timeout=30, check=False,
+    )
+    src.unlink(missing_ok=True)
+    if r.returncode != 0 or not dest.exists():
+        raise RuntimeError(
+            f"avifenc failed: {r.stderr.decode('utf-8', errors='replace').strip()}"
+        )
 
 
 def ensure_eufy_installed(config: AppConfig, adb: AdbClient) -> None:

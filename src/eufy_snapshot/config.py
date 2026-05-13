@@ -53,6 +53,7 @@ class WebConfig:
 class FilenameConfig:
     timezone: str = "Europe/London"
     pattern: str = "%Y/%m/%d/%Y-%m-%d_%H-%M-%S.jpg"
+    capture_format: str = "jpeg"  # "jpeg" or "avif"
 
 
 @dataclass(frozen=True)

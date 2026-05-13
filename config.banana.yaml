@@ -11,3 +11,4 @@ web:
 filenames:
   timezone: Europe/London
   pattern: "%Y/%m/%d/%Y-%m-%d_%H-%M-%S.jpg"
+  capture_format: avif

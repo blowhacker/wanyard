@@ -91,24 +91,27 @@ class ImageIndex:
             return None
 
     def _scan_images(self) -> Iterable[ImageItem]:
-        for path in self.output_dir.rglob("*.jpg"):
-            if not path.is_file() or ".thumbs" in path.parts:
-                continue
-            timestamp = timestamp_from_path(path, self.tz)
-            if timestamp is None:
-                continue
-            rel = path.relative_to(self.output_dir).as_posix()
-            source_id = self._source_id_for_relative_path(rel)
-            source = self.sources.get(source_id)
-            yield ImageItem(
-                path=rel,
-                url=f"/images/{quote(rel)}",
-                timestamp=timestamp.isoformat(),
-                date=timestamp.date().isoformat(),
-                source_id=source_id,
-                source_name=source.name if source else source_id,
-                size_bytes=path.stat().st_size,
-            )
+        seen: set[Path] = set()
+        for pattern in ("*.jpg", "*.avif"):
+            for path in self.output_dir.rglob(pattern):
+                if path in seen or not path.is_file() or ".thumbs" in path.parts:
+                    continue
+                seen.add(path)
+                timestamp = timestamp_from_path(path, self.tz)
+                if timestamp is None:
+                    continue
+                rel = path.relative_to(self.output_dir).as_posix()
+                source_id = self._source_id_for_relative_path(rel)
+                source = self.sources.get(source_id)
+                yield ImageItem(
+                    path=rel,
+                    url=f"/images/{quote(rel)}",
+                    timestamp=timestamp.isoformat(),
+                    date=timestamp.date().isoformat(),
+                    source_id=source_id,
+                    source_name=source.name if source else source_id,
+                    size_bytes=path.stat().st_size,
+                )
 
     def _source_id_for_relative_path(self, relative_path: str) -> str:
         parts = PurePosixPath(relative_path).parts

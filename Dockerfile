@@ -5,7 +5,7 @@ ARG PLATFORM_TOOLS_URL=https://dl.google.com/android/repository/platform-tools-l
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg libgl1 libglib2.0-0 unzip \
+  && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg libavif-bin libgl1 libglib2.0-0 unzip \
   && rm -rf /var/lib/apt/lists/* \
   && curl -fsSL "$PLATFORM_TOOLS_URL" -o /tmp/platform-tools.zip \
   && unzip /tmp/platform-tools.zip -d /opt \

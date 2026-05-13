@@ -200,7 +200,8 @@ def make_app(
         path = image_index.resolve_image_path(rel)
         if path is None:
             return Response(status_code=404)
-        return FileResponse(path, headers={"Cache-Control": _IMG_CACHE})
+        media_type = "image/avif" if path.suffix == ".avif" else None
+        return FileResponse(path, headers={"Cache-Control": _IMG_CACHE}, media_type=media_type)
 
     routes = [
         Route("/api/health",                api_health),
