@@ -169,6 +169,8 @@ def make_app(
 
     async def serve_thumb(request: Request) -> Response:
         rel  = unquote(request.path_params["path"])
+        if ".thumbs" in rel.split("/"):
+            return Response(status_code=404)
         src  = image_index.resolve_image_path(rel)
         if src is None:
             return Response(status_code=404)
