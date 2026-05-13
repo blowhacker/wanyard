@@ -907,7 +907,6 @@ function setLive(on) {
 // ── Humans panel ──────────────────────────────────────────
 
 function humanThumbStyle(img, box) {
-  const thumbUrl = img.url.replace("/images/", "/thumbs/");
   // Cell ~133×78px (2-col in 300px panel). Image source 2304×1296 (AR 1.778).
   // Show a fixed VIEW_H fraction of frame height, derive VIEW_W to match cell AR.
   const CELL_AR  = 133 / 78;
@@ -919,7 +918,7 @@ function humanThumbStyle(img, box) {
   const vy1 = Math.max(0, Math.min(1 - VIEW_H, cy - VIEW_H / 2));
   const bpx = VIEW_W >= 1 ? 50 : (vx1 / (1 - VIEW_W)) * 100;
   const bpy = VIEW_H >= 1 ? 50 : (vy1 / (1 - VIEW_H)) * 100;
-  return `background-image:url('${thumbUrl}');background-size:${(1/VIEW_W*100).toFixed(1)}%;background-position:${bpx.toFixed(1)}% ${bpy.toFixed(1)}%;background-repeat:no-repeat`;
+  return `background-image:url('${img.url}');background-size:${(1/VIEW_W*100).toFixed(1)}%;background-position:${bpx.toFixed(1)}% ${bpy.toFixed(1)}%;background-repeat:no-repeat`;
 }
 
 function renderHumansGrid() {
