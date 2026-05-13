@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -14,7 +15,8 @@ CREATE TABLE IF NOT EXISTS detections (
     path TEXT PRIMARY KEY,
     has_human INTEGER NOT NULL,
     confidence REAL NOT NULL,
-    processed_at REAL NOT NULL
+    processed_at REAL NOT NULL,
+    boxes_json TEXT
 )
 """
 
@@ -27,39 +29,59 @@ class DetectionStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute(_DDL)
+            # Migrate existing tables that lack boxes_json
+            try:
+                conn.execute("ALTER TABLE detections ADD COLUMN boxes_json TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._path))
         conn.row_factory = sqlite3.Row
         return conn
 
-    def set(self, path: str, has_human: bool, confidence: float) -> None:
+    def set(self, path: str, has_human: bool, confidence: float,
+            boxes: list[dict] | None = None) -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO detections (path, has_human, confidence, processed_at)"
-                " VALUES (?, ?, ?, ?)",
-                (path, int(has_human), confidence, time.time()),
+                "INSERT OR REPLACE INTO detections"
+                " (path, has_human, confidence, processed_at, boxes_json)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (path, int(has_human), confidence, time.time(),
+                 json.dumps(boxes) if boxes else None),
             )
 
-    def get_many(self, paths: list[str]) -> dict[str, tuple[bool, float]]:
+    def get_many(self, paths: list[str]) -> dict[str, dict]:
         if not paths:
             return {}
         with self._connect() as conn:
             placeholders = ",".join("?" * len(paths))
             rows = conn.execute(
-                f"SELECT path, has_human, confidence FROM detections WHERE path IN ({placeholders})",
+                f"SELECT path, has_human, confidence, boxes_json"
+                f" FROM detections WHERE path IN ({placeholders})",
                 paths,
             ).fetchall()
-        return {row["path"]: (bool(row["has_human"]), row["confidence"]) for row in rows}
+        result = {}
+        for row in rows:
+            boxes = json.loads(row["boxes_json"]) if row["boxes_json"] else []
+            result[row["path"]] = {
+                "has_human":  bool(row["has_human"]),
+                "confidence": row["confidence"],
+                "boxes":      boxes,
+            }
+        return result
 
     def processed_paths(self) -> set[str]:
+        """Paths fully processed (has boxes_json set, not NULL)."""
         with self._connect() as conn:
-            rows = conn.execute("SELECT path FROM detections").fetchall()
+            rows = conn.execute(
+                "SELECT path FROM detections WHERE boxes_json IS NOT NULL"
+            ).fetchall()
         return {row["path"] for row in rows}
 
     def stats(self) -> dict:
         with self._connect() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
+            total  = conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
             humans = conn.execute(
                 "SELECT COUNT(*) FROM detections WHERE has_human = 1"
             ).fetchone()[0]
@@ -91,7 +113,6 @@ class DetectionWorker:
     def _load_model(self):
         if self._model is None:
             from ultralytics import YOLO
-
             model_path = os.environ.get("YOLO_MODEL_PATH", "yolo11m.pt")
             LOG.info("loading YOLO model: %s", model_path)
             self._model = YOLO(model_path)
@@ -125,17 +146,22 @@ class DetectionWorker:
                 results = model.predict(
                     abs_path, classes=[0], conf=_CONF_THRESHOLD, verbose=False
                 )
-                has_human = bool(
-                    results
-                    and results[0].boxes is not None
-                    and len(results[0].boxes)
-                )
-                conf = 0.0
-                if has_human:
-                    conf = float(max(results[0].boxes.conf.tolist()))
-                self._store.set(item.path, has_human, conf)
-                LOG.debug(
-                    "detected %s has_human=%s conf=%.2f", item.path, has_human, conf
-                )
+                has_human, conf, boxes = _parse_results(results)
+                self._store.set(item.path, has_human, conf, boxes)
+                LOG.debug("detected %s has_human=%s conf=%.2f boxes=%d",
+                          item.path, has_human, conf, len(boxes))
             except Exception:
                 LOG.exception("detection failed for %s", item.path)
+
+
+def _parse_results(results) -> tuple[bool, float, list[dict]]:
+    """Extract has_human, top confidence, and normalised boxes from YOLO output."""
+    if not results or results[0].boxes is None or not len(results[0].boxes):
+        return False, 0.0, []
+    r = results[0]
+    boxes = []
+    for xyxyn, conf in zip(r.boxes.xyxyn.tolist(), r.boxes.conf.tolist()):
+        x1, y1, x2, y2 = xyxyn
+        boxes.append({"x1": x1, "y1": y1, "x2": x2, "y2": y2, "conf": conf})
+    top_conf = max(b["conf"] for b in boxes)
+    return True, top_conf, boxes

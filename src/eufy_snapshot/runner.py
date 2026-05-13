@@ -174,9 +174,9 @@ def _run_rtsp_with_detection(
         try:
             tmp = grab_rtsp_temp(config, source)
 
+            from .detect import _parse_results
             results = model.predict(str(tmp), classes=[0], conf=0.35, verbose=False)
-            has_human = bool(results and results[0].boxes and len(results[0].boxes))
-            top_conf = float(max(results[0].boxes.conf.tolist())) if has_human else 0.0
+            has_human, top_conf, boxes = _parse_results(results)
 
             now = time.monotonic()
             baseline_due = (now - last_saved) >= baseline
@@ -195,7 +195,7 @@ def _run_rtsp_with_detection(
                     image_index.refresh()
                 if detection_store:
                     rel = out.relative_to(config.output_dir).as_posix()
-                    detection_store.set(rel, has_human, top_conf)
+                    detection_store.set(rel, has_human, top_conf, boxes)
                 reason = "human" if has_human else "baseline"
                 LOG.info("captured %s for %s [%s] conf=%.2f", out.name, source.name, reason, top_conf)
 

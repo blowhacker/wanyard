@@ -155,7 +155,7 @@ def make_app(
         if detection_store:
             det_map = detection_store.get_many([i.path for i in all_items])
             if humans_only:
-                all_items = [i for i in all_items if det_map.get(i.path, (False,))[0]]
+                all_items = [i for i in all_items if det_map.get(i.path, {}).get("has_human")]
 
         if offset_raw is not None:
             try:
@@ -299,9 +299,7 @@ def make_app(
 def _item_to_dict(item: ImageItem | None, det_map: dict | None = None) -> dict | None:
     if item is None:
         return None
-    has_human = None
-    if det_map and item.path in det_map:
-        has_human = det_map[item.path][0]
+    det = det_map.get(item.path) if det_map else None
     return {
         "path":        item.path,
         "url":         item.url,
@@ -310,7 +308,8 @@ def _item_to_dict(item: ImageItem | None, det_map: dict | None = None) -> dict |
         "source_id":   item.source_id,
         "source_name": item.source_name,
         "size_bytes":  item.size_bytes,
-        "has_human":   has_human,
+        "has_human":   det["has_human"] if det else None,
+        "boxes":       det["boxes"]     if det else None,
     }
 
 
