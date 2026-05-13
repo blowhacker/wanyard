@@ -25,6 +25,7 @@
         <div class="hud-bottom">
           <span id="hudTimestamp" class="hud-ts"></span>
         </div>
+        <button id="jumpLatest" class="jump-latest" hidden>&#8595; LATEST</button>
       </section>
       <aside class="panel">
         <div class="panel-head">
@@ -40,22 +41,25 @@
             <button id="prev" title="Previous (←)" aria-label="Previous snapshot">&#8249;</button>
             <button id="playBtn" title="Play / Pause (Space)" aria-label="Play">&#9654;</button>
             <button id="next" title="Next (→)" aria-label="Next snapshot">&#8250;</button>
+            <span id="frameCounter" class="frame-counter"></span>
           </div>
           <div class="density-row">
             <span class="dens-end">&#8722;</span>
             <input id="densitySlider" type="range" min="1" max="5" step="1" value="3" aria-label="Frame density">
             <span class="dens-end">+</span>
           </div>
+          <div id="densityDesc" class="density-desc"></div>
+          <div id="speedPills" class="speed-pills"></div>
         </div>
         <div class="field-block">
-          <div class="field">
-            <label for="sourceSelect">Source</label>
-            <select id="sourceSelect" aria-label="Snapshot source"></select>
+          <div class="field" id="sourceField">
+            <div class="field-label">Source</div>
+            <div id="sourceCtrl" class="source-ctrl"></div>
             <div id="sourceMeta" class="field-meta"></div>
           </div>
-          <div class="field">
-            <label for="dateSelect">Date</label>
-            <select id="dateSelect" aria-label="Snapshot date"></select>
+          <div class="field" id="dateField">
+            <div class="field-label">Date</div>
+            <div id="dateCtrl" class="date-ctrl-wrap"></div>
           </div>
           <details class="field" id="rtspPanel" hidden>
             <summary><span>Add Camera</span></summary>
