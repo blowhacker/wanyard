@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import subprocess
+import urllib.parse
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote
@@ -55,6 +58,7 @@ def make_app(
             capture_worker.start()
         if detection_worker:
             detection_worker.start()
+        asyncio.create_task(_register_go2rtc_streams(config, source_db))
 
         async def _refresh_loop() -> None:
             while True:
@@ -279,8 +283,17 @@ def make_app(
         return FileResponse(out_f, media_type="video/mp4", filename=fname,
                             background=BackgroundTask(_cleanup))
 
+    go2rtc_url = os.environ.get("GO2RTC_URL", "")
+
+    async def api_live(request: Request) -> JSONResponse:
+        return JSONResponse({
+            "enabled": bool(go2rtc_url),
+            "port": 1984,
+        })
+
     routes = [
         Route("/api/health",                api_health),
+        Route("/api/live",                  api_live),
         Route("/api/sources",               api_sources,        methods=["GET", "POST"]),
         Route("/api/sources/{source_id}",   api_delete_source,  methods=["DELETE"]),
         Route("/api/images/latest",         api_images_latest),
@@ -344,3 +357,44 @@ def _sources_to_dict(config: AppConfig, image_index: ImageIndex, source_db=None)
             "mutable":          True,
         })
     return result
+
+
+async def _register_go2rtc_streams(config, source_db) -> None:
+    from .capture import resolve_rtsp_url
+    go2rtc = os.environ.get("GO2RTC_URL", "")
+    if not go2rtc:
+        return
+
+    # Wait for go2rtc to be ready (retry up to 30s)
+    for attempt in range(10):
+        await asyncio.sleep(3)
+        try:
+            urllib.request.urlopen(f"{go2rtc}/api/streams", timeout=2)
+            break
+        except Exception:
+            if attempt == 9:
+                import logging
+                logging.getLogger(__name__).warning("go2rtc not reachable after retries")
+                return
+
+    all_sources = list(config.sources)
+    if source_db:
+        all_sources += list(source_db.to_source_configs())
+
+    import logging
+    LOG = logging.getLogger(__name__)
+    for source in all_sources:
+        if source.type != "rtsp" or not source.enabled:
+            continue
+        url = resolve_rtsp_url(source)
+        if not url:
+            continue
+        try:
+            params = urllib.parse.urlencode({"name": source.id, "url": url})
+            req = urllib.request.Request(
+                f"{go2rtc}/api/streams?{params}", method="PUT"
+            )
+            urllib.request.urlopen(req, timeout=5)
+            LOG.info("registered go2rtc stream: %s", source.id)
+        except Exception as exc:
+            LOG.warning("go2rtc registration failed for %s: %s", source.id, exc)

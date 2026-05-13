@@ -1,4 +1,13 @@
 services:
+  go2rtc:
+    image: alexxit/go2rtc
+    container_name: go2rtc
+    restart: unless-stopped
+    ports:
+      - "1984:1984"
+    volumes:
+      - ./go2rtc.yaml:/config/go2rtc.yaml:ro
+
   app:
     image: eufy-snapshot:latest
     container_name: eufy-snapshot
@@ -8,8 +17,11 @@ services:
       - "8091:8091"
     environment:
       - YOLO_MODEL_PATH=/app/models/yolo11m.pt
+      - GO2RTC_URL=http://go2rtc:1984
     volumes:
       - ./config.banana.yaml:/app/config.yaml:ro
       - ./snapshots:/app/snapshots
       - ./data:/app/data
       - ./models:/app/models
+    depends_on:
+      - go2rtc
