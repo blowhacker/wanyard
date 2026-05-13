@@ -72,6 +72,7 @@ const els = {
   exportField:       document.getElementById("exportField"),
   inBtn:             document.getElementById("inBtn"),
   outBtn:            document.getElementById("outBtn"),
+  clearRangeBtn:     document.getElementById("clearRangeBtn"),
   exportBtn:         document.getElementById("exportBtn"),
 };
 
@@ -844,9 +845,15 @@ function updateStaleness(latestTimestamp) {
 function stepFrame(delta) {
   if (!state.images.length) return;
   const srcId = state.images[state.selected]?.source_id;
-  const queue = srcId
+  let queue = srcId
     ? state.visibleIndices.filter(i => state.images[i]?.source_id === srcId)
     : state.visibleIndices;
+  if (state.inPoint || state.outPoint) {
+    const inIdx  = state.inPoint  ? (pathIndex.get(state.inPoint)  ?? 0) : 0;
+    const outIdx = state.outPoint ? (pathIndex.get(state.outPoint) ?? state.images.length - 1) : state.images.length - 1;
+    const lo = Math.min(inIdx, outIdx), hi = Math.max(inIdx, outIdx);
+    queue = queue.filter(i => i >= lo && i <= hi);
+  }
   if (!queue.length) return;
   const pos = Math.max(0, queue.indexOf(state.selected));
   const next = state.loop
@@ -884,14 +891,14 @@ els.jumpLatest.addEventListener("click", () => {
 function setInPoint() {
   const img = state.images[state.selected];
   if (!img) return;
-  state.inPoint = img.path;
+  state.inPoint = state.inPoint === img.path ? null : img.path;
   renderFilmstrip();
 }
 
 function setOutPoint() {
   const img = state.images[state.selected];
   if (!img) return;
-  state.outPoint = img.path;
+  state.outPoint = state.outPoint === img.path ? null : img.path;
   renderFilmstrip();
 }
 
@@ -903,10 +910,12 @@ function clearRange() {
 
 function updateExportBtn() {
   if (!els.exportBtn) return;
-  const ready = state.inPoint && state.outPoint;
+  const hasAny = state.inPoint || state.outPoint;
+  const ready  = state.inPoint && state.outPoint;
   els.exportBtn.disabled = !ready;
-  if (els.inBtn)  els.inBtn.classList.toggle("active",  !!state.inPoint);
-  if (els.outBtn) els.outBtn.classList.toggle("active", !!state.outPoint);
+  if (els.inBtn)        els.inBtn.classList.toggle("active",  !!state.inPoint);
+  if (els.outBtn)       els.outBtn.classList.toggle("active", !!state.outPoint);
+  if (els.clearRangeBtn) els.clearRangeBtn.hidden = !hasAny;
 }
 
 async function exportRange() {
@@ -951,10 +960,13 @@ async function exportRange() {
       alert(p.error || "Export failed");
       return;
     }
-    const blob = await resp.blob();
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url; a.download = "export.mp4"; a.click();
+    const blob     = await resp.blob();
+    const url      = URL.createObjectURL(blob);
+    const srcSlug  = sourceName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const humanTag = state.humansOnly ? "-human" : "";
+    const fname    = `${srcSlug}_${startTs}_${endTs}${humanTag}.mp4`;
+    const a        = document.createElement("a");
+    a.href = url; a.download = fname; a.click();
     URL.revokeObjectURL(url);
   } catch (err) {
     alert("Export failed: " + err.message);
@@ -1057,9 +1069,10 @@ buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
 
-if (els.inBtn)     els.inBtn.addEventListener("click",  setInPoint);
-if (els.outBtn)    els.outBtn.addEventListener("click",  setOutPoint);
-if (els.exportBtn) els.exportBtn.addEventListener("click", exportRange);
+if (els.inBtn)        els.inBtn.addEventListener("click",  setInPoint);
+if (els.outBtn)       els.outBtn.addEventListener("click",  setOutPoint);
+if (els.clearRangeBtn) els.clearRangeBtn.addEventListener("click", clearRange);
+if (els.exportBtn)    els.exportBtn.addEventListener("click", exportRange);
 
 loadHealth().finally(() => {
   loadSources().then(() => loadImages(false)).finally(startAutoRefresh);

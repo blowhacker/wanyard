@@ -996,6 +996,21 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 .range-btn:hover  { border-color: var(--amber-border); color: var(--amber); }
 .range-btn.active { border-color: var(--amber-border); color: var(--amber); background: var(--amber-dim); }
 
+.range-clear-btn {
+  height: 28px;
+  width: 28px;
+  padding: 0;
+  font-family: var(--font);
+  font-size: 0.75rem;
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r);
+  color: var(--text-lo);
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+.range-clear-btn:hover { border-color: var(--red); color: var(--red); }
+
 .export-btn {
   height: 28px;
   width: auto;
@@ -1023,9 +1038,12 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 
 .frame--in-range {
   background: rgba(42, 172, 106, 0.12);
-  border: 3px solid var(--green);
-  border-right: none;
+  border-top:    3px solid var(--green);
+  border-bottom: 3px solid var(--green);
+  border-left:   none;
+  border-right:  none;
 }
+.frame--in-point  { border-left:  3px solid var(--green) !important; }
 .frame--out-point { border-right: 3px solid var(--green) !important; }
 
 /* ── FILTER BAR ──────────────────────────────────────────── */
