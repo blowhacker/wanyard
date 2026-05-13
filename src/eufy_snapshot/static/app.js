@@ -988,6 +988,8 @@ function renderHumansGrid() {
       ts.className = "human-cell-ts";
       ts.textContent = formatTime(img.timestamp);
       cell.appendChild(ts);
+      cell.addEventListener("mouseenter", () => showPreview(img));
+      cell.addEventListener("mouseleave", restoreSelected);
       cell.addEventListener("click", () => {
         const idx = state.images.findIndex(i => i.path === img.path);
         if (idx >= 0) { setLive(false); stopPlay(); state.selected = idx; render(); }
