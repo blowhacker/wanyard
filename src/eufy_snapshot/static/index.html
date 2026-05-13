@@ -11,6 +11,8 @@
   </head>
   <body>
     <main class="viewer">
+
+      <!-- ── Image stage ───────────────────────────── -->
       <section class="image-stage">
         <div class="corner tl"></div>
         <div class="corner tr"></div>
@@ -27,6 +29,8 @@
         </div>
         <button id="jumpLatest" class="jump-latest" hidden>&#8595; LATEST</button>
       </section>
+
+      <!-- ── Panel (info only) ─────────────────────── -->
       <aside class="panel">
         <div class="panel-head">
           <span class="panel-brand">CCTV</span>
@@ -35,22 +39,6 @@
         <div class="ts-block">
           <div class="ts-label">SELECTED FRAME</div>
           <div id="timestamp" class="timestamp">--</div>
-        </div>
-        <div class="controls-block">
-          <div class="transport">
-            <button id="prev" title="Previous (←)" aria-label="Previous snapshot">&#8249;</button>
-            <button id="playBtn" title="Play / Pause (Space)" aria-label="Play">&#9654;</button>
-            <button id="next" title="Next (→)" aria-label="Next snapshot">&#8250;</button>
-          </div>
-          <div class="play-options">
-            <div id="speedPills" class="speed-pills"></div>
-            <button id="loopBtn" class="loop-btn active" title="Toggle loop">&#8635;</button>
-          </div>
-          <div class="play-stats">
-            <span id="frameCounter" class="frame-counter"></span>
-            <span id="fpsDisplay" class="fps-display"></span>
-          </div>
-          <div id="densityBtns" class="density-btns"></div>
         </div>
         <div class="field-block">
           <div class="field" id="sourceField">
@@ -81,7 +69,34 @@
           </details>
         </div>
       </aside>
-      <div id="filmstrip" class="filmstrip" aria-label="Timeline"></div>
+
+      <!-- ── Filmstrip area (controls + timeline) ─── -->
+      <div class="filmstrip-area">
+        <div class="filmstrip-bar">
+          <!-- Transport: navigate frames -->
+          <div class="fb-transport">
+            <button id="prev" title="Previous (←)">&#8249;</button>
+            <button id="playBtn" title="Play / Pause (Space)">&#9654;</button>
+            <button id="next" title="Next (→)">&#8250;</button>
+          </div>
+          <!-- Playback modifiers -->
+          <div class="fb-play">
+            <div id="speedPills" class="speed-pills"></div>
+            <button id="loopBtn" class="loop-btn active" title="Toggle loop">LOOP</button>
+          </div>
+          <!-- Stats -->
+          <div class="fb-stats">
+            <span id="frameCounter" class="frame-counter"></span>
+            <span id="fpsDisplay" class="fps-display"></span>
+          </div>
+          <!-- Density: controls filmstrip view -->
+          <div class="fb-density">
+            <div id="densityBtns" class="density-btns"></div>
+          </div>
+        </div>
+        <div id="filmstrip" class="filmstrip" aria-label="Timeline"></div>
+      </div>
+
     </main>
     <script src="/app.js"></script>
   </body>

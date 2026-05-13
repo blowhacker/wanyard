@@ -472,8 +472,8 @@ function render() {
   const hasImages = state.images.length > 0;
   els.snapshot.style.display = hasImages ? "block" : "none";
   els.empty.style.display    = hasImages ? "none"  : "block";
-  els.prev.disabled = !hasImages || state.selected <= 0;
-  els.next.disabled = !hasImages || state.selected >= state.images.length - 1;
+  els.prev.disabled = !hasImages || (!state.loop && state.selected <= 0);
+  els.next.disabled = !hasImages || (!state.loop && state.selected >= state.images.length - 1);
 
   // Frame counter
   if (els.frameCounter) {
@@ -776,12 +776,17 @@ function updateStaleness(latestTimestamp) {
 
 // ── Controls ──────────────────────────────────────────────
 
-els.prev.addEventListener("click", () => {
-  stopPlay(); state.selected = Math.max(0, state.selected - 1); render();
-});
-els.next.addEventListener("click", () => {
-  stopPlay(); state.selected = Math.min(state.images.length - 1, state.selected + 1); render();
-});
+function stepFrame(delta) {
+  const n = state.images.length;
+  if (!n) return;
+  state.selected = state.loop
+    ? (state.selected + delta + n) % n
+    : Math.max(0, Math.min(n - 1, state.selected + delta));
+  render();
+}
+
+els.prev.addEventListener("click", () => { stopPlay(); stepFrame(-1); });
+els.next.addEventListener("click", () => { stopPlay(); stepFrame(+1); });
 els.playBtn.addEventListener("click", togglePlay);
 els.loopBtn.addEventListener("click", () => {
   state.loop = !state.loop;
@@ -795,9 +800,9 @@ els.jumpLatest.addEventListener("click", () => {
 document.addEventListener("keydown", e => {
   const tag = e.target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-  if (e.key === " ")           { e.preventDefault(); togglePlay(); }
-  else if (e.key === "ArrowLeft")  { stopPlay(); state.selected = Math.max(0, state.selected - 1); render(); }
-  else if (e.key === "ArrowRight") { stopPlay(); state.selected = Math.min(state.images.length - 1, state.selected + 1); render(); }
+  if (e.key === " ")            { e.preventDefault(); togglePlay(); }
+  else if (e.key === "ArrowLeft")  { stopPlay(); stepFrame(-1); }
+  else if (e.key === "ArrowRight") { stopPlay(); stepFrame(+1); }
 });
 
 els.addSourceForm.addEventListener("submit", async e => {

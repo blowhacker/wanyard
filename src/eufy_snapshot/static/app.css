@@ -53,6 +53,62 @@ html, body {
   height: 100vh;
 }
 
+/* Filmstrip area: full-width bar + scrollable timeline */
+.filmstrip-area {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-strip);
+  border-top: 1px solid var(--border-lo);
+}
+
+.filmstrip-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 10px;
+  height: 36px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-sub);
+}
+
+/* Transport: prev/play/next */
+.fb-transport {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Playback modifiers: speed + loop */
+.fb-play {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-shrink: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-lo);
+}
+
+/* Stats: takes remaining centre space */
+.fb-stats {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* Density: right-aligned, controls the filmstrip view */
+.fb-density {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-lo);
+}
+
 /* ── IMAGE STAGE ─────────────────────────────────────────── */
 
 .image-stage {
@@ -293,28 +349,6 @@ button:hover:not(:disabled) {
 
 button:disabled { opacity: 0.18; cursor: default; }
 
-/* Transport: prev / play / next */
-.transport {
-  display: flex;
-  gap: 6px;
-}
-
-/* Speed pills + loop on one row */
-.play-options {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 8px;
-}
-
-/* Stats row: frame counter + fps */
-.play-stats {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 6px;
-  min-height: 14px;
-}
 
 /* Jump-to-latest overlay button */
 .jump-latest {
@@ -352,15 +386,17 @@ button:disabled { opacity: 0.18; cursor: default; }
   letter-spacing: 0.06em;
 }
 
-/* Loop toggle */
+/* Loop toggle — text label, no icon */
 .loop-btn {
   height: 22px;
-  width: 36px;
+  width: auto;
+  padding: 0 8px;
   border: 1px solid var(--border-hi);
   border-radius: var(--r);
   background: transparent;
   color: var(--text-lo);
-  font-size: 1rem;
+  font-size: 0.52rem;
+  letter-spacing: 0.1em;
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
   padding: 0;
@@ -536,7 +572,7 @@ button:disabled { opacity: 0.18; cursor: default; }
   gap: 2px;
 }
 .speed-pill {
-  width: 36px;
+  width: 34px;
   height: 22px;
   padding: 0;
   border: 1px solid var(--border-hi);
@@ -559,11 +595,10 @@ button:disabled { opacity: 0.18; cursor: default; }
   color: var(--text-mid);
 }
 
-/* Density buttons (replaces slider) */
+/* Density buttons */
 .density-btns {
   display: flex;
   gap: 3px;
-  margin-top: 10px;
 }
 .density-btn {
   flex: 1;
@@ -595,7 +630,13 @@ button:disabled { opacity: 0.18; cursor: default; }
 .refresh-badge.stale::before { background: var(--amber); animation: none; opacity: 1; }
 
 
-/* Play button — same size as transport siblings, amber accent */
+/* Transport buttons live in the filmstrip bar — smaller */
+.fb-transport button {
+  width: 26px;
+  height: 26px;
+}
+
+/* Play button — amber accent */
 #playBtn {
   border-color: var(--amber-border);
   color: var(--amber);
@@ -813,8 +854,6 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 /* ── FILMSTRIP ───────────────────────────────────────────── */
 
 .filmstrip {
-  grid-column: 1 / -1;
-  grid-row: 2;
   display: flex;
   flex-direction: column;
   background: var(--bg-strip);
@@ -942,9 +981,14 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
     max-height: 36vh;
   }
 
-  .filmstrip {
+  .filmstrip-area {
     grid-column: 1;
     grid-row: 3;
+  }
+
+  .filmstrip {
     max-height: calc(var(--strip-row) * 2);
   }
+
+  .fb-stats { display: none; } /* too narrow on mobile */
 }
