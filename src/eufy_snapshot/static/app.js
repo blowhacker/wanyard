@@ -66,6 +66,28 @@ const els = {
 // Calendar display state (persists across re-renders)
 const calState = { year: new Date().getFullYear(), month: new Date().getMonth() };
 
+// Preload cache: keeps Image objects alive so browser caches responses
+const preloadCache = new Map(); // url → HTMLImageElement
+const PRELOAD_AHEAD = 10;
+const PRELOAD_MAX   = 50;
+
+function preloadAhead(queue, pos) {
+  for (let i = 1; i <= PRELOAD_AHEAD; i++) {
+    const idx = queue[(pos + i) % queue.length];
+    const img = state.images[idx];
+    if (!img || preloadCache.has(img.url)) continue;
+    const el = new Image();
+    el.src = img.url;
+    preloadCache.set(img.url, el);
+  }
+  // Evict oldest entries beyond cap
+  if (preloadCache.size > PRELOAD_MAX) {
+    for (const k of [...preloadCache.keys()].slice(0, preloadCache.size - PRELOAD_MAX)) {
+      preloadCache.delete(k);
+    }
+  }
+}
+
 // ── Filmstrip internal state ──────────────────────────────
 
 const stripState  = new Map();  // sourceId → { paths, framesEl, stripEl, lastTs, srcImages }
@@ -664,9 +686,12 @@ function startPlay() {
   let pos = Math.max(0, queue.indexOf(state.selected));
   const ms = SPEEDS[state.playSpeed].ms;
 
+  preloadAhead(queue, pos); // warm cache before first tick
+
   state.playTimer = setInterval(() => {
     pos = (pos + 1) % queue.length;
     state.selected = queue[pos];
+    preloadAhead(queue, pos); // keep window ahead of playhead
     render();
   }, ms);
 }
