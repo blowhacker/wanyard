@@ -4,8 +4,6 @@ import asyncio
 import os
 import shutil
 import subprocess
-import urllib.parse
-import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote
@@ -360,41 +358,31 @@ def _sources_to_dict(config: AppConfig, image_index: ImageIndex, source_db=None)
 
 
 async def _register_go2rtc_streams(config, source_db) -> None:
+    import logging
     from .capture import resolve_rtsp_url
-    go2rtc = os.environ.get("GO2RTC_URL", "")
-    if not go2rtc:
-        return
+    LOG = logging.getLogger(__name__)
 
-    # Wait for go2rtc to be ready (retry up to 30s)
-    for attempt in range(10):
-        await asyncio.sleep(3)
-        try:
-            urllib.request.urlopen(f"{go2rtc}/api/streams", timeout=2)
-            break
-        except Exception:
-            if attempt == 9:
-                import logging
-                logging.getLogger(__name__).warning("go2rtc not reachable after retries")
-                return
+    config_dir = os.environ.get("GO2RTC_CONFIG_DIR", "")
+    if not config_dir:
+        return
 
     all_sources = list(config.sources)
     if source_db:
         all_sources += list(source_db.to_source_configs())
 
-    import logging
-    LOG = logging.getLogger(__name__)
+    stream_lines = []
     for source in all_sources:
         if source.type != "rtsp" or not source.enabled:
             continue
         url = resolve_rtsp_url(source)
-        if not url:
-            continue
-        try:
-            params = urllib.parse.urlencode({"name": source.id, "url": url})
-            req = urllib.request.Request(
-                f"{go2rtc}/api/streams?{params}", method="PUT"
-            )
-            urllib.request.urlopen(req, timeout=5)
-            LOG.info("registered go2rtc stream: %s", source.id)
-        except Exception as exc:
-            LOG.warning("go2rtc registration failed for %s: %s", source.id, exc)
+        if url:
+            stream_lines.append(f"  {source.id}: {url}")
+
+    if not stream_lines:
+        return
+
+    yaml_content = "api:\n  origin: '*'\n\nstreams:\n" + "\n".join(stream_lines) + "\n"
+    config_path = Path(config_dir) / "go2rtc.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml_content)
+    LOG.info("wrote go2rtc config: %d streams", len(stream_lines))

@@ -6,7 +6,7 @@ services:
     ports:
       - "1984:1984"
     volumes:
-      - ./go2rtc.yaml:/config/go2rtc.yaml:ro
+      - ./go2rtc-data:/config
 
   app:
     image: eufy-snapshot:latest
@@ -18,10 +18,12 @@ services:
     environment:
       - YOLO_MODEL_PATH=/app/models/yolo11m.pt
       - GO2RTC_URL=http://go2rtc:1984
+      - GO2RTC_CONFIG_DIR=/go2rtc-data
     volumes:
       - ./config.banana.yaml:/app/config.yaml:ro
       - ./snapshots:/app/snapshots
       - ./data:/app/data
       - ./models:/app/models
+      - ./go2rtc-data:/go2rtc-data
     depends_on:
       - go2rtc
