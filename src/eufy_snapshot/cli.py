@@ -128,13 +128,26 @@ def cmd_serve(config: AppConfig) -> int:
     )
     det_store = DetectionStore(config.output_dir / ".detections.db")
     det_worker = DetectionWorker(det_store, image_index)
-    worker = CaptureWorker(config, image_index, source_db=source_db)
+    detection_model = _load_yolo_model()
+    worker = CaptureWorker(config, image_index, source_db=source_db, detection_model=detection_model)
     app = make_app(
         config, image_index, source_db=source_db, capture_worker=worker,
         detection_store=det_store, detection_worker=det_worker,
     )
     _serve(app, config)
     return 0
+
+
+def _load_yolo_model():
+    try:
+        import os
+        from ultralytics import YOLO
+        model_path = os.environ.get("YOLO_MODEL_PATH", "yolo11m.pt")
+        logging.info("loading YOLO model: %s", model_path)
+        return YOLO(model_path)
+    except Exception:
+        logging.warning("YOLO model unavailable — detection-triggered capture disabled")
+        return None
 
 
 def cmd_human_watch(

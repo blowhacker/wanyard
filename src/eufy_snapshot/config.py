@@ -61,6 +61,7 @@ class AppConfig:
     adb_serial: str = "emulator-5554"
     adb_connect: str | None = None
     interval_seconds: float = 30
+    detection_poll_seconds: float = 3.5
     output_dir: Path = Path("snapshots")
     db_path: Path | None = None
     camera_name: str = "Front Door"
@@ -99,6 +100,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         "adb_serial": data.get("adb_serial", AppConfig.adb_serial),
         "adb_connect": data.get("adb_connect", AppConfig.adb_connect),
         "interval_seconds": data.get("interval_seconds", AppConfig.interval_seconds),
+        "detection_poll_seconds": data.get("detection_poll_seconds", AppConfig.detection_poll_seconds),
         "output_dir": Path(data.get("output_dir", AppConfig.output_dir)),
         "db_path": Path(db_path_raw) if db_path_raw else None,
         "camera_name": data.get("camera_name", AppConfig.camera_name),

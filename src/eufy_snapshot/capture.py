@@ -169,6 +169,31 @@ def capture_rtsp_frame(config: AppConfig, source: SourceConfig) -> CaptureResult
     return result
 
 
+def grab_rtsp_temp(config: AppConfig, source: SourceConfig) -> Path:
+    """Grab one RTSP frame to a temp JPEG. Caller must delete when done."""
+    import tempfile
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise CaptureNotReady("ffmpeg not installed")
+    url = resolve_rtsp_url(source)
+    if not url:
+        raise CaptureNotReady(f"no URL for {source.id}")
+    tmp = Path(tempfile.mktemp(suffix=".jpg"))
+    r = subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error",
+         "-rtsp_transport", source.rtsp_transport,
+         "-y", "-i", url, "-frames:v", "1", "-q:v", "2", str(tmp)],
+        capture_output=True, timeout=source.timeout_seconds, check=False,
+    )
+    if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg failed for {source.name}")
+    if not looks_like_jpeg(tmp):
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"not a JPEG: {source.name}")
+    return tmp
+
+
 def newest_android_jpeg(adb: AdbClient, android_dir: str) -> str | None:
     command = (
         f"ls -t {shell_quote(android_dir)}/*.jpg {shell_quote(android_dir)}/*.jpeg "
