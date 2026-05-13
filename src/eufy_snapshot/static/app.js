@@ -31,9 +31,10 @@ const els = {
   hudTimestamp:     document.getElementById("hudTimestamp"),
 };
 
-// Tracks paths currently rendered in the filmstrip, in order.
-// Lets us do append-only updates without touching existing DOM nodes.
-let filmstripPaths = [];
+// Per-source strip state: sourceId -> { paths: string[], framesEl: HTMLElement, stripEl: HTMLElement }
+const stripState = new Map();
+// path -> globalIndex in state.images (rebuilt each render)
+const pathIndex = new Map();
 
 async function loadImages(preserveSelection = true) {
   const params = new URLSearchParams();
@@ -167,38 +168,86 @@ function render() {
 }
 
 function renderFilmstrip() {
-  const images = state.images;
+  // Rebuild path->globalIndex lookup
+  pathIndex.clear();
+  state.images.forEach((img, i) => pathIndex.set(img.path, i));
 
-  // Detect append-only: existing rendered paths are a prefix of the new list
-  const isAppendOnly =
-    images.length >= filmstripPaths.length &&
-    filmstripPaths.every((path, i) => images[i].path === path);
-
-  if (!isAppendOnly) {
-    // Filter changed or images removed — full rebuild
-    els.filmstrip.innerHTML = "";
-    filmstripPaths = [];
+  // Group images by source (preserves insertion order = timestamp order)
+  const groups = new Map();
+  for (let i = 0; i < state.images.length; i++) {
+    const img = state.images[i];
+    if (!groups.has(img.source_id)) {
+      groups.set(img.source_id, { sourceId: img.source_id, sourceName: img.source_name, items: [] });
+    }
+    groups.get(img.source_id).items.push(img);
   }
 
-  // Append only the new frames (no-op if nothing new)
-  for (let i = filmstripPaths.length; i < images.length; i++) {
-    els.filmstrip.appendChild(buildFrame(images[i], i));
-    filmstripPaths.push(images[i].path);
+  // Remove strips for sources no longer present
+  for (const [sourceId, strip] of stripState) {
+    if (!groups.has(sourceId)) {
+      strip.stripEl.remove();
+      stripState.delete(sourceId);
+    }
   }
 
-  // Update selected highlight (class toggle only — no DOM creation)
-  const frames = els.filmstrip.children;
-  for (let i = 0; i < frames.length; i++) {
-    frames[i].classList.toggle("selected", i === state.selected);
+  // Create/update one strip per source
+  for (const [sourceId, group] of groups) {
+    if (!stripState.has(sourceId)) {
+      const stripEl = document.createElement("div");
+      stripEl.className = "strip";
+
+      const label = document.createElement("div");
+      label.className = "strip-label";
+      label.textContent = group.sourceName;
+      label.title = group.sourceName;
+
+      const framesEl = document.createElement("div");
+      framesEl.className = "frames";
+
+      stripEl.appendChild(label);
+      stripEl.appendChild(framesEl);
+      els.filmstrip.appendChild(stripEl);
+      stripState.set(sourceId, { paths: [], framesEl, stripEl });
+    }
+
+    const strip = stripState.get(sourceId);
+    const items = group.items;
+
+    // Append-only check: existing paths are a prefix of new list
+    const isAppend =
+      items.length >= strip.paths.length &&
+      strip.paths.every((p, i) => items[i].path === p);
+
+    if (!isAppend) {
+      strip.framesEl.innerHTML = "";
+      strip.paths = [];
+    }
+
+    for (let i = strip.paths.length; i < items.length; i++) {
+      strip.framesEl.appendChild(buildFrame(items[i]));
+      strip.paths.push(items[i].path);
+    }
   }
 
-  // Scroll selected frame into view without disrupting manual scrolling
-  if (state.selected >= 0 && state.selected < frames.length) {
-    frames[state.selected].scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  // Update selected highlight and scroll into view
+  const selectedPath = state.images[state.selected]?.path;
+  let selectedEl = null;
+
+  for (const [, strip] of stripState) {
+    const frameEls = strip.framesEl.children;
+    for (let i = 0; i < frameEls.length; i++) {
+      const isSelected = strip.paths[i] === selectedPath;
+      frameEls[i].classList.toggle("selected", isSelected);
+      if (isSelected) selectedEl = frameEls[i];
+    }
+  }
+
+  if (selectedEl) {
+    selectedEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
   }
 }
 
-function buildFrame(image, index) {
+function buildFrame(image) {
   const frame = document.createElement("div");
   frame.className = "frame";
 
@@ -213,10 +262,27 @@ function buildFrame(image, index) {
 
   frame.appendChild(img);
   frame.appendChild(ts);
+
   frame.addEventListener("click", () => {
-    state.selected = index;
-    render();
+    const idx = pathIndex.get(image.path);
+    if (idx !== undefined) { state.selected = idx; render(); }
   });
+
+  frame.addEventListener("mouseenter", () => {
+    if (!els.snapshot.style.display || els.snapshot.style.display === "none") return;
+    els.snapshot.src = image.url;
+    if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(image.timestamp);
+    if (els.hudSource)    els.hudSource.textContent = image.source_name.toUpperCase();
+  });
+
+  frame.addEventListener("mouseleave", () => {
+    const sel = state.images[state.selected];
+    if (!sel) return;
+    els.snapshot.src = `${sel.url}?t=${encodeURIComponent(sel.timestamp)}`;
+    if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(sel.timestamp);
+    if (els.hudSource)    els.hudSource.textContent = sel.source_name.toUpperCase();
+  });
+
   return frame;
 }
 
