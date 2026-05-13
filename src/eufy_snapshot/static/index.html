@@ -3,54 +3,73 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Eufy Snapshot</title>
+    <title>Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/app.css">
   </head>
   <body>
     <main class="viewer">
       <section class="image-stage">
-        <img id="snapshot" alt="Latest Eufy camera snapshot">
-        <div id="empty" class="empty">No snapshots captured yet</div>
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+        <div class="hud-top">
+          <span id="hudSource" class="hud-source"></span>
+          <span class="hud-rec"><span class="rec-dot"></span>REC</span>
+        </div>
+        <img id="snapshot" alt="Camera snapshot">
+        <div id="empty" class="empty">NO SIGNAL</div>
+        <div class="hud-bottom">
+          <span id="hudTimestamp" class="hud-ts"></span>
+        </div>
       </section>
       <aside class="panel">
-        <div class="status-row">
-          <div>
-            <div class="label">Selected</div>
-            <div id="timestamp" class="timestamp">--</div>
+        <div class="panel-head">
+          <span class="panel-brand">CCTV</span>
+          <div id="refreshStatus" class="refresh-badge">AUTO</div>
+        </div>
+        <div class="ts-block">
+          <div class="ts-label">SELECTED FRAME</div>
+          <div id="timestamp" class="timestamp">--</div>
+        </div>
+        <div class="controls-block">
+          <div class="controls">
+            <button id="prev" title="Previous snapshot" aria-label="Previous snapshot">&#9664;</button>
+            <input id="timeline" type="range" min="0" max="0" value="0" aria-label="Snapshot timeline">
+            <button id="next" title="Next snapshot" aria-label="Next snapshot">&#9654;</button>
           </div>
-          <div id="refreshStatus" class="refresh">Auto</div>
         </div>
-        <div class="controls">
-          <button id="prev" title="Previous snapshot" aria-label="Previous snapshot">‹</button>
-          <input id="timeline" type="range" min="0" max="0" value="0" aria-label="Snapshot timeline">
-          <button id="next" title="Next snapshot" aria-label="Next snapshot">›</button>
+        <div class="field-block">
+          <div class="field">
+            <label for="sourceSelect">Source</label>
+            <select id="sourceSelect" aria-label="Snapshot source"></select>
+            <div id="sourceMeta" class="field-meta"></div>
+          </div>
+          <div class="field">
+            <label for="dateSelect">Date</label>
+            <select id="dateSelect" aria-label="Snapshot date"></select>
+          </div>
+          <details class="field" id="rtspPanel" hidden>
+            <summary><span>Add Camera</span></summary>
+            <div id="dbSourceList" class="db-source-list"></div>
+            <form id="addSourceForm" class="add-source-form" autocomplete="off">
+              <input id="newSourceName" type="text" placeholder="Camera name" required>
+              <input id="newSourceUrl" type="text" placeholder="rtsp://host/stream" required>
+              <div class="add-source-row">
+                <input id="newSourceInterval" type="number" placeholder="30s" min="5" step="1">
+                <select id="newSourceTransport">
+                  <option value="tcp">TCP</option>
+                  <option value="udp">UDP</option>
+                </select>
+                <button type="submit" class="btn-add">ADD</button>
+              </div>
+              <div id="addSourceError" class="source-error" hidden></div>
+            </form>
+          </details>
         </div>
-        <div class="field">
-          <label for="sourceSelect">Source</label>
-          <select id="sourceSelect" aria-label="Snapshot source"></select>
-          <div id="sourceMeta" class="field-meta"></div>
-        </div>
-        <div class="field">
-          <label for="dateSelect">Date</label>
-          <select id="dateSelect" aria-label="Snapshot date"></select>
-        </div>
-        <details class="field" id="rtspPanel" hidden>
-          <summary><span class="label">RTSP Sources</span></summary>
-          <div id="dbSourceList" class="db-source-list"></div>
-          <form id="addSourceForm" class="add-source-form" autocomplete="off">
-            <input id="newSourceName" type="text" placeholder="Name" required>
-            <input id="newSourceUrl" type="text" placeholder="rtsp://host/stream" required>
-            <div class="add-source-row">
-              <input id="newSourceInterval" type="number" placeholder="30s" min="5" step="1">
-              <select id="newSourceTransport">
-                <option value="tcp">TCP</option>
-                <option value="udp">UDP</option>
-              </select>
-              <button type="submit" class="btn-add">Add</button>
-            </div>
-            <div id="addSourceError" class="source-error" hidden></div>
-          </form>
-        </details>
         <div id="thumbs" class="thumbs" aria-label="Recent snapshots"></div>
       </aside>
     </main>

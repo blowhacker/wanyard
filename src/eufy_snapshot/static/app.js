@@ -28,6 +28,8 @@ const els = {
   newSourceInterval: document.getElementById("newSourceInterval"),
   newSourceTransport: document.getElementById("newSourceTransport"),
   addSourceError: document.getElementById("addSourceError"),
+  hudSource: document.getElementById("hudSource"),
+  hudTimestamp: document.getElementById("hudTimestamp"),
 };
 
 async function loadImages(preserveSelection = true) {
@@ -163,12 +165,16 @@ function render() {
     els.timestamp.textContent = "--";
     els.snapshot.removeAttribute("src");
     els.thumbs.innerHTML = "";
+    if (els.hudSource) els.hudSource.textContent = "";
+    if (els.hudTimestamp) els.hudTimestamp.textContent = "";
     return;
   }
 
   const image = state.images[state.selected];
   els.snapshot.src = `${image.url}?t=${encodeURIComponent(image.timestamp)}`;
   els.timestamp.textContent = `${image.source_name} · ${formatTimestamp(image.timestamp)}`;
+  if (els.hudSource) els.hudSource.textContent = image.source_name.toUpperCase();
+  if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(image.timestamp);
   renderThumbs();
 }
 
