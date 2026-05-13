@@ -962,6 +962,50 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 
 .frame.selected .frame-ts { color: var(--amber-bright); }
 
+.human-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  background: var(--green);
+  border-radius: 50%;
+  z-index: 2;
+  box-shadow: 0 0 3px rgba(42, 172, 106, 0.7);
+}
+
+/* ── FILTER BAR ──────────────────────────────────────────── */
+
+.fb-filter {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-lo);
+}
+
+.humans-btn {
+  padding: 2px 7px;
+  font-family: var(--font);
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  background: transparent;
+  border: 1px solid var(--border-lo);
+  border-radius: var(--r);
+  color: var(--text-mid);
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
+}
+
+.humans-btn:hover { border-color: var(--green); color: var(--green); }
+
+.humans-btn.active {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(42, 172, 106, 0.1);
+}
+
 /* ── RESPONSIVE ──────────────────────────────────────────── */
 
 @media (max-width: 820px) {

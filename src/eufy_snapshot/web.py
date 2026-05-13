@@ -42,6 +42,8 @@ def make_app(
     image_index: ImageIndex,
     source_db=None,
     capture_worker=None,
+    detection_store=None,
+    detection_worker=None,
 ) -> Starlette:
     import eufy_snapshot
     static_dir = Path(eufy_snapshot.__file__).parent / "static"
@@ -51,6 +53,8 @@ def make_app(
         await asyncio.to_thread(image_index.refresh)
         if capture_worker:
             capture_worker.start()
+        if detection_worker:
+            detection_worker.start()
 
         async def _refresh_loop() -> None:
             while True:
@@ -64,6 +68,8 @@ def make_app(
             task.cancel()
             if capture_worker:
                 await asyncio.to_thread(capture_worker.stop)
+            if detection_worker:
+                await asyncio.to_thread(detection_worker.stop)
 
     # ── API handlers ──────────────────────────────────────
 
@@ -76,6 +82,8 @@ def make_app(
             "latest": _item_to_dict(image_index.latest()),
             "sources": _sources_to_dict(config, image_index, source_db),
             "db_enabled": source_db is not None,
+            "detection_enabled": detection_store is not None,
+            "detection_stats": detection_store.stats() if detection_store else None,
         })
 
     async def api_sources(request: Request) -> JSONResponse:
@@ -138,10 +146,17 @@ def make_app(
         source = request.query_params.get("source") or None
         if source == "all":
             source = None
-        date   = request.query_params.get("date")   or None
+        date       = request.query_params.get("date") or None
+        humans_only = request.query_params.get("humans_only") == "1"
         offset_raw = request.query_params.get("offset")
 
         all_items = image_index.items(date, source)
+
+        det_map: dict = {}
+        if detection_store:
+            det_map = detection_store.get_many([i.path for i in all_items])
+            if humans_only:
+                all_items = [i for i in all_items if det_map.get(i.path, (False,))[0]]
 
         if offset_raw is not None:
             try:
@@ -153,7 +168,7 @@ def make_app(
             items = all_items
 
         return JSONResponse({
-            "images": [_item_to_dict(i) for i in items],
+            "images": [_item_to_dict(i, det_map) for i in items],
             "dates":  image_index.dates(source),
             "total":  len(all_items),
         })
@@ -203,9 +218,12 @@ def make_app(
 
 # ── helpers ───────────────────────────────────────────────
 
-def _item_to_dict(item: ImageItem | None) -> dict | None:
+def _item_to_dict(item: ImageItem | None, det_map: dict | None = None) -> dict | None:
     if item is None:
         return None
+    has_human = None
+    if det_map and item.path in det_map:
+        has_human = det_map[item.path][0]
     return {
         "path":        item.path,
         "url":         item.url,
@@ -214,6 +232,7 @@ def _item_to_dict(item: ImageItem | None) -> dict | None:
         "source_id":   item.source_id,
         "source_name": item.source_name,
         "size_bytes":  item.size_bytes,
+        "has_human":   has_human,
     }
 
 

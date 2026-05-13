@@ -12,6 +12,7 @@ dependencies = [
     "starlette>=0.40",
     "hypercorn[asyncio]>=0.16",
     "uvloop>=0.19; sys_platform != 'win32'",
+    "ultralytics>=8.3",
 ]
 
 [project.scripts]

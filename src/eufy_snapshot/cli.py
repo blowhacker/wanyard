@@ -12,6 +12,7 @@ from pathlib import Path
 from .capture import capture_once, save_debug_screencap
 from .config import AppConfig, load_config
 from .db import SourceDB
+from .detect import DetectionStore, DetectionWorker
 from .doctor import run_doctor
 from .index import ImageIndex
 from .runner import CaptureWorker, run_loop
@@ -103,7 +104,12 @@ def cmd_web(config: AppConfig) -> int:
     image_index = ImageIndex(
         config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
     )
-    app = make_app(config, image_index, source_db=source_db)
+    det_store = DetectionStore(config.output_dir / ".detections.db")
+    det_worker = DetectionWorker(det_store, image_index)
+    app = make_app(
+        config, image_index, source_db=source_db,
+        detection_store=det_store, detection_worker=det_worker,
+    )
     _serve(app, config)
     return 0
 
@@ -114,8 +120,13 @@ def cmd_serve(config: AppConfig) -> int:
     image_index = ImageIndex(
         config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
     )
+    det_store = DetectionStore(config.output_dir / ".detections.db")
+    det_worker = DetectionWorker(det_store, image_index)
     worker = CaptureWorker(config, image_index, source_db=source_db)
-    app = make_app(config, image_index, source_db=source_db, capture_worker=worker)
+    app = make_app(
+        config, image_index, source_db=source_db, capture_worker=worker,
+        detection_store=det_store, detection_worker=det_worker,
+    )
     _serve(app, config)
     return 0
 

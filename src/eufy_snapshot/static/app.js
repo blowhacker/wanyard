@@ -17,18 +17,20 @@ const SPEEDS = [
 // ── State ─────────────────────────────────────────────────
 
 const state = {
-  images:           [],
-  sources:          [],
-  source:           "all",
-  selected:         -1,
-  date:             "",
+  images:             [],
+  sources:            [],
+  source:             "all",
+  selected:           -1,
+  date:               "",
   autoRefreshSeconds: 30,
-  dbEnabled:        false,
-  density:          parseInt(localStorage.getItem("density") || "3", 10),
-  playSpeed:        parseInt(localStorage.getItem("playSpeed") || "1", 10),
-  playing:          false,
-  loop:             true,
-  visibleIndices:   [],
+  dbEnabled:          false,
+  detectionEnabled:   false,
+  humansOnly:         localStorage.getItem("humansOnly") === "1",
+  density:            parseInt(localStorage.getItem("density") || "3", 10),
+  playSpeed:          parseInt(localStorage.getItem("playSpeed") || "1", 10),
+  playing:            false,
+  loop:               true,
+  visibleIndices:     [],
 };
 
 // ── Elements ──────────────────────────────────────────────
@@ -63,6 +65,8 @@ const els = {
   addSourceError:    document.getElementById("addSourceError"),
   hudSource:         document.getElementById("hudSource"),
   hudTimestamp:      document.getElementById("hudTimestamp"),
+  humansOnlyBtn:     document.getElementById("humansOnlyBtn"),
+  humansOnlyField:   document.getElementById("humansOnlyField"),
 };
 
 // Calendar display state (persists across re-renders)
@@ -157,6 +161,7 @@ async function loadImages(preserveSelection = true, incremental = false) {
   const params = new URLSearchParams();
   if (state.source && state.source !== "all") params.set("source", state.source);
   if (state.date) params.set("date", state.date);
+  if (state.humansOnly) params.set("humans_only", "1");
   // Incremental: only fetch images added since last load
   if (incremental && state.images.length > 0) params.set("offset", state.images.length);
 
@@ -669,6 +674,11 @@ function buildFrame(image, frameCount = 1) {
 
   frame.appendChild(img);
   frame.appendChild(ts);
+  if (image.has_human === true) {
+    const dot = document.createElement("div");
+    dot.className = "human-dot";
+    frame.appendChild(dot);
+  }
   frameElMap.set(image.path, frame);
 
   frame.addEventListener("click", () => {
@@ -876,6 +886,19 @@ async function loadHealth() {
   const p = await r.json();
   if (p.auto_refresh_seconds) state.autoRefreshSeconds = p.auto_refresh_seconds;
   if (p.db_enabled) { state.dbEnabled = true; els.rtspPanel.hidden = false; }
+  if (p.detection_enabled) {
+    state.detectionEnabled = true;
+    els.humansOnlyField.hidden = false;
+    els.humansOnlyBtn.classList.toggle("active", state.humansOnly);
+    els.humansOnlyBtn.addEventListener("click", () => {
+      state.humansOnly = !state.humansOnly;
+      localStorage.setItem("humansOnly", state.humansOnly ? "1" : "0");
+      els.humansOnlyBtn.classList.toggle("active", state.humansOnly);
+      stopPlay();
+      state.selected = -1;
+      loadImages(false);
+    });
+  }
   if (p.latest?.timestamp) updateStaleness(p.latest.timestamp);
 }
 

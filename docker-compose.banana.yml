@@ -6,7 +6,10 @@ services:
     command: ["-c", "/app/config.yaml", "serve"]
     ports:
       - "8091:8091"
+    environment:
+      - YOLO_MODEL_PATH=/app/models/yolo11m.pt
     volumes:
       - ./config.banana.yaml:/app/config.yaml:ro
       - ./snapshots:/app/snapshots
       - ./data:/app/data
+      - ./models:/app/models
