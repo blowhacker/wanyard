@@ -72,7 +72,6 @@ const els = {
   humansOnlyField:   document.getElementById("humansOnlyField"),
   liveBtn:           document.getElementById("liveBtn"),
   humansPanel:       document.getElementById("humansPanel"),
-  humanGrid:         document.getElementById("humanGrid"),
   exportField:       document.getElementById("exportField"),
   inBtn:             document.getElementById("inBtn"),
   outBtn:            document.getElementById("outBtn"),
@@ -923,33 +922,51 @@ function humanThumbStyle(img, box) {
 }
 
 function renderHumansGrid() {
-  if (!els.humanGrid || !els.humansPanel) return;
-  // Show 3 before + 3 after current frame, sorted chronologically
-  const srcId = state.images[state.selected]?.source_id;
-  const allHumans = state.images
-    .map((img, i) => ({ img, dist: Math.abs(i - state.selected) }))
-    .filter(({ img }) => img.has_human && img.boxes?.length && img.source_id === srcId)
-    .sort((a, b) => a.dist - b.dist)
-    .slice(0, 6)
-    .sort((a, b) => state.images.indexOf(a.img) - state.images.indexOf(b.img));
-  const humans = allHumans.map(h => h.img);
-  if (!humans.length) { els.humansPanel.hidden = true; return; }
+  if (!els.humansPanel) return;
+  const selTs = new Date(state.images[state.selected]?.timestamp).getTime();
+  if (!selTs) { els.humansPanel.hidden = true; return; }
+
+  // One section per source
+  const sections = [];
+  for (const src of state.sources) {
+    const humans = state.images
+      .map((img, i) => ({ img, dist: Math.abs(i - state.selected) }))
+      .filter(({ img }) => img.has_human && img.boxes?.length && img.source_id === src.id)
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 3)
+      .sort((a, b) => state.images.indexOf(a.img) - state.images.indexOf(b.img))
+      .map(h => h.img);
+    if (humans.length) sections.push({ src, humans });
+  }
+
+  if (!sections.length) { els.humansPanel.hidden = true; return; }
   els.humansPanel.hidden = false;
-  els.humanGrid.innerHTML = "";
-  for (const img of humans) {
-    const box  = img.boxes[0];
-    const cell = document.createElement("div");
-    cell.className = "human-cell";
-    cell.style.cssText = humanThumbStyle(img, box);
-    const ts = document.createElement("div");
-    ts.className = "human-cell-ts";
-    ts.textContent = formatTime(img.timestamp);
-    cell.appendChild(ts);
-    cell.addEventListener("click", () => {
-      const idx = state.images.findIndex(i => i.path === img.path);
-      if (idx >= 0) { setLive(false); stopPlay(); state.selected = idx; render(); }
-    });
-    els.humanGrid.appendChild(cell);
+  els.humansPanel.innerHTML = "";
+
+  for (const { src, humans } of sections) {
+    const head = document.createElement("div");
+    head.className = "humans-panel-head";
+    head.textContent = src.name.toUpperCase();
+    els.humansPanel.appendChild(head);
+
+    const grid = document.createElement("div");
+    grid.className = "human-grid";
+    for (const img of humans) {
+      const box  = img.boxes[0];
+      const cell = document.createElement("div");
+      cell.className = "human-cell";
+      cell.style.cssText = humanThumbStyle(img, box);
+      const ts = document.createElement("div");
+      ts.className = "human-cell-ts";
+      ts.textContent = formatTime(img.timestamp);
+      cell.appendChild(ts);
+      cell.addEventListener("click", () => {
+        const idx = state.images.findIndex(i => i.path === img.path);
+        if (idx >= 0) { setLive(false); stopPlay(); state.selected = idx; render(); }
+      });
+      grid.appendChild(cell);
+    }
+    els.humansPanel.appendChild(grid);
   }
 }
 
