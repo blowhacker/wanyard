@@ -1043,7 +1043,7 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
   position: absolute;
   pointer-events: none;
   border: 3px solid var(--green);
-  border-radius: var(--r);
+  border-radius: 5px;
   z-index: 3;
   box-sizing: border-box;
 }
