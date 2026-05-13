@@ -19,11 +19,13 @@ class CaptureWorker:
         image_index: ImageIndex | None = None,
         source_db=None,
         detection_model=None,
+        detection_store=None,
     ) -> None:
         self.config = config
         self.image_index = image_index
         self.source_db = source_db
         self.detection_model = detection_model
+        self.detection_store = detection_store
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
 
@@ -41,7 +43,8 @@ class CaptureWorker:
                 t = threading.Thread(
                     target=_run_rtsp_with_detection,
                     args=(self.config, source, self.detection_model,
-                          self.image_index, self._stop.is_set),
+                          self.image_index, self._stop.is_set,
+                          self.detection_store),
                     name=f"detect-{source.id}",
                     daemon=True,
                 )
@@ -155,6 +158,7 @@ def _run_rtsp_with_detection(
     model,
     image_index: ImageIndex | None,
     should_stop: Callable[[], bool],
+    detection_store=None,
 ) -> None:
     from .capture import _convert_to_avif, build_output_path
 
@@ -189,6 +193,9 @@ def _run_rtsp_with_detection(
                 last_saved = now
                 if image_index:
                     image_index.refresh()
+                if detection_store:
+                    rel = out.relative_to(config.output_dir).as_posix()
+                    detection_store.set(rel, has_human, top_conf)
                 reason = "human" if has_human else "baseline"
                 LOG.info("captured %s for %s [%s] conf=%.2f", out.name, source.name, reason, top_conf)
 

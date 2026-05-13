@@ -83,7 +83,8 @@ def cmd_serve(config: AppConfig) -> int:
     det_store = DetectionStore(config.output_dir / ".detections.db")
     det_worker = DetectionWorker(det_store, image_index)
     detection_model = _load_yolo_model()
-    worker = CaptureWorker(config, image_index, source_db=source_db, detection_model=detection_model)
+    worker = CaptureWorker(config, image_index, source_db=source_db,
+                           detection_model=detection_model, detection_store=det_store)
     app = make_app(
         config, image_index, source_db=source_db, capture_worker=worker,
         detection_store=det_store, detection_worker=det_worker,
