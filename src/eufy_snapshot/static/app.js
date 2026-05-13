@@ -689,17 +689,30 @@ function restoreSelected() {
 
 // ── Playback ──────────────────────────────────────────────
 
-let _playId   = 0;
-const _fpsBuf = []; // recent frame timestamps for rolling fps
+let _playId  = 0;
+const _statBuf = []; // { wall: ms, imgTs: ms } for rolling fps + footage speed
 
-function _updateFps() {
-  const now = performance.now();
-  _fpsBuf.push(now);
-  if (_fpsBuf.length > 12) _fpsBuf.shift();
-  if (_fpsBuf.length >= 2 && els.fpsDisplay) {
-    const fps = (_fpsBuf.length - 1) / ((_fpsBuf.at(-1) - _fpsBuf[0]) / 1000);
-    els.fpsDisplay.textContent = `${Math.round(fps)} fps`;
-  }
+function _updatePlayStats() {
+  const imgTs = new Date(state.images[state.selected]?.timestamp).getTime();
+  if (isNaN(imgTs)) return;
+  _statBuf.push({ wall: performance.now(), imgTs });
+  if (_statBuf.length > 14) _statBuf.shift();
+  if (_statBuf.length < 2 || !els.fpsDisplay) return;
+
+  const wallMs    = _statBuf.at(-1).wall  - _statBuf[0].wall;
+  const footageMs = _statBuf.at(-1).imgTs - _statBuf[0].imgTs;
+  const fps       = (_statBuf.length - 1) / (wallMs / 1000);
+  const ratio     = footageMs / wallMs;          // footage-ms per wall-ms
+  const secPerSec = ratio * 1000;                // footage-seconds per wall-second
+
+  els.fpsDisplay.textContent = `${Math.round(fps)} fps · ${_fmtSpeed(secPerSec)}`;
+}
+
+function _fmtSpeed(secPerSec) {
+  const v = Math.abs(secPerSec);
+  if (v < 60)   return `${Math.round(v)}s/s`;
+  if (v < 3600) { const m = v / 60;   return `${m < 10 ? m.toFixed(1) : Math.round(m)}m/s`; }
+                  const h = v / 3600; return `${h < 10 ? h.toFixed(1) : Math.round(h)}h/s`;
 }
 
 function startPlay() {
@@ -735,7 +748,7 @@ function startPlay() {
       // Wait until the browser has decoded the frame before advancing.
       // Prevents src reassignment cancelling the in-flight decode.
       try { await els.snapshot.decode(); } catch { /* src changed or error */ }
-      _updateFps();
+      _updatePlayStats();
 
       // Honour target fps: sleep for any remaining budget
       const wait = ms - (performance.now() - t0);
@@ -748,7 +761,7 @@ function stopPlay() {
   state.playing = false;
   els.playBtn.textContent = "▶";
   els.playBtn.classList.remove("playing");
-  _fpsBuf.length = 0;
+  _statBuf.length = 0;
   if (els.fpsDisplay) els.fpsDisplay.textContent = "";
 }
 
