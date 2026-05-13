@@ -908,16 +908,18 @@ function setLive(on) {
 
 function humanThumbStyle(img, box) {
   const thumbUrl = img.url.replace("/images/", "/thumbs/");
-  const bw = box.x2 - box.x1, bh = box.y2 - box.y1;
-  const pad = 1.0;
-  const vw  = Math.min(1, bw * (1 + pad * 2));
-  const vh  = Math.min(1, bh * (1 + pad * 2));
-  const cx  = (box.x1 + box.x2) / 2, cy = (box.y1 + box.y2) / 2;
-  const vx1 = Math.max(0, Math.min(1 - vw, cx - vw / 2));
-  const vy1 = Math.max(0, Math.min(1 - vh, cy - vh / 2));
-  const bpx = vw >= 1 ? 0 : (vx1 / (1 - vw)) * 100;
-  const bpy = vh >= 1 ? 0 : (vy1 / (1 - vh)) * 100;
-  return `background-image:url('${thumbUrl}');background-size:${(1/vw)*100}%;background-position:${bpx}% ${bpy}%;background-repeat:no-repeat`;
+  // Cell ~133×78px (2-col in 300px panel). Image source 2304×1296 (AR 1.778).
+  // Show a fixed VIEW_H fraction of frame height, derive VIEW_W to match cell AR.
+  const CELL_AR  = 133 / 78;
+  const IMG_AR   = 2304 / 1296;
+  const VIEW_H   = Math.max(0.25, Math.min(0.7, (box.y2 - box.y1) * 4)); // ~4x box height, clamped
+  const VIEW_W   = Math.min(1, VIEW_H * CELL_AR / IMG_AR); // match cell aspect ratio
+  const cx = (box.x1 + box.x2) / 2, cy = (box.y1 + box.y2) / 2;
+  const vx1 = Math.max(0, Math.min(1 - VIEW_W, cx - VIEW_W / 2));
+  const vy1 = Math.max(0, Math.min(1 - VIEW_H, cy - VIEW_H / 2));
+  const bpx = VIEW_W >= 1 ? 50 : (vx1 / (1 - VIEW_W)) * 100;
+  const bpy = VIEW_H >= 1 ? 50 : (vy1 / (1 - VIEW_H)) * 100;
+  return `background-image:url('${thumbUrl}');background-size:${(1/VIEW_W*100).toFixed(1)}%;background-position:${bpx.toFixed(1)}% ${bpy.toFixed(1)}%;background-repeat:no-repeat`;
 }
 
 function renderHumansGrid() {
