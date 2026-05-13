@@ -68,8 +68,10 @@ const calState = { year: new Date().getFullYear(), month: new Date().getMonth() 
 
 // Preload cache: keeps Image objects alive so browser caches responses
 const preloadCache = new Map(); // url → HTMLImageElement
-const PRELOAD_AHEAD = 10;
-const PRELOAD_MAX   = 50;
+// 5 preload + 1 active = 6 = browser HTTP/1.1 per-origin connection limit.
+// Exceeding 6 forces new TCP handshakes (~15ms each on LAN).
+const PRELOAD_AHEAD = 5;
+const PRELOAD_MAX   = 40;
 
 function preloadAhead(queue, pos) {
   for (let i = 1; i <= PRELOAD_AHEAD; i++) {
