@@ -1,11 +1,11 @@
 // ── Constants ─────────────────────────────────────────────
 
 const DENSITY = [
-  { w: 38,  h: 22, sampleMinutes: 30, desc: "1 FRAME · 30 MIN" },
-  { w: 56,  h: 32, sampleMinutes: 10, desc: "1 FRAME · 10 MIN" },
-  { w: 78,  h: 44, sampleMinutes:  0, desc: "ALL FRAMES"       },
-  { w: 100, h: 56, sampleMinutes:  0, desc: "ALL FRAMES · LG"  },
-  { w: 130, h: 73, sampleMinutes:  0, desc: "ALL FRAMES · XL"  },
+  { w: 38,  h: 22, sampleMinutes: 30, label: "½H"  },
+  { w: 56,  h: 32, sampleMinutes: 10, label: "10M" },
+  { w: 78,  h: 44, sampleMinutes:  0, label: "ALL" },
+  { w: 100, h: 56, sampleMinutes:  0, label: "LG"  },
+  { w: 130, h: 73, sampleMinutes:  0, label: "XL"  },
 ];
 
 const SPEEDS = [
@@ -41,8 +41,7 @@ const els = {
   prev:              document.getElementById("prev"),
   playBtn:           document.getElementById("playBtn"),
   next:              document.getElementById("next"),
-  densitySlider:     document.getElementById("densitySlider"),
-  densityDesc:       document.getElementById("densityDesc"),
+  densityBtns:       document.getElementById("densityBtns"),
   speedPills:        document.getElementById("speedPills"),
   frameCounter:      document.getElementById("frameCounter"),
   sourceField:       document.getElementById("sourceField"),
@@ -82,14 +81,31 @@ function applyDensity(level) {
   document.documentElement.style.setProperty("--frame-h", `${d.h}px`);
   state.density = level;
   localStorage.setItem("density", level);
-  els.densitySlider.value = level;
-  els.densityDesc.textContent = d.desc;
-  // Full rebuild
+  // Update button active states
+  if (els.densityBtns) {
+    Array.from(els.densityBtns.children).forEach((btn, i) => {
+      btn.classList.toggle("active", i + 1 === level);
+    });
+  }
+  // Full filmstrip rebuild
   for (const [, s] of stripState) s.stripEl.remove();
   stripState.clear();
   frameElMap.clear();
   currentSelectedEl = null;
   renderFilmstrip();
+}
+
+function buildDensityBtns() {
+  if (!els.densityBtns) return;
+  els.densityBtns.innerHTML = "";
+  DENSITY.forEach((d, i) => {
+    const btn = document.createElement("button");
+    btn.className = "density-btn" + (i + 1 === state.density ? " active" : "");
+    btn.textContent = d.label;
+    btn.title = d.sampleMinutes > 0 ? `1 frame per ${d.sampleMinutes} min` : "All frames";
+    btn.addEventListener("click", () => applyDensity(i + 1));
+    els.densityBtns.appendChild(btn);
+  });
 }
 
 function buildSpeedPills() {
@@ -409,25 +425,11 @@ async function deleteSource(id, name) {
 
 // ── Main render ───────────────────────────────────────────
 
-let fadeTimer = null;
-
-function setMainSrc(url, animate) {
-  if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null; }
-  const img = els.snapshot;
-  if (!animate || state.playing) {
-    img.classList.remove("fading");
-    img.src = url;
-    return;
-  }
-  img.classList.add("fading");
-  fadeTimer = setTimeout(() => {
-    img.src = url;
-    img.classList.remove("fading");
-    fadeTimer = null;
-  }, 85);
+function setMainSrc(url) {
+  els.snapshot.src = url;
 }
 
-function render(animate = true) {
+function render() {
   const hasImages = state.images.length > 0;
   els.snapshot.style.display = hasImages ? "block" : "none";
   els.empty.style.display    = hasImages ? "none"  : "block";
@@ -456,7 +458,7 @@ function render(animate = true) {
   }
 
   const image = state.images[state.selected];
-  setMainSrc(`${image.url}?t=${encodeURIComponent(image.timestamp)}`, animate);
+  setMainSrc(`${image.url}?t=${encodeURIComponent(image.timestamp)}`);
   els.timestamp.textContent = `${image.source_name} · ${formatTimestamp(image.timestamp)}`;
   if (els.hudSource)    els.hudSource.textContent = image.source_name.toUpperCase();
   if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(image.timestamp);
@@ -665,7 +667,7 @@ function startPlay() {
   state.playTimer = setInterval(() => {
     pos = (pos + 1) % queue.length;
     state.selected = queue[pos];
-    render(false); // no crossfade during play
+    render();
   }, ms);
 }
 
@@ -699,10 +701,6 @@ els.jumpLatest.addEventListener("click", () => {
   state.selected = state.images.length - 1; render();
 });
 
-els.densitySlider.value = state.density;
-els.densitySlider.addEventListener("input", () => {
-  applyDensity(parseInt(els.densitySlider.value, 10));
-});
 
 document.addEventListener("keydown", e => {
   const tag = e.target.tagName;
@@ -776,6 +774,7 @@ function formatTimestamp(timestamp) {
 
 // ── Init ──────────────────────────────────────────────────
 
+buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
 

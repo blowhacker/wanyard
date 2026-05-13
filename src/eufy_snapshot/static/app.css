@@ -293,9 +293,13 @@ button:hover:not(:disabled) {
 
 button:disabled { opacity: 0.18; cursor: default; }
 
-/* Snapshot crossfade */
-#snapshot { transition: opacity 0.1s ease; }
-#snapshot.fading { opacity: 0; }
+/* Play cluster: play button + speed pills stacked */
+.play-cluster {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
 
 /* Jump-to-latest overlay button */
 .jump-latest {
@@ -482,35 +486,25 @@ button:disabled { opacity: 0.18; cursor: default; }
 .cal-day.today.has-data { color: var(--text-hi); }
 .cal-day.empty { opacity: 0; pointer-events: none; }
 
-/* Density description */
-.density-desc {
-  font-size: 0.5rem;
-  color: var(--text-lo);
-  letter-spacing: 0.12em;
-  text-align: center;
-  margin-top: 3px;
-}
 
-/* Speed pills */
+/* Speed pills — inside .play-cluster, under the play button */
 .speed-pills {
   display: flex;
-  gap: 3px;
-  margin-top: 7px;
+  gap: 2px;
 }
 .speed-pill {
-  flex: 1;
-  height: 22px;
+  width: 28px;
+  height: 16px;
   padding: 0;
   border: 1px solid var(--border-hi);
   border-radius: var(--r);
   background: transparent;
   color: var(--text-lo);
   font-family: var(--font);
-  font-size: 0.54rem;
-  letter-spacing: 0.1em;
+  font-size: 0.48rem;
+  letter-spacing: 0.08em;
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
-  width: auto;
 }
 .speed-pill.active {
   border-color: rgba(42,172,106,0.35);
@@ -522,54 +516,41 @@ button:disabled { opacity: 0.18; cursor: default; }
   color: var(--text-mid);
 }
 
+/* Density buttons (replaces slider) */
+.density-btns {
+  display: flex;
+  gap: 3px;
+  margin-top: 10px;
+}
+.density-btn {
+  flex: 1;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text-lo);
+  font-family: var(--font);
+  font-size: 0.52rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  width: auto;
+}
+.density-btn.active {
+  border-color: var(--amber-border);
+  color: var(--amber);
+  background: var(--amber-dim);
+}
+.density-btn:hover:not(.active):not(:disabled) {
+  border-color: var(--border-hi);
+  color: var(--text-mid);
+}
+
 /* Stale capture indicator */
 .refresh-badge.stale { color: var(--amber); }
 .refresh-badge.stale::before { background: var(--amber); animation: none; opacity: 1; }
 
-/* Range input (density slider) */
-input[type="range"] {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 1px;
-  background: var(--border-hi);
-  outline: none;
-  cursor: pointer;
-}
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 9px;
-  height: 9px;
-  background: var(--amber);
-  border-radius: 50%;
-  cursor: pointer;
-  border: none;
-  transition: transform 0.1s;
-}
-input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.4); }
-input[type="range"]::-moz-range-thumb {
-  width: 9px;
-  height: 9px;
-  background: var(--amber);
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.density-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 9px;
-}
-.dens-end {
-  flex-shrink: 0;
-  font-size: 0.65rem;
-  color: var(--text-lo);
-  width: 8px;
-  text-align: center;
-  line-height: 1;
-}
 
 /* Play button — round, always amber-tinted */
 #playBtn {
