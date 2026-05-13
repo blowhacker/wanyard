@@ -37,14 +37,16 @@
           <div id="timestamp" class="timestamp">--</div>
         </div>
         <div class="controls-block">
-          <div class="controls">
+          <div class="transport">
             <button id="prev" title="Previous (←)" aria-label="Previous snapshot">&#8249;</button>
-            <div class="play-cluster">
-              <button id="playBtn" title="Play / Pause (Space)" aria-label="Play">&#9654;</button>
-              <div id="speedPills" class="speed-pills"></div>
-            </div>
+            <button id="playBtn" title="Play / Pause (Space)" aria-label="Play">&#9654;</button>
             <button id="next" title="Next (→)" aria-label="Next snapshot">&#8250;</button>
+          </div>
+          <div class="play-options">
+            <div id="speedPills" class="speed-pills"></div>
             <button id="loopBtn" class="loop-btn active" title="Toggle loop">&#8635;</button>
+          </div>
+          <div class="play-stats">
             <span id="frameCounter" class="frame-counter"></span>
             <span id="fpsDisplay" class="fps-display"></span>
           </div>

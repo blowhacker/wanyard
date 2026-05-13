@@ -293,12 +293,27 @@ button:hover:not(:disabled) {
 
 button:disabled { opacity: 0.18; cursor: default; }
 
-/* Play cluster: play button + speed pills stacked */
-.play-cluster {
+/* Transport: prev / play / next */
+.transport {
   display: flex;
-  flex-direction: column;
+  gap: 6px;
+}
+
+/* Speed pills + loop on one row */
+.play-options {
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+/* Stats row: frame counter + fps */
+.play-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  min-height: 14px;
 }
 
 /* Jump-to-latest overlay button */
@@ -335,14 +350,12 @@ button:disabled { opacity: 0.18; cursor: default; }
   font-size: 0.52rem;
   color: var(--green);
   letter-spacing: 0.06em;
-  line-height: 32px;
-  min-width: 36px;
 }
 
 /* Loop toggle */
 .loop-btn {
-  height: 32px;
-  width: 32px;
+  height: 22px;
+  width: 36px;
   border: 1px solid var(--border-hi);
   border-radius: var(--r);
   background: transparent;
@@ -367,8 +380,6 @@ button:disabled { opacity: 0.18; cursor: default; }
   font-size: 0.52rem;
   color: var(--text-lo);
   letter-spacing: 0.06em;
-  margin-left: auto;
-  line-height: 32px;
 }
 
 /* Field label (div variant) */
@@ -519,14 +530,14 @@ button:disabled { opacity: 0.18; cursor: default; }
 .cal-day.empty { opacity: 0; pointer-events: none; }
 
 
-/* Speed pills — inside .play-cluster, under the play button */
+/* Speed pills */
 .speed-pills {
   display: flex;
   gap: 2px;
 }
 .speed-pill {
-  width: 28px;
-  height: 16px;
+  width: 36px;
+  height: 22px;
   padding: 0;
   border: 1px solid var(--border-hi);
   border-radius: var(--r);
@@ -584,23 +595,21 @@ button:disabled { opacity: 0.18; cursor: default; }
 .refresh-badge.stale::before { background: var(--amber); animation: none; opacity: 1; }
 
 
-/* Play button — round, always amber-tinted */
+/* Play button — same size as transport siblings, amber accent */
 #playBtn {
-  border-radius: 50%;
   border-color: var(--amber-border);
   color: var(--amber);
   background: var(--amber-dim);
-  font-size: 0.75rem;
 }
 #playBtn:hover:not(:disabled) {
-  background: rgba(192, 128, 32, 0.22);
+  background: rgba(192,128,32,0.2);
   border-color: var(--amber);
   color: var(--amber-bright);
 }
 #playBtn.playing {
-  border-color: rgba(42, 172, 106, 0.4);
+  border-color: rgba(42,172,106,0.4);
   color: var(--green);
-  background: rgba(42, 172, 106, 0.08);
+  background: rgba(42,172,106,0.08);
 }
 
 /* Frame-density indicator: amber left-edge stripe that widens with count */

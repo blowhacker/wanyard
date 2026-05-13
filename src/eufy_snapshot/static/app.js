@@ -702,8 +702,7 @@ function _updatePlayStats() {
   const wallMs    = _statBuf.at(-1).wall  - _statBuf[0].wall;
   const footageMs = _statBuf.at(-1).imgTs - _statBuf[0].imgTs;
   const fps       = (_statBuf.length - 1) / (wallMs / 1000);
-  const ratio     = footageMs / wallMs;          // footage-ms per wall-ms
-  const secPerSec = ratio * 1000;                // footage-seconds per wall-second
+  const secPerSec = footageMs / wallMs; // ms/ms = s/s, no conversion needed
 
   els.fpsDisplay.textContent = `${Math.round(fps)} fps · ${_fmtSpeed(secPerSec)}`;
 }
@@ -739,6 +738,7 @@ function startPlay() {
       const next = pos + 1;
       if (next >= queue.length) {
         if (!state.loop) { stopPlay(); break; }
+        _statBuf.length = 0; // timestamps jump on wrap — reset rolling window
       }
       pos = next % queue.length;
       state.selected = queue[pos];
