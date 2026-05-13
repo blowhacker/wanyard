@@ -138,10 +138,24 @@ def make_app(
         source = request.query_params.get("source") or None
         if source == "all":
             source = None
-        date = request.query_params.get("date") or None
+        date   = request.query_params.get("date")   or None
+        offset_raw = request.query_params.get("offset")
+
+        all_items = image_index.items(date, source)
+
+        if offset_raw is not None:
+            try:
+                offset = max(0, int(offset_raw))
+            except ValueError:
+                offset = 0
+            items = all_items[offset:]
+        else:
+            items = all_items
+
         return JSONResponse({
-            "images": [_item_to_dict(i) for i in image_index.items(date, source)],
+            "images": [_item_to_dict(i) for i in items],
             "dates":  image_index.dates(source),
+            "total":  len(all_items),
         })
 
     async def api_images_latest(request: Request) -> JSONResponse:

@@ -45,6 +45,7 @@ const els = {
   speedPills:        document.getElementById("speedPills"),
   loopBtn:           document.getElementById("loopBtn"),
   frameCounter:      document.getElementById("frameCounter"),
+  fpsDisplay:        document.getElementById("fpsDisplay"),
   sourceField:       document.getElementById("sourceField"),
   sourceCtrl:        document.getElementById("sourceCtrl"),
   sourceMeta:        document.getElementById("sourceMeta"),
@@ -152,16 +153,29 @@ function buildSpeedPills() {
 
 // ── Data loading ──────────────────────────────────────────
 
-async function loadImages(preserveSelection = true) {
+async function loadImages(preserveSelection = true, incremental = false) {
   const params = new URLSearchParams();
   if (state.source && state.source !== "all") params.set("source", state.source);
   if (state.date) params.set("date", state.date);
-  const query = params.toString() ? `?${params}` : "";
-  const response = await fetch(`/api/images${query}`, { cache: "no-store" });
-  const payload = await response.json();
-  const previousPath = state.images[state.selected]?.path;
-  state.images = payload.images || [];
+  // Incremental: only fetch images added since last load
+  if (incremental && state.images.length > 0) params.set("offset", state.images.length);
+
+  const response = await fetch(`/api/images${params.size ? `?${params}` : ""}`, { cache: "no-store" });
+  const payload  = await response.json();
+
   renderDateSelector(payload.dates || []);
+
+  if (incremental && state.images.length > 0) {
+    const newImages = payload.images || [];
+    if (newImages.length === 0) return; // nothing new
+    state.images = [...state.images, ...newImages];
+    render();
+    return;
+  }
+
+  // Full load
+  const previousPath = preserveSelection ? state.images[state.selected]?.path : null;
+  state.images = payload.images || [];
   if (preserveSelection && previousPath) {
     state.selected = state.images.findIndex(img => img.path === previousPath);
   }
@@ -675,7 +689,18 @@ function restoreSelected() {
 
 // ── Playback ──────────────────────────────────────────────
 
-let _playId = 0; // incremented on each startPlay; stops stale loops
+let _playId   = 0;
+const _fpsBuf = []; // recent frame timestamps for rolling fps
+
+function _updateFps() {
+  const now = performance.now();
+  _fpsBuf.push(now);
+  if (_fpsBuf.length > 12) _fpsBuf.shift();
+  if (_fpsBuf.length >= 2 && els.fpsDisplay) {
+    const fps = (_fpsBuf.length - 1) / ((_fpsBuf.at(-1) - _fpsBuf[0]) / 1000);
+    els.fpsDisplay.textContent = `${Math.round(fps)} fps`;
+  }
+}
 
 function startPlay() {
   const srcId = state.images[state.selected]?.source_id;
@@ -710,6 +735,7 @@ function startPlay() {
       // Wait until the browser has decoded the frame before advancing.
       // Prevents src reassignment cancelling the in-flight decode.
       try { await els.snapshot.decode(); } catch { /* src changed or error */ }
+      _updateFps();
 
       // Honour target fps: sleep for any remaining budget
       const wait = ms - (performance.now() - t0);
@@ -719,9 +745,11 @@ function startPlay() {
 }
 
 function stopPlay() {
-  state.playing = false; // async loop exits on next iteration
+  state.playing = false;
   els.playBtn.textContent = "▶";
   els.playBtn.classList.remove("playing");
+  _fpsBuf.length = 0;
+  if (els.fpsDisplay) els.fpsDisplay.textContent = "";
 }
 
 function togglePlay() { state.playing ? stopPlay() : startPlay(); }
@@ -784,7 +812,7 @@ function startAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(() => {
     els.refreshStatus.textContent = "SYNC";
-    Promise.all([loadSources(), loadImages(true)]).finally(() => {
+    Promise.all([loadSources(), loadImages(true, true)]).finally(() => {
       els.refreshStatus.textContent = "AUTO";
     });
   }, state.autoRefreshSeconds * 1000);
