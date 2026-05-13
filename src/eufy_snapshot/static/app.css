@@ -66,9 +66,9 @@ html, body {
 .filmstrip-bar {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 0 10px;
-  height: 36px;
+  gap: 16px;
+  padding: 0 14px;
+  height: 50px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border-sub);
 }
@@ -382,25 +382,24 @@ button:disabled { opacity: 0.28; cursor: default; filter: brightness(3); }
 
 /* FPS counter (visible during playback) */
 .fps-display {
-  font-size: 0.52rem;
+  font-size: 0.68rem;
   color: var(--green);
   letter-spacing: 0.06em;
 }
 
 /* Loop toggle — text label, no icon */
 .loop-btn {
-  height: 22px;
+  height: 28px;
   width: auto;
-  padding: 0 8px;
+  padding: 0 10px;
   border: 1px solid var(--border-hi);
   border-radius: var(--r);
   background: transparent;
   color: var(--text-lo);
-  font-size: 0.52rem;
-  letter-spacing: 0.1em;
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
-  padding: 0;
 }
 .loop-btn.active {
   border-color: rgba(42,172,106,0.35);
@@ -414,9 +413,9 @@ button:disabled { opacity: 0.28; cursor: default; filter: brightness(3); }
 
 /* Frame counter */
 .frame-counter {
-  font-size: 0.52rem;
-  color: var(--text-lo);
-  letter-spacing: 0.06em;
+  font-size: 0.82rem;
+  color: var(--text-hi);
+  letter-spacing: 0.04em;
 }
 
 /* Field label (div variant) */
@@ -570,18 +569,18 @@ button:disabled { opacity: 0.28; cursor: default; filter: brightness(3); }
 /* Speed pills */
 .speed-pills {
   display: flex;
-  gap: 2px;
+  gap: 3px;
 }
 .speed-pill {
-  width: 34px;
-  height: 22px;
+  width: 42px;
+  height: 28px;
   padding: 0;
   border: 1px solid var(--border-hi);
   border-radius: var(--r);
   background: transparent;
   color: var(--text-lo);
   font-family: var(--font);
-  font-size: 0.48rem;
+  font-size: 0.62rem;
   letter-spacing: 0.08em;
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
@@ -603,14 +602,14 @@ button:disabled { opacity: 0.28; cursor: default; filter: brightness(3); }
 }
 .density-btn {
   flex: 1;
-  height: 22px;
-  padding: 0;
+  height: 28px;
+  padding: 0 8px;
   border: 1px solid var(--border-hi);
   border-radius: var(--r);
   background: transparent;
   color: var(--text-lo);
   font-family: var(--font);
-  font-size: 0.52rem;
+  font-size: 0.62rem;
   letter-spacing: 0.08em;
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
@@ -631,10 +630,11 @@ button:disabled { opacity: 0.28; cursor: default; filter: brightness(3); }
 .refresh-badge.stale::before { background: var(--amber); animation: none; opacity: 1; }
 
 
-/* Transport buttons live in the filmstrip bar — smaller */
+/* Transport buttons live in the filmstrip bar */
 .fb-transport button {
-  width: 26px;
-  height: 26px;
+  width: 34px;
+  height: 34px;
+  font-size: 1.1rem;
 }
 
 /* Play button — amber accent */
@@ -973,9 +973,10 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 }
 
 .humans-btn {
-  padding: 2px 7px;
+  height: 28px;
+  padding: 0 10px;
   font-family: var(--font);
-  font-size: 0.58rem;
+  font-size: 0.62rem;
   font-weight: 500;
   letter-spacing: 0.12em;
   background: transparent;
