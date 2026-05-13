@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import subprocess
 from contextlib import asynccontextmanager
@@ -55,6 +56,7 @@ def make_app(
             capture_worker.start()
         if detection_worker:
             detection_worker.start()
+        asyncio.create_task(_register_go2rtc_streams(config, source_db))
 
         async def _refresh_loop() -> None:
             while True:
@@ -279,8 +281,17 @@ def make_app(
         return FileResponse(out_f, media_type="video/mp4", filename=fname,
                             background=BackgroundTask(_cleanup))
 
+    go2rtc_url = os.environ.get("GO2RTC_URL", "")
+
+    async def api_live(request: Request) -> JSONResponse:
+        return JSONResponse({
+            "enabled": bool(go2rtc_url),
+            "port": 1984,
+        })
+
     routes = [
         Route("/api/health",                api_health),
+        Route("/api/live",                  api_live),
         Route("/api/sources",               api_sources,        methods=["GET", "POST"]),
         Route("/api/sources/{source_id}",   api_delete_source,  methods=["DELETE"]),
         Route("/api/images/latest",         api_images_latest),
@@ -344,3 +355,38 @@ def _sources_to_dict(config: AppConfig, image_index: ImageIndex, source_db=None)
             "mutable":          True,
         })
     return result
+
+
+async def _register_go2rtc_streams(config, source_db) -> None:
+    import logging
+    from .capture import resolve_rtsp_url
+    LOG = logging.getLogger(__name__)
+
+    config_dir = os.environ.get("GO2RTC_CONFIG_DIR", "")
+    if not config_dir:
+        return
+
+    all_sources = list(config.sources)
+    if source_db:
+        all_sources += list(source_db.to_source_configs())
+
+    stream_lines = []
+    for source in all_sources:
+        if source.type != "rtsp" or not source.enabled:
+            continue
+        url = resolve_rtsp_url(source)
+        if url:
+            stream_lines.append(f"  {source.id}: {url}")
+
+    if not stream_lines:
+        return
+
+    yaml_content = (
+        "api:\n  origin: '*'\n\n"
+        "webrtc:\n  candidates:\n    - stun:8555\n\n"
+        "streams:\n" + "\n".join(stream_lines) + "\n"
+    )
+    config_path = Path(config_dir) / "go2rtc.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml_content)
+    LOG.info("wrote go2rtc config: %d streams", len(stream_lines))

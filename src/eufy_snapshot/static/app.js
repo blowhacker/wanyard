@@ -73,6 +73,8 @@ const els = {
   humansOnlyField:   document.getElementById("humansOnlyField"),
   liveBtn:           document.getElementById("liveBtn"),
   humansPanel:       document.getElementById("humansPanel"),
+  liveVideo:         document.getElementById("liveVideo"),
+  goLiveBtn:         document.getElementById("goLiveBtn"),
   exportField:       document.getElementById("exportField"),
   inBtn:             document.getElementById("inBtn"),
   outBtn:            document.getElementById("outBtn"),
@@ -718,7 +720,7 @@ function buildFrame(image, frameCount = 1) {
 
   frame.addEventListener("click", () => {
     const idx = pathIndex.get(image.path);
-    if (idx !== undefined) { setLive(false); stopPlay(); state.selected = idx; render(); }
+    if (idx !== undefined) { setLive(false); stopLiveStream(); stopPlay(); state.selected = idx; render(); }
   });
 
   return frame;
@@ -992,7 +994,7 @@ function renderHumansGrid() {
       cell.addEventListener("mouseleave", restoreSelected);
       cell.addEventListener("click", () => {
         const idx = state.images.findIndex(i => i.path === img.path);
-        if (idx >= 0) { setLive(false); stopPlay(); state.selected = idx; render(); }
+        if (idx >= 0) { setLive(false); stopLiveStream(); stopPlay(); state.selected = idx; render(); }
       });
       grid.appendChild(cell);
     }
@@ -1205,15 +1207,88 @@ function formatTimestamp(timestamp) {
 
 // ── Init ──────────────────────────────────────────────────
 
+// ── Live stream ───────────────────────────────────────────
+
+let _livePC = null;
+let _liveActive = false;
+
+async function startLiveStream() {
+  const srcId = state.images[state.selected]?.source_id;
+  if (!srcId) return;
+
+  _liveActive = true;
+  els.goLiveBtn.textContent = "■ STOP";
+  els.goLiveBtn.classList.add("active");
+
+  const go2rtcBase = `http://${location.hostname}:1984`;
+
+  _livePC = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  });
+
+  _livePC.ontrack = e => {
+    if (e.streams[0]) els.liveVideo.srcObject = e.streams[0];
+  };
+
+  _livePC.addTransceiver("video", { direction: "recvonly" });
+  _livePC.addTransceiver("audio", { direction: "recvonly" });
+
+  const offer = await _livePC.createOffer();
+  await _livePC.setLocalDescription(offer);
+
+  try {
+    const resp = await fetch(`${go2rtcBase}/api/webrtc?src=${srcId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/sdp" },
+      body: offer.sdp,
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const answerSdp = await resp.text();
+    await _livePC.setRemoteDescription({ type: "answer", sdp: answerSdp });
+    els.snapshot.style.display = "none";
+    els.liveVideo.style.display = "block";
+    els.liveVideo.play().catch(() => {});
+  } catch (err) {
+    console.error("go2rtc:", err);
+    stopLiveStream();
+    alert("Live stream failed: " + err.message);
+  }
+}
+
+function stopLiveStream() {
+  _liveActive = false;
+  if (_livePC) { _livePC.close(); _livePC = null; }
+  if (els.liveVideo.srcObject) {
+    els.liveVideo.srcObject.getTracks().forEach(t => t.stop());
+    els.liveVideo.srcObject = null;
+  }
+  els.liveVideo.style.display = "none";
+  els.snapshot.style.display = state.images.length ? "block" : "none";
+  if (els.goLiveBtn) {
+    els.goLiveBtn.textContent = "● LIVE";
+    els.goLiveBtn.classList.remove("active");
+  }
+}
+
+function toggleLiveStream() {
+  if (_liveActive) stopLiveStream(); else startLiveStream();
+}
+
 buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
 
 if (els.liveBtn)      els.liveBtn.addEventListener("click", () => setLive(!state.live));
+if (els.goLiveBtn)    els.goLiveBtn.addEventListener("click", toggleLiveStream);
 if (els.inBtn)        els.inBtn.addEventListener("click",  setInPoint);
 if (els.outBtn)       els.outBtn.addEventListener("click",  setOutPoint);
 if (els.clearRangeBtn) els.clearRangeBtn.addEventListener("click", clearRange);
 if (els.exportBtn)    els.exportBtn.addEventListener("click", exportRange);
+
+fetch("/api/live", { cache: "no-store" })
+  .then(r => r.json())
+  .then(d => { if (d.enabled && els.goLiveBtn) els.goLiveBtn.hidden = false; })
+  .catch(() => {});
 
 loadHealth().finally(() => {
   loadSources().then(() => loadImages(false)).finally(startAutoRefresh);
