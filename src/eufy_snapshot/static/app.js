@@ -994,7 +994,7 @@ function renderHumansGrid() {
       cell.addEventListener("mouseleave", restoreSelected);
       cell.addEventListener("click", () => {
         const idx = state.images.findIndex(i => i.path === img.path);
-        if (idx >= 0) { setLive(false); stopPlay(); state.selected = idx; render(); }
+        if (idx >= 0) { setLive(false); stopLiveStream(); stopPlay(); state.selected = idx; render(); }
       });
       grid.appendChild(cell);
     }
