@@ -347,7 +347,7 @@ button:hover:not(:disabled) {
   background: var(--amber-dim);
 }
 
-button:disabled { opacity: 0.18; cursor: default; }
+button:disabled { opacity: 0.35; cursor: default; }
 
 
 /* Jump-to-latest overlay button */
