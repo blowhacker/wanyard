@@ -596,6 +596,12 @@ function renderFilmstrip() {
         const img = strip.srcImages[Math.min(strip.srcImages.length - 1, Math.floor(ratio * strip.srcImages.length))];
         if (img) showPreview(img);
       });
+      framesEl.addEventListener("wheel", e => {
+        if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; // already horizontal scroll
+        e.preventDefault();
+        framesEl.scrollLeft += e.deltaY;
+      }, { passive: false });
+
       framesEl.addEventListener("mouseleave", restoreSelected);
 
       stripEl.appendChild(label);
