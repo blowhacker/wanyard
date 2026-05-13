@@ -1,3 +1,13 @@
+// Density levels: frame size + time subsampling
+// sampleMinutes=0 → show every frame
+const DENSITY = [
+  { w: 38, h: 22, sampleMinutes: 30 },  // 1 – overview,  ~1 frame/30 min
+  { w: 56, h: 32, sampleMinutes: 10 },  // 2 – coarse,    ~1 frame/10 min
+  { w: 78, h: 44, sampleMinutes:  0 },  // 3 – default,   every frame
+  { w: 100, h: 56, sampleMinutes: 0 },  // 4 – detail
+  { w: 130, h: 73, sampleMinutes: 0 },  // 5 – large
+];
+
 const state = {
   images: [],
   sources: [],
@@ -6,35 +16,58 @@ const state = {
   date: "",
   autoRefreshSeconds: 30,
   dbEnabled: false,
+  density: parseInt(localStorage.getItem("density") || "3", 10),
+  playing: false,
+  playTimer: null,
+  visibleIndices: [],   // global indices of currently rendered frames
 };
 
 const els = {
-  snapshot:         document.getElementById("snapshot"),
-  empty:            document.getElementById("empty"),
-  timestamp:        document.getElementById("timestamp"),
-  refreshStatus:    document.getElementById("refreshStatus"),
-  prev:             document.getElementById("prev"),
-  next:             document.getElementById("next"),
-  sourceSelect:     document.getElementById("sourceSelect"),
-  sourceMeta:       document.getElementById("sourceMeta"),
-  dateSelect:       document.getElementById("dateSelect"),
-  filmstrip:        document.getElementById("filmstrip"),
-  rtspPanel:        document.getElementById("rtspPanel"),
-  dbSourceList:     document.getElementById("dbSourceList"),
-  addSourceForm:    document.getElementById("addSourceForm"),
-  newSourceName:    document.getElementById("newSourceName"),
-  newSourceUrl:     document.getElementById("newSourceUrl"),
-  newSourceInterval:document.getElementById("newSourceInterval"),
+  snapshot:          document.getElementById("snapshot"),
+  empty:             document.getElementById("empty"),
+  timestamp:         document.getElementById("timestamp"),
+  refreshStatus:     document.getElementById("refreshStatus"),
+  prev:              document.getElementById("prev"),
+  playBtn:           document.getElementById("playBtn"),
+  next:              document.getElementById("next"),
+  densitySlider:     document.getElementById("densitySlider"),
+  sourceSelect:      document.getElementById("sourceSelect"),
+  sourceMeta:        document.getElementById("sourceMeta"),
+  dateSelect:        document.getElementById("dateSelect"),
+  filmstrip:         document.getElementById("filmstrip"),
+  rtspPanel:         document.getElementById("rtspPanel"),
+  dbSourceList:      document.getElementById("dbSourceList"),
+  addSourceForm:     document.getElementById("addSourceForm"),
+  newSourceName:     document.getElementById("newSourceName"),
+  newSourceUrl:      document.getElementById("newSourceUrl"),
+  newSourceInterval: document.getElementById("newSourceInterval"),
   newSourceTransport:document.getElementById("newSourceTransport"),
-  addSourceError:   document.getElementById("addSourceError"),
-  hudSource:        document.getElementById("hudSource"),
-  hudTimestamp:     document.getElementById("hudTimestamp"),
+  addSourceError:    document.getElementById("addSourceError"),
+  hudSource:         document.getElementById("hudSource"),
+  hudTimestamp:      document.getElementById("hudTimestamp"),
 };
 
-// Per-source strip state: sourceId -> { paths: string[], framesEl: HTMLElement, stripEl: HTMLElement }
+// Per-source strip state: sourceId → { paths, framesEl, stripEl, lastTs }
 const stripState = new Map();
-// path -> globalIndex in state.images (rebuilt each render)
+// path → globalIndex in state.images
 const pathIndex = new Map();
+
+// ── Density ───────────────────────────────────────────────
+
+function applyDensity(level) {
+  const d = DENSITY[level - 1];
+  const root = document.documentElement;
+  root.style.setProperty("--frame-w", `${d.w}px`);
+  root.style.setProperty("--frame-h", `${d.h}px`);
+  state.density = level;
+  localStorage.setItem("density", level);
+  // Full filmstrip rebuild at new density
+  for (const [, s] of stripState) s.stripEl.remove();
+  stripState.clear();
+  renderFilmstrip();
+}
+
+// ── Data loading ──────────────────────────────────────────
 
 async function loadImages(preserveSelection = true) {
   const params = new URLSearchParams();
@@ -65,6 +98,8 @@ async function loadSources() {
   renderDbSources();
 }
 
+// ── Panel renders ─────────────────────────────────────────
+
 function renderSources() {
   const current = els.sourceSelect.value || state.source;
   els.sourceSelect.innerHTML = "";
@@ -72,10 +107,10 @@ function renderSources() {
   all.value = "all";
   all.textContent = "All sources";
   els.sourceSelect.appendChild(all);
-  for (const source of state.sources) {
+  for (const s of state.sources) {
     const opt = document.createElement("option");
-    opt.value = source.id;
-    opt.textContent = source.name;
+    opt.value = s.id;
+    opt.textContent = s.name;
     els.sourceSelect.appendChild(opt);
   }
   els.sourceSelect.value = state.sources.some((s) => s.id === current) ? current : "all";
@@ -88,38 +123,37 @@ function renderSourceMeta() {
     els.sourceMeta.textContent = `${state.sources.filter((s) => s.enabled).length} sources`;
     return;
   }
-  const source = state.sources.find((s) => s.id === state.source);
-  els.sourceMeta.textContent = source ? `${source.type} · every ${formatInterval(source.interval_seconds)}` : "";
+  const s = state.sources.find((s) => s.id === state.source);
+  els.sourceMeta.textContent = s ? `${s.type} · every ${formatInterval(s.interval_seconds)}` : "";
 }
 
 function renderDbSources() {
   if (!state.dbEnabled) return;
-  const dbSources = state.sources.filter((s) => s.mutable);
   els.dbSourceList.innerHTML = "";
-  for (const source of dbSources) {
+  for (const s of state.sources.filter((s) => s.mutable)) {
     const item = document.createElement("div");
     item.className = "db-source-item";
     const name = document.createElement("span");
     name.className = "db-source-name";
-    name.textContent = source.name;
-    name.title = source.name;
+    name.textContent = s.name;
+    name.title = s.name;
     const btn = document.createElement("button");
     btn.className = "btn-delete";
     btn.textContent = "×";
-    btn.title = `Delete ${source.name}`;
-    btn.addEventListener("click", () => deleteSource(source.id, source.name));
+    btn.title = `Delete ${s.name}`;
+    btn.addEventListener("click", () => deleteSource(s.id, s.name));
     item.appendChild(name);
     item.appendChild(btn);
     els.dbSourceList.appendChild(item);
   }
 }
 
-async function deleteSource(sourceId, sourceName) {
-  if (!confirm(`Delete source "${sourceName}"?`)) return;
-  const response = await fetch(`/api/sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    alert(payload.error || "Delete failed");
+async function deleteSource(id, name) {
+  if (!confirm(`Delete source "${name}"?`)) return;
+  const r = await fetch(`/api/sources/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!r.ok) {
+    const p = await r.json().catch(() => ({}));
+    alert(p.error || "Delete failed");
     return;
   }
   await loadSources();
@@ -133,27 +167,29 @@ function renderDates(dates) {
   all.value = "";
   all.textContent = "All dates";
   els.dateSelect.appendChild(all);
-  for (const date of dates) {
+  for (const d of dates) {
     const opt = document.createElement("option");
-    opt.value = date;
-    opt.textContent = date;
+    opt.value = d;
+    opt.textContent = d;
     els.dateSelect.appendChild(opt);
   }
   els.dateSelect.value = dates.includes(current) ? current : "";
   state.date = els.dateSelect.value;
 }
 
+// ── Main render ───────────────────────────────────────────
+
 function render() {
   const hasImages = state.images.length > 0;
   els.snapshot.style.display = hasImages ? "block" : "none";
-  els.empty.style.display = hasImages ? "none" : "block";
+  els.empty.style.display    = hasImages ? "none"  : "block";
   els.prev.disabled = !hasImages || state.selected <= 0;
   els.next.disabled = !hasImages || state.selected >= state.images.length - 1;
 
   if (!hasImages) {
     els.timestamp.textContent = "--";
     els.snapshot.removeAttribute("src");
-    if (els.hudSource) els.hudSource.textContent = "";
+    if (els.hudSource)    els.hudSource.textContent = "";
     if (els.hudTimestamp) els.hudTimestamp.textContent = "";
     renderFilmstrip();
     return;
@@ -167,81 +203,116 @@ function render() {
   renderFilmstrip();
 }
 
+// ── Filmstrip ─────────────────────────────────────────────
+
+function subsample(images, sampleMinutes) {
+  const threshold = sampleMinutes * 60000;
+  const result = [];
+  let lastTs = -Infinity;
+  for (const img of images) {
+    const ts = new Date(img.timestamp).getTime();
+    if (ts - lastTs >= threshold) { result.push(img); lastTs = ts; }
+  }
+  return result;
+}
+
 function renderFilmstrip() {
-  // Rebuild path->globalIndex lookup
+  const d = DENSITY[state.density - 1];
+
+  // Rebuild path→globalIndex
   pathIndex.clear();
   state.images.forEach((img, i) => pathIndex.set(img.path, i));
 
-  // Group images by source (preserves insertion order = timestamp order)
+  // Group images by source in timestamp order
   const groups = new Map();
   for (let i = 0; i < state.images.length; i++) {
     const img = state.images[i];
     if (!groups.has(img.source_id)) {
-      groups.set(img.source_id, { sourceId: img.source_id, sourceName: img.source_name, items: [] });
+      groups.set(img.source_id, { sourceName: img.source_name, items: [] });
     }
     groups.get(img.source_id).items.push(img);
   }
 
   // Remove strips for sources no longer present
-  for (const [sourceId, strip] of stripState) {
-    if (!groups.has(sourceId)) {
-      strip.stripEl.remove();
-      stripState.delete(sourceId);
-    }
+  for (const [id, s] of stripState) {
+    if (!groups.has(id)) { s.stripEl.remove(); stripState.delete(id); }
   }
 
-  // Create/update one strip per source
+  // Collect visible indices for playback
+  state.visibleIndices = [];
+
   for (const [sourceId, group] of groups) {
+    // Create strip if needed
     if (!stripState.has(sourceId)) {
       const stripEl = document.createElement("div");
       stripEl.className = "strip";
-
       const label = document.createElement("div");
       label.className = "strip-label";
       label.textContent = group.sourceName;
       label.title = group.sourceName;
-
       const framesEl = document.createElement("div");
       framesEl.className = "frames";
-
       stripEl.appendChild(label);
       stripEl.appendChild(framesEl);
       els.filmstrip.appendChild(stripEl);
-      stripState.set(sourceId, { paths: [], framesEl, stripEl });
+      stripState.set(sourceId, { paths: [], framesEl, stripEl, lastTs: null });
     }
 
     const strip = stripState.get(sourceId);
-    const items = group.items;
+    const sampled = d.sampleMinutes > 0
+      ? subsample(group.items, d.sampleMinutes)
+      : group.items;
 
-    // Append-only check: existing paths are a prefix of new list
+    // Append-only check
     const isAppend =
-      items.length >= strip.paths.length &&
-      strip.paths.every((p, i) => items[i].path === p);
+      sampled.length >= strip.paths.length &&
+      strip.paths.every((p, i) => sampled[i].path === p);
 
     if (!isAppend) {
       strip.framesEl.innerHTML = "";
       strip.paths = [];
+      strip.lastTs = null;
     }
 
-    for (let i = strip.paths.length; i < items.length; i++) {
-      strip.framesEl.appendChild(buildFrame(items[i]));
-      strip.paths.push(items[i].path);
+    // Append new frames (with hour markers)
+    for (let i = strip.paths.length; i < sampled.length; i++) {
+      const img = sampled[i];
+      const ts = new Date(img.timestamp);
+
+      if (strip.lastTs !== null) {
+        const prevHourStart = Math.floor(strip.lastTs.getTime() / 3600000);
+        const thisHourStart = Math.floor(ts.getTime() / 3600000);
+        for (let h = prevHourStart + 1; h <= thisHourStart; h++) {
+          strip.framesEl.appendChild(buildHourMarker(new Date(h * 3600000)));
+        }
+      }
+
+      strip.framesEl.appendChild(buildFrame(img));
+      strip.paths.push(img.path);
+      strip.lastTs = ts;
+    }
+
+    // Collect visible indices
+    for (const path of strip.paths) {
+      const idx = pathIndex.get(path);
+      if (idx !== undefined) state.visibleIndices.push(idx);
     }
   }
 
-  // Update selected highlight and scroll into view
+  // Sort visible indices (multiple sources may interleave)
+  state.visibleIndices.sort((a, b) => a - b);
+
+  // Update selected highlight
   const selectedPath = state.images[state.selected]?.path;
   let selectedEl = null;
-
   for (const [, strip] of stripState) {
-    const frameEls = strip.framesEl.children;
-    for (let i = 0; i < frameEls.length; i++) {
+    const frameEls = strip.framesEl.querySelectorAll(".frame");
+    frameEls.forEach((el, i) => {
       const isSelected = strip.paths[i] === selectedPath;
-      frameEls[i].classList.toggle("selected", isSelected);
-      if (isSelected) selectedEl = frameEls[i];
-    }
+      el.classList.toggle("selected", isSelected);
+      if (isSelected) selectedEl = el;
+    });
   }
-
   if (selectedEl) {
     selectedEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
   }
@@ -269,7 +340,7 @@ function buildFrame(image) {
   });
 
   frame.addEventListener("mouseenter", () => {
-    if (!els.snapshot.style.display || els.snapshot.style.display === "none") return;
+    if (els.snapshot.style.display === "none") return;
     els.snapshot.src = image.url;
     if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(image.timestamp);
     if (els.hudSource)    els.hudSource.textContent = image.source_name.toUpperCase();
@@ -284,6 +355,138 @@ function buildFrame(image) {
   });
 
   return frame;
+}
+
+function buildHourMarker(date) {
+  const el = document.createElement("div");
+  el.className = "hour-mark";
+  const label = document.createElement("span");
+  label.className = "hour-mark-label";
+  label.textContent = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  el.appendChild(label);
+  return el;
+}
+
+// ── Playback ──────────────────────────────────────────────
+
+function startPlay() {
+  if (!state.visibleIndices.length) return;
+  state.playing = true;
+  els.playBtn.textContent = "■";
+  els.playBtn.classList.add("playing");
+
+  state.playTimer = setInterval(() => {
+    const vis = state.visibleIndices;
+    if (!vis.length) { stopPlay(); return; }
+    const pos = vis.indexOf(state.selected);
+    const next = pos < 0 ? 0 : pos + 1;
+    if (next >= vis.length) { stopPlay(); return; }
+    state.selected = vis[next];
+    render();
+  }, 50); // 20fps
+}
+
+function stopPlay() {
+  clearInterval(state.playTimer);
+  state.playTimer = null;
+  state.playing = false;
+  els.playBtn.textContent = "▶";
+  els.playBtn.classList.remove("playing");
+}
+
+function togglePlay() {
+  if (state.playing) stopPlay(); else startPlay();
+}
+
+// ── Controls ──────────────────────────────────────────────
+
+els.prev.addEventListener("click", () => {
+  stopPlay();
+  state.selected = Math.max(0, state.selected - 1);
+  render();
+});
+
+els.next.addEventListener("click", () => {
+  stopPlay();
+  state.selected = Math.min(state.images.length - 1, state.selected + 1);
+  render();
+});
+
+els.playBtn.addEventListener("click", togglePlay);
+
+els.densitySlider.value = state.density;
+els.densitySlider.addEventListener("input", () => {
+  applyDensity(parseInt(els.densitySlider.value, 10));
+});
+
+document.addEventListener("keydown", (e) => {
+  const tag = e.target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (e.key === " ") { e.preventDefault(); togglePlay(); }
+  else if (e.key === "ArrowLeft")  { stopPlay(); state.selected = Math.max(0, state.selected - 1); render(); }
+  else if (e.key === "ArrowRight") { stopPlay(); state.selected = Math.min(state.images.length - 1, state.selected + 1); render(); }
+});
+
+els.dateSelect.addEventListener("change", () => {
+  stopPlay();
+  state.date = els.dateSelect.value;
+  state.selected = -1;
+  loadImages(false);
+});
+
+els.sourceSelect.addEventListener("change", () => {
+  stopPlay();
+  state.source = els.sourceSelect.value;
+  state.date = "";
+  state.selected = -1;
+  renderSourceMeta();
+  loadImages(false);
+});
+
+els.addSourceForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  els.addSourceError.hidden = true;
+  const name = els.newSourceName.value.trim();
+  const url  = els.newSourceUrl.value.trim();
+  const iv   = els.newSourceInterval.value.trim();
+  const body = { name, url, rtsp_transport: els.newSourceTransport.value };
+  if (iv) body.interval_seconds = Number(iv);
+  const r = await fetch("/api/sources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const p = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    els.addSourceError.textContent = p.error || "Failed to add source";
+    els.addSourceError.hidden = false;
+    return;
+  }
+  els.addSourceForm.reset();
+  await loadSources();
+  await loadImages(false);
+});
+
+// ── Auto-refresh ──────────────────────────────────────────
+
+let refreshTimer = null;
+
+function startAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    els.refreshStatus.textContent = "SYNC";
+    Promise.all([loadSources(), loadImages(true)]).finally(() => {
+      els.refreshStatus.textContent = "AUTO";
+    });
+  }, state.autoRefreshSeconds * 1000);
+}
+
+async function loadHealth() {
+  const r = await fetch("/api/health", { cache: "no-store" });
+  if (!r.ok) return;
+  const p = await r.json();
+  if (p.auto_refresh_seconds) state.autoRefreshSeconds = p.auto_refresh_seconds;
+  if (p.db_enabled) { state.dbEnabled = true; els.rtspPanel.hidden = false; }
 }
 
 // ── Formatters ────────────────────────────────────────────
@@ -308,91 +511,9 @@ function formatTimestamp(timestamp) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(d);
 }
 
-// ── Controls ──────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────
 
-els.prev.addEventListener("click", () => {
-  state.selected = Math.max(0, state.selected - 1);
-  render();
-});
-
-els.next.addEventListener("click", () => {
-  state.selected = Math.min(state.images.length - 1, state.selected + 1);
-  render();
-});
-
-document.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
-  if (e.key === "ArrowLeft") {
-    state.selected = Math.max(0, state.selected - 1);
-    render();
-  } else if (e.key === "ArrowRight") {
-    state.selected = Math.min(state.images.length - 1, state.selected + 1);
-    render();
-  }
-});
-
-els.dateSelect.addEventListener("change", () => {
-  state.date = els.dateSelect.value;
-  state.selected = -1;
-  loadImages(false);
-});
-
-els.sourceSelect.addEventListener("change", () => {
-  state.source = els.sourceSelect.value;
-  state.date = "";
-  state.selected = -1;
-  renderSourceMeta();
-  loadImages(false);
-});
-
-els.addSourceForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  els.addSourceError.hidden = true;
-  const name = els.newSourceName.value.trim();
-  const url = els.newSourceUrl.value.trim();
-  const intervalRaw = els.newSourceInterval.value.trim();
-  const body = { name, url, rtsp_transport: els.newSourceTransport.value };
-  if (intervalRaw) body.interval_seconds = Number(intervalRaw);
-  const response = await fetch("/api/sources", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    els.addSourceError.textContent = payload.error || "Failed to add source";
-    els.addSourceError.hidden = false;
-    return;
-  }
-  els.addSourceForm.reset();
-  await loadSources();
-  await loadImages(false);
-});
-
-// ── Auto-refresh ──────────────────────────────────────────
-
-let refreshTimer = null;
-
-function startAutoRefresh() {
-  if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(() => {
-    els.refreshStatus.textContent = "SYNC";
-    Promise.all([loadSources(), loadImages(true)]).finally(() => {
-      els.refreshStatus.textContent = "AUTO";
-    });
-  }, state.autoRefreshSeconds * 1000);
-}
-
-async function loadHealth() {
-  const response = await fetch("/api/health", { cache: "no-store" });
-  if (!response.ok) return;
-  const payload = await response.json();
-  if (payload.auto_refresh_seconds) state.autoRefreshSeconds = payload.auto_refresh_seconds;
-  if (payload.db_enabled) {
-    state.dbEnabled = true;
-    els.rtspPanel.hidden = false;
-  }
-}
+applyDensity(state.density);  // apply stored density on load
 
 loadHealth().finally(() => {
   loadSources().then(() => loadImages(false)).finally(startAutoRefresh);

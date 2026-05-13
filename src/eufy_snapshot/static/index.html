@@ -38,7 +38,13 @@
         <div class="controls-block">
           <div class="controls">
             <button id="prev" title="Previous (←)" aria-label="Previous snapshot">&#9664;</button>
+            <button id="playBtn" title="Play / Pause (Space)" aria-label="Play">&#9654;</button>
             <button id="next" title="Next (→)" aria-label="Next snapshot">&#9654;</button>
+          </div>
+          <div class="density-row">
+            <span class="dens-end">&#8722;</span>
+            <input id="densitySlider" type="range" min="1" max="5" step="1" value="3" aria-label="Frame density">
+            <span class="dens-end">+</span>
           </div>
         </div>
         <div class="field-block">
