@@ -27,7 +27,6 @@ const state = {
   density:          parseInt(localStorage.getItem("density") || "3", 10),
   playSpeed:        parseInt(localStorage.getItem("playSpeed") || "1", 10),
   playing:          false,
-  playTimer:        null,
   visibleIndices:   [],
 };
 
@@ -674,6 +673,8 @@ function restoreSelected() {
 
 // ── Playback ──────────────────────────────────────────────
 
+let _playId = 0; // incremented on each startPlay; stops stale loops
+
 function startPlay() {
   const srcId = state.images[state.selected]?.source_id;
   const queue = srcId
@@ -685,23 +686,34 @@ function startPlay() {
   els.playBtn.textContent = "■";
   els.playBtn.classList.add("playing");
 
-  let pos = Math.max(0, queue.indexOf(state.selected));
-  const ms = SPEEDS[state.playSpeed].ms;
+  const id  = ++_playId;
+  let   pos = Math.max(0, queue.indexOf(state.selected));
+  const ms  = SPEEDS[state.playSpeed].ms;
 
-  preloadAhead(queue, pos); // warm cache before first tick
+  preloadAhead(queue, pos);
 
-  state.playTimer = setInterval(() => {
-    pos = (pos + 1) % queue.length;
-    state.selected = queue[pos];
-    preloadAhead(queue, pos); // keep window ahead of playhead
-    render();
-  }, ms);
+  (async () => {
+    while (state.playing && _playId === id) {
+      const t0 = performance.now();
+
+      pos = (pos + 1) % queue.length;
+      state.selected = queue[pos];
+      preloadAhead(queue, pos);
+      render();
+
+      // Wait until the browser has decoded the frame before advancing.
+      // Prevents src reassignment cancelling the in-flight decode.
+      try { await els.snapshot.decode(); } catch { /* src changed or error */ }
+
+      // Honour target fps: sleep for any remaining budget
+      const wait = ms - (performance.now() - t0);
+      if (wait > 1) await new Promise(r => setTimeout(r, wait));
+    }
+  })();
 }
 
 function stopPlay() {
-  clearInterval(state.playTimer);
-  state.playTimer = null;
-  state.playing = false;
+  state.playing = false; // async loop exits on next iteration
   els.playBtn.textContent = "▶";
   els.playBtn.classList.remove("playing");
 }
