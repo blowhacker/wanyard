@@ -521,6 +521,7 @@ function render() {
   if (els.hudSource)    els.hudSource.textContent = image.source_name.toUpperCase();
   if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(image.timestamp);
   renderFilmstrip();
+  renderHumansGrid();
 }
 
 // ── Filmstrip ─────────────────────────────────────────────
@@ -923,7 +924,9 @@ function humanThumbStyle(img, box) {
 
 function renderHumansGrid() {
   if (!els.humanGrid || !els.humansPanel) return;
-  const humans = [...state.images]
+  // Show last 6 human frames at or before the selected frame
+  const humans = state.images
+    .slice(0, state.selected + 1)
     .reverse()
     .filter(img => img.has_human && img.boxes?.length)
     .slice(0, 6);
