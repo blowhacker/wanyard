@@ -204,6 +204,7 @@ def make_app(
 
     async def api_export(request: Request) -> Response:
         import os
+        import re
         import tempfile
         from starlette.background import BackgroundTask
 
@@ -212,41 +213,29 @@ def make_app(
         except Exception:
             return JSONResponse({"error": "invalid JSON"}, status_code=400)
 
-        source_id  = body.get("source") or None
-        if source_id == "all":
-            source_id = None
-        in_path    = body.get("in_path")
-        out_path   = body.get("out_path")
-        fps        = max(1, min(60, int(body.get("fps", 12))))
+        paths       = body.get("paths", [])
+        fps         = max(1, min(60, int(body.get("fps", 12))))
+        source_name = str(body.get("source_name", "export"))
+        start_ts    = str(body.get("start_ts", ""))
+        end_ts      = str(body.get("end_ts", ""))
         humans_only = bool(body.get("humans_only", False))
 
-        if not in_path or not out_path:
-            return JSONResponse({"error": "in_path and out_path required"}, status_code=400)
+        if not paths:
+            return JSONResponse({"error": "no paths provided"}, status_code=400)
 
-        all_items = image_index.items(source_id=source_id)
-
-        if humans_only and detection_store:
-            det_map   = detection_store.get_many([i.path for i in all_items])
-            all_items = [i for i in all_items if det_map.get(i.path, (False,))[0]]
-
-        paths = [i.path for i in all_items]
-        if in_path not in paths or out_path not in paths:
-            return JSONResponse({"error": "in/out path not found in current view"}, status_code=400)
-
-        lo = min(paths.index(in_path), paths.index(out_path))
-        hi = max(paths.index(in_path), paths.index(out_path))
-        selected = all_items[lo : hi + 1]
-
-        if not selected:
-            return JSONResponse({"error": "no frames in range"}, status_code=400)
+        odir = image_index.output_dir
+        abs_paths = []
+        for p in paths:
+            resolved = image_index.resolve_image_path(p)
+            if resolved is None:
+                return JSONResponse({"error": f"path not found: {p}"}, status_code=400)
+            abs_paths.append(str(resolved))
 
         dur   = 1 / fps
-        odir  = image_index.output_dir
         lines = []
-        for item in selected:
-            p = str((odir / item.path).resolve())
-            lines += [f"file '{p}'", f"duration {dur:.6f}"]
-        lines.append(f"file '{str((odir / selected[-1].path).resolve())}'")
+        for ap in abs_paths:
+            lines += [f"file '{ap}'", f"duration {dur:.6f}"]
+        lines.append(f"file '{abs_paths[-1]}'")
 
         concat_f = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
         concat_f.write("\n".join(lines))
@@ -274,7 +263,9 @@ def make_app(
             except OSError:
                 pass
 
-        fname = f"export-{len(selected)}f-{fps}fps.mp4"
+        src_slug  = re.sub(r"[^a-z0-9]+", "-", source_name.lower()).strip("-")
+        human_tag = "-human" if humans_only else ""
+        fname     = f"{src_slug}_{start_ts}_{end_ts}{human_tag}.mp4"
         return FileResponse(out_f, media_type="video/mp4", filename=fname,
                             background=BackgroundTask(_cleanup))
 

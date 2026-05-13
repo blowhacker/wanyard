@@ -911,7 +911,25 @@ function updateExportBtn() {
 
 async function exportRange() {
   if (!state.inPoint || !state.outPoint) return;
-  const srcId = state.images[state.selected]?.source_id || "all";
+
+  // Build the exact same frame queue play would use
+  const srcId = state.images[state.selected]?.source_id;
+  const inIdx  = pathIndex.get(state.inPoint);
+  const outIdx = pathIndex.get(state.outPoint);
+  if (inIdx == null || outIdx == null) return;
+  const lo = Math.min(inIdx, outIdx), hi = Math.max(inIdx, outIdx);
+  const frames = state.visibleIndices
+    .filter(i => state.images[i]?.source_id === srcId && i >= lo && i <= hi)
+    .map(i => state.images[i]);
+
+  if (!frames.length) { alert("No frames in range"); return; }
+
+  const fps        = Math.min(30, Math.round(1000 / SPEEDS[state.playSpeed].ms));
+  const sourceName = frames[0]?.source_name || srcId || "export";
+  const fmtTs = ts => ts ? ts.slice(0, 19).replace("T", "_").replaceAll(":", "-") : "";
+  const startTs    = fmtTs(frames[0]?.timestamp);
+  const endTs      = fmtTs(frames[frames.length - 1]?.timestamp);
+
   els.exportBtn.disabled = true;
   els.exportBtn.classList.add("exporting");
   els.exportBtn.textContent = "EXPORTING";
@@ -920,10 +938,11 @@ async function exportRange() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        source:      srcId,
-        in_path:     state.inPoint,
-        out_path:    state.outPoint,
-        fps:         12,
+        paths:       frames.map(f => f.path),
+        fps,
+        source_name: sourceName,
+        start_ts:    startTs,
+        end_ts:      endTs,
         humans_only: state.humansOnly,
       }),
     });
