@@ -1022,12 +1022,11 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 }
 
 .frame--in-range {
-  background: rgba(42, 172, 106, 0.08);
-  border-top:    2px solid var(--green);
-  border-bottom: 2px solid var(--green);
+  background: rgba(42, 172, 106, 0.12);
+  border: 3px solid var(--green);
+  border-right: none;
 }
-.frame--in-point  { border-left:  2px solid var(--green); }
-.frame--out-point { border-right: 2px solid var(--green); }
+.frame--out-point { border-right: 3px solid var(--green) !important; }
 
 /* ── FILTER BAR ──────────────────────────────────────────── */
 
