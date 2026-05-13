@@ -904,6 +904,7 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 
 .frames {
   flex: 1;
+  position: relative;
   display: flex;
   gap: 2px;
   align-items: center;
@@ -1036,15 +1037,16 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
   animation: pulse-g 1s ease-in-out infinite;
 }
 
-.frame--in-range {
-  background: rgba(42, 172, 106, 0.12);
-  border-top:    3px solid var(--green);
-  border-bottom: 3px solid var(--green);
-  border-left:   none;
-  border-right:  none;
+.frame--in-range { background: rgba(42, 172, 106, 0.12); }
+
+.range-overlay {
+  position: absolute;
+  pointer-events: none;
+  border: 3px solid var(--green);
+  border-radius: var(--r);
+  z-index: 3;
+  box-sizing: border-box;
 }
-.frame--in-point  { border-left:  3px solid var(--green) !important; }
-.frame--out-point { border-right: 3px solid var(--green) !important; }
 
 /* ── FILTER BAR ──────────────────────────────────────────── */
 

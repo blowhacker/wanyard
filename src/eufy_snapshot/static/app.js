@@ -913,9 +913,35 @@ function updateExportBtn() {
   const hasAny = state.inPoint || state.outPoint;
   const ready  = state.inPoint && state.outPoint;
   els.exportBtn.disabled = !ready;
-  if (els.inBtn)        els.inBtn.classList.toggle("active",  !!state.inPoint);
-  if (els.outBtn)       els.outBtn.classList.toggle("active", !!state.outPoint);
+  if (els.inBtn)         els.inBtn.classList.toggle("active",  !!state.inPoint);
+  if (els.outBtn)        els.outBtn.classList.toggle("active", !!state.outPoint);
   if (els.clearRangeBtn) els.clearRangeBtn.hidden = !hasAny;
+  updateRangeOverlay();
+}
+
+function updateRangeOverlay() {
+  // Remove all existing overlays
+  for (const el of document.querySelectorAll(".range-overlay")) el.remove();
+  if (!state.inPoint || !state.outPoint) return;
+
+  const inEl  = frameElMap.get(state.inPoint);
+  const outEl = frameElMap.get(state.outPoint);
+  if (!inEl || !outEl) return;
+
+  const framesEl = inEl.closest(".frames");
+  if (!framesEl || outEl.closest(".frames") !== framesEl) return;
+
+  const lo = Math.min(inEl.offsetLeft,  outEl.offsetLeft);
+  const hi = Math.max(inEl.offsetLeft  + inEl.offsetWidth,
+                      outEl.offsetLeft + outEl.offsetWidth);
+
+  const overlay = document.createElement("div");
+  overlay.className = "range-overlay";
+  overlay.style.left   = `${lo}px`;
+  overlay.style.top    = `${inEl.offsetTop}px`;
+  overlay.style.width  = `${hi - lo}px`;
+  overlay.style.height = `${inEl.offsetHeight}px`;
+  framesEl.appendChild(overlay);
 }
 
 async function exportRange() {
