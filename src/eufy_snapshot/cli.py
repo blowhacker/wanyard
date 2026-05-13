@@ -35,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_web(config)
     if args.command == "serve":
         return cmd_serve(config)
+    if args.command == "human-watch":
+        return cmd_human_watch(config, args.source, args.interval, args.conf)
     parser.print_help()
     return 2
 
@@ -56,6 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--source", help="poll only this source id")
     sub.add_parser("web", help="run the web viewer only")
     sub.add_parser("serve", help="run capture daemon and web viewer together")
+    hw = sub.add_parser("human-watch", help="poll RTSP, save only frames with humans")
+    hw.add_argument("--source", help="source id (required if multiple sources)")
+    hw.add_argument("--interval", type=float, default=5.0, help="poll interval seconds (default 5)")
+    hw.add_argument("--conf", type=float, default=0.35, help="YOLO confidence threshold (default 0.35)")
     return parser
 
 
@@ -129,6 +135,113 @@ def cmd_serve(config: AppConfig) -> int:
     )
     _serve(app, config)
     return 0
+
+
+def cmd_human_watch(
+    config: AppConfig,
+    source_id: str | None,
+    interval: float,
+    conf_threshold: float,
+) -> int:
+    import shutil
+    import subprocess
+    import tempfile
+    import time
+
+    from .capture import build_output_path, resolve_rtsp_url
+    from .db import SourceDB
+
+    source_db = SourceDB(config.db_path) if config.db_path else None
+    all_sources = list(config.sources) + (list(source_db.to_source_configs()) if source_db else [])
+    rtsp_sources = [s for s in all_sources if s.type == "rtsp" and s.enabled]
+
+    if not rtsp_sources:
+        logging.error("no RTSP sources configured")
+        return 1
+
+    if source_id:
+        source = next((s for s in rtsp_sources if s.id == source_id), None)
+        if not source:
+            logging.error("source not found: %s", source_id)
+            return 1
+    elif len(rtsp_sources) == 1:
+        source = rtsp_sources[0]
+    else:
+        logging.error("multiple sources — specify --source: %s", [s.id for s in rtsp_sources])
+        return 1
+
+    url = resolve_rtsp_url(source)
+    if not url:
+        logging.error("no URL for source %s", source.id)
+        return 1
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logging.error("ffmpeg not found")
+        return 1
+
+    from ultralytics import YOLO
+    model_path = __import__("os").environ.get("YOLO_MODEL_PATH", "yolo11m.pt")
+    logging.info("loading YOLO model: %s", model_path)
+    model = YOLO(model_path)
+
+    logging.info("human-watch: source=%s interval=%.1fs conf=%.2f", source.name, interval, conf_threshold)
+
+    saved = 0
+    cycle = 0
+    while True:
+        cycle += 1
+        t0 = time.monotonic()
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+
+        try:
+            r = subprocess.run(
+                [ffmpeg, "-hide_banner", "-loglevel", "error",
+                 "-rtsp_transport", source.rtsp_transport,
+                 "-y", "-i", url, "-frames:v", "1", "-q:v", "2", str(tmp_path)],
+                capture_output=True, timeout=source.timeout_seconds, check=False,
+            )
+            t_grab = time.monotonic() - t0
+
+            if r.returncode != 0 or not tmp_path.exists() or tmp_path.stat().st_size == 0:
+                logging.warning("[%d] grab failed (%.2fs)", cycle, t_grab)
+                continue
+
+            t1 = time.monotonic()
+            results = model.predict(str(tmp_path), classes=[0], conf=conf_threshold, verbose=False)
+            t_infer = time.monotonic() - t1
+
+            boxes = results[0].boxes if results else None
+            has_human = bool(boxes and len(boxes))
+            top_conf = float(max(boxes.conf.tolist())) if has_human else 0.0
+
+            if has_human:
+                out = build_output_path(config, source)
+                out.parent.mkdir(parents=True, exist_ok=True)
+                if config.filenames.capture_format == "avif":
+                    from .capture import _convert_to_avif
+                    _convert_to_avif(tmp_path, out)
+                else:
+                    tmp_path.rename(out)
+                saved += 1
+                logging.info(
+                    "[%d] HUMAN conf=%.2f grab=%.2fs infer=%.2fs total=%.2fs → saved #%d %s",
+                    cycle, top_conf, t_grab, t_infer, t_grab + t_infer, saved, out.name,
+                )
+            else:
+                logging.info(
+                    "[%d] no human  grab=%.2fs infer=%.2fs total=%.2fs",
+                    cycle, t_grab, t_infer, t_grab + t_infer,
+                )
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        elapsed = time.monotonic() - t0
+        wait = max(0.0, interval - elapsed)
+        if wait:
+            time.sleep(wait)
 
 
 def _serve(app, config: AppConfig) -> None:
