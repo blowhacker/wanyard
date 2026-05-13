@@ -71,7 +71,6 @@ html, body {
   height: 54px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border-sub);
-  overflow: hidden;
 }
 
 /* Transport: prev/play/next */

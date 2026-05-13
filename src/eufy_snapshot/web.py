@@ -76,7 +76,6 @@ def make_app(
     async def api_health(request: Request) -> JSONResponse:
         return JSONResponse({
             "ok": True,
-            "camera_name": config.camera_name,
             "auto_refresh_seconds": config.web.auto_refresh_seconds,
             "count": len(image_index.items()),
             "latest": _item_to_dict(image_index.latest()),
