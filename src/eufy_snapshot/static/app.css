@@ -267,6 +267,81 @@ html, body {
   color: var(--text-mid);
 }
 
+.panel-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-btn {
+  height: 20px;
+  width: auto;
+  padding: 0 8px;
+  font-family: var(--font);
+  font-size: 0.52rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r);
+  color: var(--text-lo);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.live-btn:hover  { border-color: var(--green); color: var(--green); }
+.live-btn.active {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(42, 172, 106, 0.1);
+  animation: pulse-g 1.5s ease-in-out infinite;
+}
+
+/* ── Humans panel ─────────────────────────────────────── */
+
+.humans-panel {
+  border-top: 1px solid var(--border-sub);
+  padding: 12px 14px;
+  flex-shrink: 0;
+}
+
+.humans-panel-head {
+  font-size: 0.52rem;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  color: var(--text-mid);
+  margin-bottom: 8px;
+}
+
+.human-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.human-cell {
+  position: relative;
+  height: 78px;
+  border-radius: 3px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid var(--border-lo);
+  transition: border-color 0.1s;
+}
+.human-cell:hover { border-color: var(--green); }
+
+.human-cell-ts {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 2px 4px 1px;
+  font-size: 0.48rem;
+  color: rgba(200,212,224,0.85);
+  background: linear-gradient(transparent, rgba(0,0,0,0.8));
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .refresh-badge {
   display: flex;
   align-items: center;

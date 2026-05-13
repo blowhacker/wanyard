@@ -26,6 +26,7 @@ const state = {
   dbEnabled:          false,
   detectionEnabled:   false,
   humansOnly:         localStorage.getItem("humansOnly") === "1",
+  live:               false,
   inPoint:            null,
   outPoint:           null,
   density:            parseInt(localStorage.getItem("density") || "3", 10),
@@ -69,6 +70,9 @@ const els = {
   hudTimestamp:      document.getElementById("hudTimestamp"),
   humansOnlyBtn:     document.getElementById("humansOnlyBtn"),
   humansOnlyField:   document.getElementById("humansOnlyField"),
+  liveBtn:           document.getElementById("liveBtn"),
+  humansPanel:       document.getElementById("humansPanel"),
+  humanGrid:         document.getElementById("humanGrid"),
   exportField:       document.getElementById("exportField"),
   inBtn:             document.getElementById("inBtn"),
   outBtn:            document.getElementById("outBtn"),
@@ -181,7 +185,9 @@ async function loadImages(preserveSelection = true, incremental = false) {
     const newImages = payload.images || [];
     if (newImages.length === 0) return; // nothing new
     state.images = [...state.images, ...newImages];
+    if (state.live) state.selected = state.images.length - 1;
     render();
+    renderHumansGrid();
     return;
   }
 
@@ -195,6 +201,7 @@ async function loadImages(preserveSelection = true, incremental = false) {
     state.selected = state.images.length - 1;
   }
   render();
+  renderHumansGrid();
 }
 
 async function loadSources() {
@@ -710,7 +717,7 @@ function buildFrame(image, frameCount = 1) {
 
   frame.addEventListener("click", () => {
     const idx = pathIndex.get(image.path);
-    if (idx !== undefined) { stopPlay(); state.selected = idx; render(); }
+    if (idx !== undefined) { setLive(false); stopPlay(); state.selected = idx; render(); }
   });
 
   return frame;
@@ -885,6 +892,59 @@ els.jumpLatest.addEventListener("click", () => {
   state.selected = state.images.length - 1; render();
 });
 
+
+// ── LIVE ──────────────────────────────────────────────────
+
+function setLive(on) {
+  state.live = on;
+  if (els.liveBtn) {
+    els.liveBtn.classList.toggle("active", on);
+    els.liveBtn.textContent = on ? "● LIVE" : "LIVE";
+  }
+  if (on) { state.selected = state.images.length - 1; render(); }
+}
+
+// ── Humans panel ──────────────────────────────────────────
+
+function humanThumbStyle(img, box) {
+  const thumbUrl = img.url.replace("/images/", "/thumbs/");
+  const bw = box.x2 - box.x1, bh = box.y2 - box.y1;
+  const pad = 1.0;
+  const vw  = Math.min(1, bw * (1 + pad * 2));
+  const vh  = Math.min(1, bh * (1 + pad * 2));
+  const cx  = (box.x1 + box.x2) / 2, cy = (box.y1 + box.y2) / 2;
+  const vx1 = Math.max(0, Math.min(1 - vw, cx - vw / 2));
+  const vy1 = Math.max(0, Math.min(1 - vh, cy - vh / 2));
+  const bpx = vw >= 1 ? 0 : (vx1 / (1 - vw)) * 100;
+  const bpy = vh >= 1 ? 0 : (vy1 / (1 - vh)) * 100;
+  return `background-image:url('${thumbUrl}');background-size:${(1/vw)*100}%;background-position:${bpx}% ${bpy}%;background-repeat:no-repeat`;
+}
+
+function renderHumansGrid() {
+  if (!els.humanGrid || !els.humansPanel) return;
+  const humans = [...state.images]
+    .reverse()
+    .filter(img => img.has_human && img.boxes?.length)
+    .slice(0, 6);
+  if (!humans.length) { els.humansPanel.hidden = true; return; }
+  els.humansPanel.hidden = false;
+  els.humanGrid.innerHTML = "";
+  for (const img of humans) {
+    const box  = img.boxes[0];
+    const cell = document.createElement("div");
+    cell.className = "human-cell";
+    cell.style.cssText = humanThumbStyle(img, box);
+    const ts = document.createElement("div");
+    ts.className = "human-cell-ts";
+    ts.textContent = formatTime(img.timestamp);
+    cell.appendChild(ts);
+    cell.addEventListener("click", () => {
+      const idx = state.images.findIndex(i => i.path === img.path);
+      if (idx >= 0) { setLive(false); stopPlay(); state.selected = idx; render(); }
+    });
+    els.humanGrid.appendChild(cell);
+  }
+}
 
 // ── Range / Export ────────────────────────────────────────
 
@@ -1095,6 +1155,7 @@ buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
 
+if (els.liveBtn)      els.liveBtn.addEventListener("click", () => setLive(!state.live));
 if (els.inBtn)        els.inBtn.addEventListener("click",  setInPoint);
 if (els.outBtn)       els.outBtn.addEventListener("click",  setOutPoint);
 if (els.clearRangeBtn) els.clearRangeBtn.addEventListener("click", clearRange);

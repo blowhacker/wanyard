@@ -34,7 +34,10 @@
       <aside class="panel">
         <div class="panel-head">
           <span class="panel-brand">CCTV</span>
-          <div id="refreshStatus" class="refresh-badge">AUTO</div>
+          <div class="panel-head-right">
+            <button id="liveBtn" class="live-btn" title="Follow latest frame">LIVE</button>
+            <div id="refreshStatus" class="refresh-badge">AUTO</div>
+          </div>
         </div>
         <div class="ts-block">
           <div class="ts-label">SELECTED FRAME</div>
@@ -67,6 +70,10 @@
               <div id="addSourceError" class="source-error" hidden></div>
             </form>
           </details>
+        </div>
+        <div id="humansPanel" class="humans-panel" hidden>
+          <div class="humans-panel-head">RECENT HUMANS</div>
+          <div id="humanGrid" class="human-grid"></div>
         </div>
       </aside>
 
