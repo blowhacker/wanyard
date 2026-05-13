@@ -925,9 +925,10 @@ function humanThumbStyle(img, box) {
 function renderHumansGrid() {
   if (!els.humanGrid || !els.humansPanel) return;
   // Show 3 before + 3 after current frame, sorted chronologically
+  const srcId = state.images[state.selected]?.source_id;
   const allHumans = state.images
     .map((img, i) => ({ img, dist: Math.abs(i - state.selected) }))
-    .filter(({ img }) => img.has_human && img.boxes?.length)
+    .filter(({ img }) => img.has_human && img.boxes?.length && img.source_id === srcId)
     .sort((a, b) => a.dist - b.dist)
     .slice(0, 6)
     .sort((a, b) => state.images.indexOf(a.img) - state.images.indexOf(b.img));
