@@ -6,13 +6,15 @@ import signal
 import sys
 import threading
 
+import uvicorn
+
 from .capture import capture_once, save_debug_screencap
 from .config import AppConfig, load_config
 from .db import SourceDB
 from .doctor import run_doctor
 from .index import ImageIndex
 from .runner import CaptureWorker, run_loop
-from .web import SnapshotWebServer
+from .web import make_app
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -97,29 +99,27 @@ def cmd_capture_once(config: AppConfig, source_id: str | None = None) -> int:
 def cmd_web(config: AppConfig) -> int:
     source_db = SourceDB(config.db_path) if config.db_path else None
     all_sources = config.sources + (source_db.to_source_configs() if source_db else ())
-    image_index = ImageIndex(config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources)
-    server = SnapshotWebServer(config, image_index, source_db=source_db)
+    image_index = ImageIndex(
+        config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
+    )
+    app = make_app(config, image_index, source_db=source_db)
     print(f"Serving web viewer on http://{config.web.host}:{config.web.port}")
-    _install_shutdown(server.shutdown)
-    server.serve_forever()
+    uvicorn.run(app, host=config.web.host, port=config.web.port,
+                log_level="warning", access_log=False)
     return 0
 
 
 def cmd_serve(config: AppConfig) -> int:
     source_db = SourceDB(config.db_path) if config.db_path else None
     all_sources = config.sources + (source_db.to_source_configs() if source_db else ())
-    image_index = ImageIndex(config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources)
+    image_index = ImageIndex(
+        config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
+    )
     worker = CaptureWorker(config, image_index, source_db=source_db)
-    server = SnapshotWebServer(config, image_index, source_db=source_db)
-    worker.start()
-    print(f"Serving capture daemon and web viewer on http://{config.web.host}:{config.web.port}")
-
-    def shutdown() -> None:
-        worker.stop()
-        server.shutdown()
-
-    _install_shutdown(shutdown)
-    server.serve_forever()
+    app = make_app(config, image_index, source_db=source_db, capture_worker=worker)
+    print(f"Serving on http://{config.web.host}:{config.web.port}")
+    uvicorn.run(app, host=config.web.host, port=config.web.port,
+                log_level="warning", access_log=False)
     return 0
 
 

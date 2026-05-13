@@ -9,6 +9,8 @@ description = "Capture Eufy app snapshots through ADB and serve them over a LAN 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "starlette>=0.40",
+    "uvicorn[standard]>=0.32",
 ]
 
 [project.scripts]
