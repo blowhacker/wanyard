@@ -962,18 +962,6 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 
 .frame.selected .frame-ts { color: var(--amber-bright); }
 
-.human-dot {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 5px;
-  height: 5px;
-  background: var(--green);
-  border-radius: 50%;
-  z-index: 2;
-  box-shadow: 0 0 3px rgba(42, 172, 106, 0.7);
-}
-
 /* ── FILTER BAR ──────────────────────────────────────────── */
 
 .fb-filter {

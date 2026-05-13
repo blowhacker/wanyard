@@ -674,11 +674,6 @@ function buildFrame(image, frameCount = 1) {
 
   frame.appendChild(img);
   frame.appendChild(ts);
-  if (image.has_human === true) {
-    const dot = document.createElement("div");
-    dot.className = "human-dot";
-    frame.appendChild(dot);
-  }
   frameElMap.set(image.path, frame);
 
   frame.addEventListener("click", () => {
