@@ -1023,13 +1023,11 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 
 .frame--in-range {
   background: rgba(42, 172, 106, 0.08);
-  border-top-color:    var(--green);
-  border-bottom-color: var(--green);
-  border-left-color:   transparent;
-  border-right-color:  transparent;
+  border-top:    2px solid var(--green);
+  border-bottom: 2px solid var(--green);
 }
-.frame--in-point  { border-left-color:  var(--green) !important; }
-.frame--out-point { border-right-color: var(--green) !important; }
+.frame--in-point  { border-left:  2px solid var(--green); }
+.frame--out-point { border-right: 2px solid var(--green); }
 
 /* ── FILTER BAR ──────────────────────────────────────────── */
 
