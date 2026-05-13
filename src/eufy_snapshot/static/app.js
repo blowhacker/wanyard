@@ -674,7 +674,7 @@ function renderFilmstrip() {
     if (currentSelectedEl) currentSelectedEl.classList.add("selected");
   }
   if (currentSelectedEl) {
-    _centerFrame(currentSelectedEl, !state.playing);
+    _centerFrame(currentSelectedEl, false);
   }
 
   // Highlight active strip
