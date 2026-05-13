@@ -975,6 +975,7 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 
 .humans-btn {
   height: 28px;
+  width: auto;
   padding: 0 10px;
   font-family: var(--font);
   font-size: 0.70rem;
