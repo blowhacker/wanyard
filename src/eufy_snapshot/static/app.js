@@ -646,8 +646,8 @@ function renderFilmstrip() {
     currentSelectedEl = frameElMap.get(selectedPath) || null;
     if (currentSelectedEl) currentSelectedEl.classList.add("selected");
   }
-  if (currentSelectedEl && !state.playing) {
-    currentSelectedEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  if (currentSelectedEl) {
+    _centerFrame(currentSelectedEl, !state.playing);
   }
 }
 
@@ -687,6 +687,13 @@ function buildHourMarker(date) {
   label.textContent = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   el.appendChild(label);
   return el;
+}
+
+function _centerFrame(el, smooth) {
+  const framesEl = el.closest(".frames");
+  if (!framesEl) return;
+  const target = el.offsetLeft - framesEl.clientWidth / 2 + el.offsetWidth / 2;
+  framesEl.scrollTo({ left: Math.max(0, target), behavior: smooth ? "smooth" : "auto" });
 }
 
 function showPreview(img) {
