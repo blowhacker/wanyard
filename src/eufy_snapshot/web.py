@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import shutil
+import subprocess
 import threading
 import time
 from http import HTTPStatus
@@ -12,6 +14,25 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .config import AppConfig
 from .index import ImageIndex, ImageItem
+
+_THUMB_W = 160  # thumbnail width in pixels
+
+
+def _generate_thumb(src: Path, dest: Path) -> bool:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(src), "-vf", f"scale={_THUMB_W}:-2",
+             "-frames:v", "1", "-q:v", "6", str(dest)],
+            capture_output=True, timeout=15, check=False,
+        )
+        return r.returncode == 0 and dest.exists()
+    except (subprocess.TimeoutExpired, OSError):
+        return False
 
 
 class SnapshotWebServer:
@@ -79,6 +100,16 @@ class SnapshotWebServer:
                         self._json({"image": None}, HTTPStatus.NOT_FOUND)
                     else:
                         self._json({"image": _item_to_dict(latest)})
+                elif parsed.path.startswith("/thumbs/"):
+                    rel = unquote(parsed.path.removeprefix("/thumbs/"))
+                    src = image_index.resolve_image_path(rel)
+                    if src is None:
+                        self.send_error(HTTPStatus.NOT_FOUND)
+                    else:
+                        dest = image_index.output_dir / ".thumbs" / src.relative_to(image_index.output_dir.resolve())
+                        if not dest.exists():
+                            _generate_thumb(src, dest)
+                        self._file(dest if dest.exists() else src)
                 elif parsed.path.startswith("/images/"):
                     rel = unquote(parsed.path.removeprefix("/images/"))
                     self._file(image_index.resolve_image_path(rel))

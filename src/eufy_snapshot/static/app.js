@@ -47,10 +47,13 @@ const els = {
   hudTimestamp:      document.getElementById("hudTimestamp"),
 };
 
-// Per-source strip state: sourceId → { paths, framesEl, stripEl, lastTs }
+// Per-source strip state: sourceId → { paths, framesEl, stripEl, lastTs, srcImages }
 const stripState = new Map();
 // path → globalIndex in state.images
 const pathIndex = new Map();
+// path → DOM frame element (for O(1) highlight updates)
+const frameElMap = new Map();
+let currentSelectedEl = null;
 
 // ── Density ───────────────────────────────────────────────
 
@@ -64,6 +67,8 @@ function applyDensity(level) {
   // Full filmstrip rebuild at new density
   for (const [, s] of stripState) s.stripEl.remove();
   stripState.clear();
+  frameElMap.clear();
+  currentSelectedEl = null;
   renderFilmstrip();
 }
 
@@ -235,7 +240,11 @@ function renderFilmstrip() {
 
   // Remove strips for sources no longer present
   for (const [id, s] of stripState) {
-    if (!groups.has(id)) { s.stripEl.remove(); stripState.delete(id); }
+    if (!groups.has(id)) {
+      for (const p of s.paths) frameElMap.delete(p);
+      s.stripEl.remove();
+      stripState.delete(id);
+    }
   }
 
   // Collect visible indices for playback
@@ -286,6 +295,7 @@ function renderFilmstrip() {
       strip.paths.every((p, i) => sampled[i].path === p);
 
     if (!isAppend) {
+      for (const p of strip.paths) frameElMap.delete(p);
       strip.framesEl.innerHTML = "";
       strip.paths = [];
       strip.lastTs = null;
@@ -319,19 +329,19 @@ function renderFilmstrip() {
   // Sort visible indices (multiple sources may interleave)
   state.visibleIndices.sort((a, b) => a - b);
 
-  // Update selected highlight
+  // O(1) selected highlight: only touch the two elements that changed
   const selectedPath = state.images[state.selected]?.path;
-  let selectedEl = null;
-  for (const [, strip] of stripState) {
-    const frameEls = strip.framesEl.querySelectorAll(".frame");
-    frameEls.forEach((el, i) => {
-      const isSelected = strip.paths[i] === selectedPath;
-      el.classList.toggle("selected", isSelected);
-      if (isSelected) selectedEl = el;
-    });
+  if (currentSelectedEl !== frameElMap.get(selectedPath)) {
+    if (currentSelectedEl) currentSelectedEl.classList.remove("selected");
+    currentSelectedEl = frameElMap.get(selectedPath) || null;
+    if (currentSelectedEl) currentSelectedEl.classList.add("selected");
   }
-  if (selectedEl) {
-    selectedEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  if (currentSelectedEl) {
+    currentSelectedEl.scrollIntoView({
+      behavior: state.playing ? "instant" : "smooth",
+      block: "nearest",
+      inline: "nearest",
+    });
   }
 }
 
@@ -340,9 +350,10 @@ function buildFrame(image) {
   frame.className = "frame";
 
   const img = document.createElement("img");
-  img.src = image.url;
+  img.src = image.url.replace("/images/", "/thumbs/");
   img.alt = "";
   img.loading = "lazy";
+  frameElMap.set(image.path, frame);
 
   const ts = document.createElement("div");
   ts.className = "frame-ts";
@@ -386,16 +397,23 @@ function buildHourMarker(date) {
 // ── Playback ──────────────────────────────────────────────
 
 function startPlay() {
-  if (!state.visibleIndices.length) return;
+  // Play only the source of the currently selected frame (no cross-source mixing)
+  const srcId = state.images[state.selected]?.source_id;
+  const queue = srcId
+    ? state.visibleIndices.filter(i => state.images[i]?.source_id === srcId)
+    : state.visibleIndices;
+  if (!queue.length) return;
+
   state.playing = true;
   els.playBtn.textContent = "■";
   els.playBtn.classList.add("playing");
 
+  // Local counter avoids O(n) indexOf on every tick
+  let pos = Math.max(0, queue.indexOf(state.selected));
+
   state.playTimer = setInterval(() => {
-    const vis = state.visibleIndices;
-    if (!vis.length) return;
-    const pos = vis.indexOf(state.selected);
-    state.selected = vis[pos < 0 ? 0 : (pos + 1) % vis.length];  // loops
+    pos = (pos + 1) % queue.length;
+    state.selected = queue[pos];
     render();
   }, 50); // 20fps
 }
