@@ -202,11 +202,88 @@ def make_app(
         media_type = "image/avif" if path.suffix == ".avif" else None
         return FileResponse(path, headers={"Cache-Control": _IMG_CACHE}, media_type=media_type)
 
+    async def api_export(request: Request) -> Response:
+        import os
+        import tempfile
+        from starlette.background import BackgroundTask
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+        source_id  = body.get("source") or None
+        if source_id == "all":
+            source_id = None
+        in_path    = body.get("in_path")
+        out_path   = body.get("out_path")
+        fps        = max(1, min(60, int(body.get("fps", 12))))
+        humans_only = bool(body.get("humans_only", False))
+
+        if not in_path or not out_path:
+            return JSONResponse({"error": "in_path and out_path required"}, status_code=400)
+
+        all_items = image_index.items(source_id=source_id)
+
+        if humans_only and detection_store:
+            det_map   = detection_store.get_many([i.path for i in all_items])
+            all_items = [i for i in all_items if det_map.get(i.path, (False,))[0]]
+
+        paths = [i.path for i in all_items]
+        if in_path not in paths or out_path not in paths:
+            return JSONResponse({"error": "in/out path not found in current view"}, status_code=400)
+
+        lo = min(paths.index(in_path), paths.index(out_path))
+        hi = max(paths.index(in_path), paths.index(out_path))
+        selected = all_items[lo : hi + 1]
+
+        if not selected:
+            return JSONResponse({"error": "no frames in range"}, status_code=400)
+
+        dur   = 1 / fps
+        odir  = image_index.output_dir
+        lines = []
+        for item in selected:
+            p = str((odir / item.path).resolve())
+            lines += [f"file '{p}'", f"duration {dur:.6f}"]
+        lines.append(f"file '{str((odir / selected[-1].path).resolve())}'")
+
+        concat_f = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+        concat_f.write("\n".join(lines))
+        concat_f.close()
+        out_f = tempfile.mktemp(suffix=".mp4")
+
+        ffmpeg = shutil.which("ffmpeg")
+        r = await asyncio.to_thread(subprocess.run, [
+            ffmpeg, "-y", "-f", "concat", "-safe", "0",
+            "-i", concat_f.name,
+            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            out_f,
+        ], capture_output=True, timeout=300, check=False)
+
+        os.unlink(concat_f.name)
+
+        if r.returncode != 0 or not os.path.exists(out_f):
+            err = r.stderr.decode("utf-8", errors="replace")[-300:]
+            return JSONResponse({"error": f"ffmpeg: {err}"}, status_code=500)
+
+        def _cleanup():
+            try:
+                os.unlink(out_f)
+            except OSError:
+                pass
+
+        fname = f"export-{len(selected)}f-{fps}fps.mp4"
+        return FileResponse(out_f, media_type="video/mp4", filename=fname,
+                            background=BackgroundTask(_cleanup))
+
     routes = [
         Route("/api/health",                api_health),
         Route("/api/sources",               api_sources,        methods=["GET", "POST"]),
         Route("/api/sources/{source_id}",   api_delete_source,  methods=["DELETE"]),
         Route("/api/images/latest",         api_images_latest),
+        Route("/api/export",                api_export,         methods=["POST"]),
         Route("/api/images",                api_images),
         Route("/thumbs/{path:path}",        serve_thumb),
         Route("/images/{path:path}",        serve_image),

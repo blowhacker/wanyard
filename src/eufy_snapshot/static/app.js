@@ -26,6 +26,8 @@ const state = {
   dbEnabled:          false,
   detectionEnabled:   false,
   humansOnly:         localStorage.getItem("humansOnly") === "1",
+  inPoint:            null,
+  outPoint:           null,
   density:            parseInt(localStorage.getItem("density") || "3", 10),
   playSpeed:          parseInt(localStorage.getItem("playSpeed") || "1", 10),
   playing:            false,
@@ -67,6 +69,10 @@ const els = {
   hudTimestamp:      document.getElementById("hudTimestamp"),
   humansOnlyBtn:     document.getElementById("humansOnlyBtn"),
   humansOnlyField:   document.getElementById("humansOnlyField"),
+  exportField:       document.getElementById("exportField"),
+  inBtn:             document.getElementById("inBtn"),
+  outBtn:            document.getElementById("outBtn"),
+  exportBtn:         document.getElementById("exportBtn"),
 };
 
 // Calendar display state (persists across re-renders)
@@ -666,6 +672,19 @@ function renderFilmstrip() {
   for (const [sourceId, strip] of stripState) {
     strip.stripEl.classList.toggle("strip--active", sourceId === selectedSrcId);
   }
+
+  // Range highlight
+  const inIdx  = state.inPoint  ? pathIndex.get(state.inPoint)  : null;
+  const outIdx = state.outPoint ? pathIndex.get(state.outPoint) : null;
+  const lo = (inIdx != null && outIdx != null) ? Math.min(inIdx, outIdx) : (inIdx ?? outIdx);
+  const hi = (inIdx != null && outIdx != null) ? Math.max(inIdx, outIdx) : (inIdx ?? outIdx);
+  for (const [p, el] of frameElMap) {
+    const idx = pathIndex.get(p);
+    el.classList.toggle("frame--in-range",  idx != null && lo != null && hi != null && idx >= lo && idx <= hi);
+    el.classList.toggle("frame--in-point",  idx != null && idx === inIdx);
+    el.classList.toggle("frame--out-point", idx != null && idx === outIdx);
+  }
+  updateExportBtn();
 }
 
 function buildFrame(image, frameCount = 1) {
@@ -756,9 +775,15 @@ function _fmtSpeed(secPerSec) {
 
 function startPlay() {
   const srcId = state.images[state.selected]?.source_id;
-  const queue = srcId
+  let queue = srcId
     ? state.visibleIndices.filter(i => state.images[i]?.source_id === srcId)
     : state.visibleIndices;
+  if (state.inPoint || state.outPoint) {
+    const inIdx  = state.inPoint  ? (pathIndex.get(state.inPoint)  ?? 0) : 0;
+    const outIdx = state.outPoint ? (pathIndex.get(state.outPoint) ?? state.images.length - 1) : state.images.length - 1;
+    const lo = Math.min(inIdx, outIdx), hi = Math.max(inIdx, outIdx);
+    queue = queue.filter(i => i >= lo && i <= hi);
+  }
   if (!queue.length) return;
 
   state.playing = true;
@@ -854,12 +879,80 @@ els.jumpLatest.addEventListener("click", () => {
 });
 
 
+// ── Range / Export ────────────────────────────────────────
+
+function setInPoint() {
+  const img = state.images[state.selected];
+  if (!img) return;
+  state.inPoint = img.path;
+  renderFilmstrip();
+}
+
+function setOutPoint() {
+  const img = state.images[state.selected];
+  if (!img) return;
+  state.outPoint = img.path;
+  renderFilmstrip();
+}
+
+function clearRange() {
+  state.inPoint = null;
+  state.outPoint = null;
+  renderFilmstrip();
+}
+
+function updateExportBtn() {
+  if (!els.exportBtn) return;
+  const ready = state.inPoint && state.outPoint;
+  els.exportBtn.disabled = !ready;
+  if (els.inBtn)  els.inBtn.classList.toggle("active",  !!state.inPoint);
+  if (els.outBtn) els.outBtn.classList.toggle("active", !!state.outPoint);
+}
+
+async function exportRange() {
+  if (!state.inPoint || !state.outPoint) return;
+  const srcId = state.images[state.selected]?.source_id || "all";
+  els.exportBtn.disabled = true;
+  els.exportBtn.textContent = "…";
+  try {
+    const resp = await fetch("/api/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source:      srcId,
+        in_path:     state.inPoint,
+        out_path:    state.outPoint,
+        fps:         12,
+        humans_only: state.humansOnly,
+      }),
+    });
+    if (!resp.ok) {
+      const p = await resp.json().catch(() => ({}));
+      alert(p.error || "Export failed");
+      return;
+    }
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = "export.mp4"; a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert("Export failed: " + err.message);
+  } finally {
+    els.exportBtn.disabled = !state.inPoint || !state.outPoint;
+    els.exportBtn.textContent = "MP4";
+  }
+}
+
 document.addEventListener("keydown", e => {
   const tag = e.target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
   if (e.key === " ")            { e.preventDefault(); togglePlay(); }
   else if (e.key === "ArrowLeft")  { stopPlay(); stepFrame(-1); }
   else if (e.key === "ArrowRight") { stopPlay(); stepFrame(+1); }
+  else if (e.key === "i" || e.key === "I") { setInPoint(); }
+  else if (e.key === "o" || e.key === "O") { setOutPoint(); }
+  else if (e.key === "Escape")  { clearRange(); }
 });
 
 els.addSourceForm.addEventListener("submit", async e => {
@@ -942,6 +1035,10 @@ function formatTimestamp(timestamp) {
 buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
+
+if (els.inBtn)     els.inBtn.addEventListener("click",  setInPoint);
+if (els.outBtn)    els.outBtn.addEventListener("click",  setOutPoint);
+if (els.exportBtn) els.exportBtn.addEventListener("click", exportRange);
 
 loadHealth().finally(() => {
   loadSources().then(() => loadImages(false)).finally(startAutoRefresh);
