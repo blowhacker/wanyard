@@ -1443,6 +1443,8 @@ function openPanel()  { _panel?.classList.add("open");  document.body.classList.
 function closePanel() { _panel?.classList.remove("open"); document.body.classList.remove("panel-open"); }
 function togglePanel(){ _panel?.classList.contains("open") ? closePanel() : openPanel(); }
 if (_panelToggle) _panelToggle.addEventListener("click", togglePanel);
+const _panelToggleMobile = document.getElementById("panelToggleMobile");
+if (_panelToggleMobile) _panelToggleMobile.addEventListener("click", togglePanel);
 // Tap overlay to close
 document.body.addEventListener("click", e => {
   if (document.body.classList.contains("panel-open") && !_panel.contains(e.target) && e.target !== _panelToggle)

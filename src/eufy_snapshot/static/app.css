@@ -1377,7 +1377,26 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
   .hud-rec { display: none; } /* declutter mobile HUD */
 }
 
-/* Panel toggle button: hidden on desktop */
+/* Bar panel toggle: mobile only */
+.fb-panel-toggle { display: none; flex-shrink: 0; }
+
+.panel-toggle-bar-btn {
+  height: 40px;
+  width: 44px;
+  font-size: 1.2rem;
+  background: var(--amber-dim);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  color: var(--amber);
+  cursor: pointer;
+  padding: 0;
+}
+
+@media (max-width: 640px) {
+  .fb-panel-toggle { display: flex; align-items: center; }
+}
+
+/* Panel toggle button in image HUD: hidden on desktop */
 .panel-toggle-btn {
   display: none;
   align-items: center;
