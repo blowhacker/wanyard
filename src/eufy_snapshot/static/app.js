@@ -805,17 +805,21 @@ function _centerFrame(el, smooth) {
 }
 
 function showPreview(img) {
+  _boxImg = img;
   els.snapshot.src = img.url;
   if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(img.timestamp);
   if (els.hudSource)    els.hudSource.textContent = img.source_name.toUpperCase();
+  renderBoxes(img);
 }
 
 function restoreSelected() {
+  _boxImg = null;
   const sel = state.images[state.selected];
   if (!sel) return;
   els.snapshot.src = sel.url;
   if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(sel.timestamp);
   if (els.hudSource)    els.hudSource.textContent = sel.source_name.toUpperCase();
+  renderBoxes(sel);
 }
 
 // ── Playback ──────────────────────────────────────────────
@@ -1288,11 +1292,14 @@ const BOX_COLORS = {
   bicycle:    "#c08020",
 };
 
-function renderBoxes() {
+let _boxImg = null; // currently displayed image (may differ from state.selected during hover)
+
+function renderBoxes(imgData) {
   const canvas = els.boxCanvas;
   if (!canvas) return;
   const img = els.snapshot;
-  const boxes = state.images[state.selected]?.boxes;
+  const det = imgData ?? _boxImg ?? state.images[state.selected];
+  const boxes = det?.boxes;
 
   const ctx = canvas.getContext("2d");
   canvas.width  = canvas.clientWidth;
@@ -1400,7 +1407,7 @@ buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
 
-els.snapshot.addEventListener("load", renderBoxes);
+els.snapshot.addEventListener("load", () => renderBoxes(_boxImg ?? state.images[state.selected]));
 
 // Mobile panel drawer
 const _panel = document.querySelector(".panel");
