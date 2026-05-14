@@ -228,6 +228,9 @@ html, body {
   position: relative;
   z-index: 3;
   cursor: pointer;
+  -webkit-transition: none !important;
+  transition: none !important;
+  transform: translateZ(0);
 }
 
 #boxCanvas {
@@ -1328,7 +1331,6 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
   .filmstrip-area {
     grid-column: 1;
     grid-row: 2;
-    overflow: hidden;
   }
 
   /* Panel becomes a fixed bottom drawer */
@@ -1361,8 +1363,8 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
   }
   .filmstrip-bar::-webkit-scrollbar { display: none; }
 
-  /* Filmstrip: only one strip row on mobile */
-  .filmstrip { max-height: calc(var(--strip-row) + 4px); }
+  /* Filmstrip: allow all strips */
+  .filmstrip { max-height: none; overflow-y: visible; }
 
   /* Transport buttons: larger touch targets */
   .fb-transport button { width: 44px; height: 44px; font-size: 1.3rem; }
