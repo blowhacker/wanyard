@@ -23,6 +23,7 @@
           <span class="hud-rec"><span class="rec-dot"></span>REC</span>
         </div>
         <img id="snapshot" alt="Camera snapshot">
+        <canvas id="boxCanvas"></canvas>
         <video id="liveVideo" autoplay playsinline></video>
         <div id="empty" class="empty">NO SIGNAL</div>
         <div class="hud-bottom">
@@ -76,10 +77,6 @@
               <div id="addSourceError" class="source-error" hidden></div>
             </form>
           </details>
-        </div>
-        <div id="humansPanel" class="humans-panel" hidden>
-          <div class="humans-panel-head">RECENT HUMANS</div>
-          <div id="humanGrid" class="human-grid"></div>
         </div>
       </aside>
 

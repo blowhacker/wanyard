@@ -28,7 +28,6 @@ const state = {
   humansOnly:         localStorage.getItem("humansOnly") === "1",
   classFilter:        new Set(),
   live:               false,
-  humanCount:         parseInt(localStorage.getItem("humanCount") || "6", 10),
   inPoint:            null,
   outPoint:           null,
   density:            parseInt(localStorage.getItem("density") || "3", 10),
@@ -75,9 +74,9 @@ const els = {
   classField:        document.getElementById("classField"),
   classCtrl:         document.getElementById("classCtrl"),
   liveBtn:           document.getElementById("liveBtn"),
-  humansPanel:       document.getElementById("humansPanel"),
   liveVideo:         document.getElementById("liveVideo"),
   goLiveBtn:         document.getElementById("goLiveBtn"),
+  boxCanvas:         document.getElementById("boxCanvas"),
   exportField:       document.getElementById("exportField"),
   inBtn:             document.getElementById("inBtn"),
   outBtn:            document.getElementById("outBtn"),
@@ -192,7 +191,6 @@ async function loadImages(preserveSelection = true, incremental = false) {
     state.images = [...state.images, ...newImages];
     if (state.live) state.selected = state.images.length - 1;
     render();
-    renderHumansGrid();
     renderClassFilter();
     return;
   }
@@ -207,7 +205,6 @@ async function loadImages(preserveSelection = true, incremental = false) {
     state.selected = state.images.length - 1;
   }
   render();
-  renderHumansGrid();
   renderClassFilter();
 }
 
@@ -579,7 +576,7 @@ function render() {
   if (els.hudSource)    els.hudSource.textContent = image.source_name.toUpperCase();
   if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(image.timestamp);
   renderFilmstrip();
-  renderHumansGrid();
+  renderBoxes();
 }
 
 // ── Filmstrip ─────────────────────────────────────────────
@@ -974,9 +971,7 @@ function setLive(on) {
   if (on) { state.selected = state.images.length - 1; render(); }
 }
 
-// ── Humans panel ──────────────────────────────────────────
-
-function humanThumbStyle(img, box) {
+function humanThumbStyle_REMOVED(img, box) {
   // Cell ~133×78px (2-col in 300px panel). Image source 2304×1296 (AR 1.778).
   // Show a fixed VIEW_H fraction of frame height, derive VIEW_W to match cell AR.
   const CELL_AR  = 133 / 78;
@@ -1278,6 +1273,61 @@ function formatTimestamp(timestamp) {
 
 // ── Init ──────────────────────────────────────────────────
 
+// ── Bounding boxes ───────────────────────────────────────
+
+const BOX_COLORS = {
+  person:     "#2aac6a",
+  bird:       "#20c0b0",
+  cat:        "#20c0b0",
+  dog:        "#20c0b0",
+  car:        "#c08020",
+  truck:      "#c08020",
+  bus:        "#c08020",
+  motorcycle: "#c08020",
+  bicycle:    "#c08020",
+};
+
+function renderBoxes() {
+  const canvas = els.boxCanvas;
+  if (!canvas) return;
+  const img = els.snapshot;
+  const boxes = state.images[state.selected]?.boxes;
+
+  const ctx = canvas.getContext("2d");
+  canvas.width  = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!boxes?.length || !img.naturalWidth) return;
+
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const cw = canvas.width,     ch = canvas.height;
+  const scale = Math.min(cw / iw, ch / ih);
+  const rw = iw * scale, rh = ih * scale;
+  const ox = (cw - rw) / 2,   oy = (ch - rh) / 2;
+
+  for (const box of boxes) {
+    const x = ox + box.x1 * rw;
+    const y = oy + box.y1 * rh;
+    const w = (box.x2 - box.x1) * rw;
+    const h = (box.y2 - box.y1) * rh;
+    const color = BOX_COLORS[box.cls] || "#ccd8e4";
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(x, y, w, h);
+
+    const label = `${box.cls} ${Math.round(box.conf * 100)}%`;
+    ctx.font      = "bold 11px 'IBM Plex Mono', monospace";
+    const tw      = ctx.measureText(label).width + 6;
+    const ty      = y > 18 ? y - 18 : y + h;
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 1, ty, tw, 16);
+    ctx.fillStyle = "#050709";
+    ctx.fillText(label, x + 2, ty + 11);
+  }
+}
+
 // ── Live stream ───────────────────────────────────────────
 
 let _livePC = null;
@@ -1349,6 +1399,7 @@ buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
 
+els.snapshot.addEventListener("load", renderBoxes);
 if (els.liveBtn)      els.liveBtn.addEventListener("click", () => setLive(!state.live));
 if (els.goLiveBtn)    els.goLiveBtn.addEventListener("click", toggleLiveStream);
 if (els.inBtn)        els.inBtn.addEventListener("click",  setInPoint);
