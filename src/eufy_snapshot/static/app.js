@@ -552,7 +552,6 @@ function _drawToMainCanvas(img) {
   const scale = Math.min(cw / iw, ch / ih);
   const rw = iw * scale, rh = ih * scale;
   const ox = (cw - rw) / 2, oy = (ch - rh) / 2;
-  ctx.clearRect(0, 0, cw, ch);
   ctx.drawImage(img, ox, oy, rw, rh);
 }
 
