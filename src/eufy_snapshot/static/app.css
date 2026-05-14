@@ -1115,6 +1115,37 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 
 .frame.selected .frame-ts { color: var(--amber-bright); }
 
+/* ── CLASS FILTER ────────────────────────────────────────── */
+
+.class-chips {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.class-chip {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r);
+  background: var(--bg-input);
+  color: var(--text-mid);
+  font-family: var(--font);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  white-space: nowrap;
+  width: auto;
+}
+.class-chip.active {
+  border-color: var(--amber-border);
+  color: var(--amber-bright);
+  background: var(--amber-dim);
+}
+.class-chip:hover:not(.active) { border-color: var(--border-hi); color: var(--text-hi); }
+
 /* ── RANGE / EXPORT ─────────────────────────────────────── */
 
 .fb-export {

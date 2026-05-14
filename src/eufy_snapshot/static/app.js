@@ -26,6 +26,7 @@ const state = {
   dbEnabled:          false,
   detectionEnabled:   false,
   humansOnly:         localStorage.getItem("humansOnly") === "1",
+  classFilter:        new Set(),
   live:               false,
   humanCount:         parseInt(localStorage.getItem("humanCount") || "6", 10),
   inPoint:            null,
@@ -71,6 +72,8 @@ const els = {
   hudTimestamp:      document.getElementById("hudTimestamp"),
   humansOnlyBtn:     document.getElementById("humansOnlyBtn"),
   humansOnlyField:   document.getElementById("humansOnlyField"),
+  classField:        document.getElementById("classField"),
+  classCtrl:         document.getElementById("classCtrl"),
   liveBtn:           document.getElementById("liveBtn"),
   humansPanel:       document.getElementById("humansPanel"),
   liveVideo:         document.getElementById("liveVideo"),
@@ -190,6 +193,7 @@ async function loadImages(preserveSelection = true, incremental = false) {
     if (state.live) state.selected = state.images.length - 1;
     render();
     renderHumansGrid();
+    renderClassFilter();
     return;
   }
 
@@ -204,6 +208,7 @@ async function loadImages(preserveSelection = true, incremental = false) {
   }
   render();
   renderHumansGrid();
+  renderClassFilter();
 }
 
 async function loadSources() {
@@ -487,6 +492,53 @@ async function deleteSource(id, name) {
   await loadSources(); await loadImages(false);
 }
 
+// ── Class filter ─────────────────────────────────────────
+
+function effectiveImages() {
+  if (!state.classFilter.size) return state.images;
+  return state.images.filter(img =>
+    img.classes?.some(c => state.classFilter.has(c))
+  );
+}
+
+function renderClassFilter() {
+  if (!els.classCtrl || !els.classField) return;
+  const counts = {};
+  for (const img of state.images) {
+    for (const cls of img.classes || []) counts[cls] = (counts[cls] || 0) + 1;
+  }
+  const classes = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (!classes.length) { els.classField.hidden = true; return; }
+  els.classField.hidden = false;
+  els.classCtrl.innerHTML = "";
+
+  const allBtn = document.createElement("button");
+  allBtn.className = "class-chip" + (!state.classFilter.size ? " active" : "");
+  allBtn.textContent = "ALL";
+  allBtn.addEventListener("click", () => {
+    state.classFilter.clear();
+    renderClassFilter();
+    _rebuildFilmstrip();
+  });
+  els.classCtrl.appendChild(allBtn);
+
+  for (const [cls, count] of classes) {
+    const btn = document.createElement("button");
+    btn.className = "class-chip" + (state.classFilter.has(cls) ? " active" : "");
+    btn.textContent = `${cls} ×${count}`;
+    btn.title = cls;
+    btn.addEventListener("click", () => {
+      if (state.classFilter.has(cls)) state.classFilter.delete(cls);
+      else state.classFilter.add(cls);
+      if (!state.classFilter.size) allBtn.classList.add("active");
+      else allBtn.classList.remove("active");
+      renderClassFilter();
+      _rebuildFilmstrip();
+    });
+    els.classCtrl.appendChild(btn);
+  }
+}
+
 // ── Main render ───────────────────────────────────────────
 
 function setMainSrc(url) {
@@ -555,14 +607,21 @@ function subsample(images, sampleMinutes) {
   return result;
 }
 
+function _rebuildFilmstrip() {
+  for (const [, s] of stripState) s.stripEl.remove();
+  stripState.clear(); frameElMap.clear(); currentSelectedEl = null;
+  renderFilmstrip();
+}
+
 function renderFilmstrip() {
   const d = DENSITY[state.density - 1];
   pathIndex.clear();
   state.images.forEach((img, i) => pathIndex.set(img.path, i));
 
+  const visible = effectiveImages();
   const groups = new Map();
-  for (let i = 0; i < state.images.length; i++) {
-    const img = state.images[i];
+  for (let i = 0; i < visible.length; i++) {
+    const img = visible[i];
     if (!groups.has(img.source_id)) {
       groups.set(img.source_id, { sourceName: img.source_name, items: [] });
     }
