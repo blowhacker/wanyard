@@ -804,12 +804,15 @@ function _centerFrame(el, smooth) {
   framesEl.scrollTo({ left: Math.max(0, target), behavior: smooth ? "smooth" : "auto" });
 }
 
+let _previewThrottle = null;
 function showPreview(img) {
+  if (els.snapshot.src.endsWith(img.url)) return; // already showing
   _boxImg = img;
   els.snapshot.src = img.url;
   if (els.hudTimestamp) els.hudTimestamp.textContent = formatTimestamp(img.timestamp);
   if (els.hudSource)    els.hudSource.textContent = img.source_name.toUpperCase();
-  renderBoxes(img);
+  if (_previewThrottle) return;
+  _previewThrottle = setTimeout(() => { _previewThrottle = null; renderBoxes(_boxImg); }, 50);
 }
 
 function restoreSelected() {
