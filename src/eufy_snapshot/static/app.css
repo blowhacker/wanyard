@@ -232,6 +232,7 @@ html, body {
   position: relative;
   z-index: 3;
   cursor: pointer;
+  background: var(--bg-stage);
 }
 
 #boxCanvas {

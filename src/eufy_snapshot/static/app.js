@@ -543,8 +543,10 @@ function renderClassFilter() {
 function _drawToMainCanvas(img) {
   const canvas = els.mainCanvas;
   if (!canvas || !img?.naturalWidth) return;
-  canvas.width  = canvas.clientWidth;
-  canvas.height = canvas.clientHeight;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  if (canvas.width !== cw || canvas.height !== ch) {
+    canvas.width = cw; canvas.height = ch;
+  }
   const ctx = canvas.getContext("2d");
   const cw = canvas.width, ch = canvas.height;
   const iw = img.naturalWidth, ih = img.naturalHeight;
