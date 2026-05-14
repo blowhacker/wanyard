@@ -5,6 +5,8 @@ import threading
 import time
 from collections.abc import Callable
 
+import queue
+
 from .capture import CaptureNotReady, capture_once, grab_rtsp_temp
 from .config import AppConfig, SourceConfig
 from .index import ImageIndex
@@ -152,6 +154,39 @@ def _merged_sources(
     return cfg_sources + db_sources
 
 
+def _rtsp_reader(url: str, frame_q: "queue.Queue", stop_fn: Callable[[], bool]) -> None:
+    """Persistent RTSP reader thread. Reconnects on drop with backoff."""
+    import cv2
+    backoff = 2.0
+    while not stop_fn():
+        try:
+            cap = cv2.VideoCapture(url)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if not cap.isOpened():
+                raise RuntimeError("could not open stream")
+            backoff = 2.0
+            while not stop_fn():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                # Always keep the freshest frame; drop stale one
+                try:
+                    frame_q.get_nowait()
+                except queue.Empty:
+                    pass
+                frame_q.put(frame)
+        except Exception:
+            pass
+        finally:
+            try:
+                cap.release()
+            except Exception:
+                pass
+        if not stop_fn():
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60.0)
+
+
 def _run_rtsp_with_detection(
     config: AppConfig,
     source: SourceConfig,
@@ -160,36 +195,65 @@ def _run_rtsp_with_detection(
     should_stop: Callable[[], bool],
     detection_store=None,
 ) -> None:
+    import cv2
+    import tempfile
     from .capture import _convert_to_avif, build_output_path
+    from .detect import _parse_results
 
-    poll = config.detection_poll_seconds
+    url = source.url or ""
+    if source.url_env:
+        import os as _os
+        url = _os.environ.get(source.url_env, "")
+    if not url:
+        LOG.error("no URL for source %s", source.id)
+        return
+
     baseline = source.interval(config.interval_seconds)
+    poll     = config.detection_poll_seconds
     last_saved: float = 0.0
+    frame_q: queue.Queue = queue.Queue(maxsize=1)
 
-    LOG.info("detection capture started for %s (poll=%.1fs baseline=%.0fs)", source.name, poll, baseline)
+    reader = threading.Thread(
+        target=_rtsp_reader, args=(url, frame_q, should_stop),
+        name=f"rtsp-{source.id}", daemon=True,
+    )
+    reader.start()
+    LOG.info("stream capture started for %s (poll=%.1fs baseline=%.0fs)", source.name, poll, baseline)
+
+    last_frame_t = time.monotonic()
 
     while not should_stop():
         t0 = time.monotonic()
-        tmp = None
         try:
-            tmp = grab_rtsp_temp(config, source)
+            frame = frame_q.get(timeout=1.0)
+            last_frame_t = time.monotonic()
+        except queue.Empty:
+            if time.monotonic() - last_frame_t > 30:
+                LOG.warning("no frame from %s in 30s — reconnecting", source.name)
+                last_frame_t = time.monotonic()
+            continue
 
-            from .detect import _parse_results
-            results = model.predict(str(tmp), classes=[0], conf=0.35, verbose=False)
+        try:
+            results = model.predict(frame, classes=[0], conf=0.35, verbose=False)
             has_human, top_conf, boxes = _parse_results(results)
 
             now = time.monotonic()
-            baseline_due = (now - last_saved) >= baseline
-
-            if has_human or baseline_due:
+            if has_human or (now - last_saved) >= baseline:
                 out = build_output_path(config, source)
                 out.parent.mkdir(parents=True, exist_ok=True)
+
                 if config.filenames.capture_format == "avif":
-                    _convert_to_avif(tmp, out)
-                    tmp = None
+                    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tf:
+                        tmp = Path(tf.name)
+                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    if ok:
+                        tmp.write_bytes(buf.tobytes())
+                        _convert_to_avif(tmp, out)
                 else:
-                    tmp.rename(out)
-                    tmp = None
+                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    if ok:
+                        out.write_bytes(buf.tobytes())
+
                 last_saved = now
                 if image_index:
                     image_index.refresh()
@@ -199,17 +263,9 @@ def _run_rtsp_with_detection(
                 reason = "human" if has_human else "baseline"
                 LOG.info("captured %s for %s [%s] conf=%.2f", out.name, source.name, reason, top_conf)
 
-        except CaptureNotReady as exc:
-            LOG.warning("not ready %s: %s", source.name, exc)
-        except TimeoutError:
-            LOG.warning("grab timed out for %s", source.name)
         except Exception:
-            LOG.exception("detection capture failed for %s", source.name)
-        finally:
-            if tmp is not None:
-                tmp.unlink(missing_ok=True)
+            LOG.exception("detection failed for %s", source.name)
 
-        elapsed = time.monotonic() - t0
         _sleep_until(t0 + poll, should_stop)
 
 

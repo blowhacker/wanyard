@@ -49,7 +49,7 @@ class FilenameConfig:
 @dataclass(frozen=True)
 class AppConfig:
     interval_seconds: float = 30
-    detection_poll_seconds: float = 3.5
+    detection_poll_seconds: float = 1.0
     output_dir: Path = Path("snapshots")
     db_path: Path | None = None
     web: WebConfig = field(default_factory=WebConfig)
