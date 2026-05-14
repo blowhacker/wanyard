@@ -214,6 +214,10 @@ html, body {
   position: relative;
   z-index: 3;
   cursor: pointer;
+  -webkit-transition: none !important;
+  transition: none !important;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 
 #boxCanvas {
