@@ -662,17 +662,20 @@ function renderFilmstrip() {
         _dragging = false; framesEl.classList.remove("dragging");
       });
 
-      // Hover preview (suppressed while dragging)
+      // Hover preview: find the actual frame element under cursor
       framesEl.addEventListener("mousemove", e => {
         if (_dragging) return;
         if (els.snapshot.style.display === "none") return;
-        const strip = stripState.get(sourceId);
-        if (!strip?.srcImages?.length) return;
-        const rect = framesEl.getBoundingClientRect();
-        const x = framesEl.scrollLeft + (e.clientX - rect.left);
-        const ratio = Math.min(1, Math.max(0, x / Math.max(1, framesEl.scrollWidth)));
-        const img = strip.srcImages[Math.min(strip.srcImages.length - 1, Math.floor(ratio * strip.srcImages.length))];
-        if (img) showPreview(img);
+        const frameEl = document.elementFromPoint(e.clientX, e.clientY)?.closest(".frame");
+        if (!frameEl) return;
+        for (const [path, el] of frameElMap) {
+          if (el === frameEl) {
+            const idx = pathIndex.get(path);
+            const img = state.images[idx];
+            if (img) showPreview(img);
+            return;
+          }
+        }
       });
       framesEl.addEventListener("wheel", e => {
         if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; // already horizontal scroll
