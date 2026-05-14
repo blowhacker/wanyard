@@ -6,7 +6,7 @@ web:
   host: 0.0.0.0
   port: 8091
   auto_refresh_seconds: 5
-  max_index_items: 10000
+  max_index_items: 100000
 
 filenames:
   timezone: Europe/London
