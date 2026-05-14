@@ -543,16 +543,12 @@ function renderClassFilter() {
 function _drawToMainCanvas(img) {
   const canvas = els.mainCanvas;
   if (!canvas || !img?.naturalWidth) return;
-  const cw = canvas.clientWidth, ch = canvas.clientHeight;
-  if (canvas.width !== cw || canvas.height !== ch) {
-    canvas.width = cw; canvas.height = ch;
+  // Set canvas intrinsic size to image natural size once; CSS object-fit handles display
+  if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+    canvas.width  = img.naturalWidth;
+    canvas.height = img.naturalHeight;
   }
-  const ctx = canvas.getContext("2d");
-  const iw = img.naturalWidth, ih = img.naturalHeight;
-  const scale = Math.min(cw / iw, ch / ih);
-  const rw = iw * scale, rh = ih * scale;
-  const ox = (cw - rw) / 2, oy = (ch - rh) / 2;
-  ctx.drawImage(img, ox, oy, rw, rh);
+  canvas.getContext("2d").drawImage(img, 0, 0);
 }
 
 function setMainSrc(url) {
