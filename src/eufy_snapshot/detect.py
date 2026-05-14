@@ -101,6 +101,24 @@ class DetectionStore:
             ).fetchall()
         return {row["path"] for row in rows}
 
+    def class_counts(self, source_id: str | None = None) -> dict[str, int]:
+        with self._connect() as conn:
+            if source_id:
+                rows = conn.execute(
+                    "SELECT classes_json FROM detections"
+                    " WHERE classes_json IS NOT NULL AND path LIKE ?",
+                    (f"{source_id}/%",),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT classes_json FROM detections WHERE classes_json IS NOT NULL"
+                ).fetchall()
+        counts: dict[str, int] = {}
+        for (cj,) in rows:
+            for cls in json.loads(cj):
+                counts[cls] = counts.get(cls, 0) + 1
+        return counts
+
     def stats(self) -> dict:
         with self._connect() as conn:
             total  = conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
