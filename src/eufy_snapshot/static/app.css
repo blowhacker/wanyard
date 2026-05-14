@@ -1302,3 +1302,94 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 
   .fb-stats { display: none; } /* too narrow on mobile */
 }
+
+/* ── MOBILE (phone) ──────────────────────────────────────── */
+
+.frames { touch-action: pan-x; }
+
+@media (max-width: 640px) {
+  .viewer {
+    grid-template-columns: 1fr;
+    grid-template-rows: 52svh auto;
+    height: 100svh;
+  }
+
+  .image-stage {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 0;
+  }
+
+  .filmstrip-area {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  /* Panel becomes a fixed bottom drawer */
+  .panel {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 200;
+    max-height: 80svh;
+    overflow-y: auto;
+    border-left: none;
+    border-top: 1px solid var(--border-hi);
+    border-radius: 14px 14px 0 0;
+    transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .panel.open { transform: translateY(0); }
+
+  /* Panel toggle button: visible on mobile */
+  .panel-toggle-btn { display: flex; }
+
+  /* Filmstrip bar: scrollable, bigger tap targets */
+  .filmstrip-bar {
+    height: 52px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    gap: 12px;
+    padding: 0 12px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .filmstrip-bar::-webkit-scrollbar { display: none; }
+
+  /* Filmstrip: only one strip row on mobile */
+  .filmstrip { max-height: calc(var(--strip-row) + 4px); }
+
+  /* Transport buttons: larger touch targets */
+  .fb-transport button { width: 44px; height: 44px; font-size: 1.3rem; }
+  button { min-height: 36px; }
+
+  /* Overlay close area when panel open */
+  body.panel-open::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 199;
+    background: rgba(0,0,0,0.5);
+  }
+
+  .hud-top-right { display: flex; align-items: center; gap: 10px; }
+  .hud-rec { display: none; } /* declutter mobile HUD */
+}
+
+/* Panel toggle button: hidden on desktop */
+.panel-toggle-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 22px;
+  background: rgba(5,7,9,0.7);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r);
+  color: var(--amber);
+  font-size: 1rem;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  padding: 0;
+  z-index: 8;
+  position: relative;
+}

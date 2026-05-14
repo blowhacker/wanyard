@@ -27,6 +27,7 @@ const state = {
   detectionEnabled:   false,
   humansOnly:         localStorage.getItem("humansOnly") === "1",
   classFilter:        new Set(),
+  showBoxes:          localStorage.getItem("showBoxes") !== "0",
   live:               false,
   inPoint:            null,
   outPoint:           null,
@@ -1298,7 +1299,7 @@ function renderBoxes() {
   canvas.height = canvas.clientHeight;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (!boxes?.length || !img.naturalWidth) return;
+  if (!state.showBoxes || !boxes?.length || !img.naturalWidth) return;
 
   const iw = img.naturalWidth, ih = img.naturalHeight;
   const cw = canvas.width,     ch = canvas.height;
@@ -1400,6 +1401,30 @@ applyDensity(state.density);
 buildSpeedPills();
 
 els.snapshot.addEventListener("load", renderBoxes);
+
+// Mobile panel drawer
+const _panel = document.querySelector(".panel");
+const _panelToggle = document.getElementById("panelToggle");
+function openPanel()  { _panel?.classList.add("open");  document.body.classList.add("panel-open");  }
+function closePanel() { _panel?.classList.remove("open"); document.body.classList.remove("panel-open"); }
+function togglePanel(){ _panel?.classList.contains("open") ? closePanel() : openPanel(); }
+if (_panelToggle) _panelToggle.addEventListener("click", togglePanel);
+// Tap overlay to close
+document.body.addEventListener("click", e => {
+  if (document.body.classList.contains("panel-open") && !_panel.contains(e.target) && e.target !== _panelToggle)
+    closePanel();
+});
+
+const boxToggleBtn = document.getElementById("boxToggleBtn");
+if (boxToggleBtn) {
+  boxToggleBtn.classList.toggle("active", state.showBoxes);
+  boxToggleBtn.addEventListener("click", () => {
+    state.showBoxes = !state.showBoxes;
+    localStorage.setItem("showBoxes", state.showBoxes ? "1" : "0");
+    boxToggleBtn.classList.toggle("active", state.showBoxes);
+    renderBoxes();
+  });
+}
 if (els.liveBtn)      els.liveBtn.addEventListener("click", () => setLive(!state.live));
 if (els.goLiveBtn)    els.goLiveBtn.addEventListener("click", toggleLiveStream);
 if (els.inBtn)        els.inBtn.addEventListener("click",  setInPoint);

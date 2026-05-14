@@ -1,0 +1,9 @@
+{
+  "name": "CCTV Monitor",
+  "short_name": "Monitor",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#111217",
+  "theme_color": "#111217",
+  "start_url": "/"
+}

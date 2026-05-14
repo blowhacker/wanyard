@@ -2,7 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#111217">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="/manifest.json">
     <title>Monitor</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,7 +24,10 @@
         <div class="corner br"></div>
         <div class="hud-top">
           <span id="hudSource" class="hud-source"></span>
-          <span class="hud-rec"><span class="rec-dot"></span>REC</span>
+          <div class="hud-top-right">
+            <button id="panelToggle" class="panel-toggle-btn" title="Filters">≡</button>
+            <span class="hud-rec"><span class="rec-dot"></span>REC</span>
+          </div>
         </div>
         <img id="snapshot" alt="Camera snapshot">
         <canvas id="boxCanvas"></canvas>
@@ -105,6 +112,10 @@
             <button id="outBtn"    class="range-btn" title="Set out-point (O)">OUT&nbsp;]</button>
             <button id="clearRangeBtn" class="range-clear-btn" title="Clear range (Esc)" hidden>✕</button>
             <button id="exportBtn" class="export-btn" title="Export MP4" disabled>MP4</button>
+          </div>
+          <!-- Annotations toggle -->
+          <div class="fb-filter">
+            <button id="boxToggleBtn" class="humans-btn" title="Toggle bounding boxes">BOX</button>
           </div>
           <!-- Filter: humans only -->
           <div id="humansOnlyField" class="fb-filter" hidden>
