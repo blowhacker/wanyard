@@ -281,6 +281,20 @@ def make_app(
         return FileResponse(out_f, media_type="video/mp4", filename=fname,
                             background=BackgroundTask(_cleanup))
 
+    async def api_classes(request: Request) -> JSONResponse:
+        source_id = request.query_params.get("source") or None
+        if source_id == "all":
+            source_id = None
+        items = image_index.items(source_id=source_id)  # all dates
+        if not detection_store:
+            return JSONResponse({"classes": {}})
+        det_map = detection_store.get_many([i.path for i in items])
+        counts: dict[str, int] = {}
+        for d in det_map.values():
+            for cls in d.get("classes", []):
+                counts[cls] = counts.get(cls, 0) + 1
+        return JSONResponse({"classes": counts})
+
     go2rtc_url = os.environ.get("GO2RTC_URL", "")
 
     async def api_live(request: Request) -> JSONResponse:
@@ -295,6 +309,7 @@ def make_app(
         Route("/api/sources",               api_sources,        methods=["GET", "POST"]),
         Route("/api/sources/{source_id}",   api_delete_source,  methods=["DELETE"]),
         Route("/api/images/latest",         api_images_latest),
+        Route("/api/classes",               api_classes),
         Route("/api/export",                api_export,         methods=["POST"]),
         Route("/api/images",                api_images),
         Route("/thumbs/{path:path}",        serve_thumb),

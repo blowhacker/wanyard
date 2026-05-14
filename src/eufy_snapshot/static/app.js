@@ -501,13 +501,13 @@ function effectiveImages() {
   );
 }
 
-function renderClassFilter() {
+async function renderClassFilter() {
   if (!els.classCtrl || !els.classField) return;
-  const counts = {};
-  for (const img of state.images) {
-    for (const cls of img.classes || []) counts[cls] = (counts[cls] || 0) + 1;
-  }
-  const classes = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const src = (state.source && state.source !== "all") ? `?source=${state.source}` : "";
+  const resp = await fetch(`/api/classes${src}`, { cache: "no-store" }).catch(() => null);
+  if (!resp?.ok) { els.classField.hidden = true; return; }
+  const data = await resp.json();
+  const classes = Object.entries(data.classes || {}).sort((a, b) => b[1] - a[1]);
   if (!classes.length) { els.classField.hidden = true; return; }
   els.classField.hidden = false;
   els.classCtrl.innerHTML = "";
