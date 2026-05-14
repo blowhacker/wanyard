@@ -77,7 +77,6 @@ const els = {
   liveBtn:           document.getElementById("liveBtn"),
   liveVideo:         document.getElementById("liveVideo"),
   goLiveBtn:         document.getElementById("goLiveBtn"),
-  mainCanvas:        document.getElementById("mainCanvas"),
   boxCanvas:         document.getElementById("boxCanvas"),
   exportField:       document.getElementById("exportField"),
   inBtn:             document.getElementById("inBtn"),
@@ -540,44 +539,18 @@ function renderClassFilter() {
 
 // ── Main render ───────────────────────────────────────────
 
-function _drawToMainCanvas(img) {
-  const canvas = els.mainCanvas;
-  if (!canvas || !img?.naturalWidth) return;
-
-  let cw = canvas.clientWidth, ch = canvas.clientHeight;
-  if (!cw || !ch) {
-    // Not laid out yet — try parent, or defer to next frame
-    cw = canvas.parentElement?.clientWidth || 0;
-    ch = canvas.parentElement?.clientHeight || 0;
-    if (!cw || !ch) { requestAnimationFrame(() => _drawToMainCanvas(img)); return; }
-  }
-
-  const dpr = window.devicePixelRatio || 1;
-  const pw = Math.round(cw * dpr), ph = Math.round(ch * dpr);
-  if (canvas.width !== pw || canvas.height !== ph) {
-    canvas.width = pw; canvas.height = ph;
-  }
-
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-
-  const iw = img.naturalWidth, ih = img.naturalHeight;
-  const scale = Math.min(pw / iw, ph / ih);
-  const rw = iw * scale, rh = ih * scale;
-  const ox = (pw - rw) / 2, oy = (ph - rh) / 2;
-  ctx.drawImage(img, ox, oy, rw, rh);
-}
-
 function setMainSrc(url) {
-  els.snapshot.src = url;
-  // Canvas updated via onload below
+  if (els.snapshot.src.endsWith(url)) return; // already showing
+  const temp = new Image();
+  temp.onload = () => { els.snapshot.src = url; };
+  temp.src = url;
+  if (temp.complete) els.snapshot.src = url; // already cached
 }
 
 function render() {
   const hasImages = state.images.length > 0;
-  if (els.mainCanvas) els.mainCanvas.style.display = hasImages ? "block" : "none";
-  els.empty.style.display = hasImages ? "none" : "block";
+  els.snapshot.style.display = hasImages ? "block" : "none";
+  els.empty.style.display    = hasImages ? "none"  : "block";
   els.prev.disabled = !hasImages || (!state.loop && state.selected <= 0);
   els.next.disabled = !hasImages || (!state.loop && state.selected >= state.images.length - 1);
 
@@ -696,7 +669,7 @@ function renderFilmstrip() {
       // Hover preview: find the actual frame element under cursor
       framesEl.addEventListener("mousemove", e => {
         if (_dragging) return;
-        if (els.mainCanvas?.style.display === "none") return;
+        if (els.snapshot.style.display === "none") return;
         const frameEl = document.elementFromPoint(e.clientX, e.clientY)?.closest(".frame");
         if (!frameEl) return;
         for (const [path, el] of frameElMap) {
@@ -926,7 +899,6 @@ function startPlay() {
       // Wait until the browser has decoded the frame before advancing.
       // Prevents src reassignment cancelling the in-flight decode.
       try { await els.snapshot.decode(); } catch { /* src changed or error */ }
-      _drawToMainCanvas(els.snapshot);
       _updatePlayStats();
 
       // Honour target fps: sleep for any remaining budget
@@ -977,9 +949,8 @@ function stepFrame(delta) {
 }
 
 // Single click on image → toggle play/pause
-const _mainClickTarget = els.mainCanvas || els.snapshot;
-_mainClickTarget.addEventListener("click", togglePlay);
-_mainClickTarget.addEventListener("dblclick", () => {
+els.snapshot.addEventListener("click", togglePlay);
+els.snapshot.addEventListener("dblclick", () => {
   const stage = document.querySelector(".image-stage");
   if (document.fullscreenElement) document.exitFullscreen();
   else stage.requestFullscreen().catch(() => {});
@@ -1410,7 +1381,7 @@ async function startLiveStream() {
     if (!resp.ok) throw new Error(await resp.text());
     const answerSdp = await resp.text();
     await _livePC.setRemoteDescription({ type: "answer", sdp: answerSdp });
-    if (els.mainCanvas) els.mainCanvas.style.display = "none";
+    els.snapshot.style.display = "none";
     els.liveVideo.style.display = "block";
     els.liveVideo.play().catch(() => {});
   } catch (err) {
@@ -1428,7 +1399,7 @@ function stopLiveStream() {
     els.liveVideo.srcObject = null;
   }
   els.liveVideo.style.display = "none";
-  if (els.mainCanvas) els.mainCanvas.style.display = state.images.length ? "block" : "none";
+  els.snapshot.style.display = state.images.length ? "block" : "none";
   if (els.goLiveBtn) {
     els.goLiveBtn.textContent = "● LIVE";
     els.goLiveBtn.classList.remove("active");
@@ -1443,10 +1414,7 @@ buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
 
-els.snapshot.addEventListener("load", () => {
-  _drawToMainCanvas(els.snapshot);
-  renderBoxes(_boxImg ?? state.images[state.selected]);
-});
+els.snapshot.addEventListener("load", () => renderBoxes(_boxImg ?? state.images[state.selected]));
 
 // Mobile panel drawer
 const _panel = document.querySelector(".panel");
