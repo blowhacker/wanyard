@@ -543,12 +543,30 @@ function renderClassFilter() {
 function _drawToMainCanvas(img) {
   const canvas = els.mainCanvas;
   if (!canvas || !img?.naturalWidth) return;
-  // Set canvas intrinsic size to image natural size once; CSS object-fit handles display
-  if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
-    canvas.width  = img.naturalWidth;
-    canvas.height = img.naturalHeight;
+
+  let cw = canvas.clientWidth, ch = canvas.clientHeight;
+  if (!cw || !ch) {
+    // Not laid out yet — try parent, or defer to next frame
+    cw = canvas.parentElement?.clientWidth || 0;
+    ch = canvas.parentElement?.clientHeight || 0;
+    if (!cw || !ch) { requestAnimationFrame(() => _drawToMainCanvas(img)); return; }
   }
-  canvas.getContext("2d").drawImage(img, 0, 0);
+
+  const dpr = window.devicePixelRatio || 1;
+  const pw = Math.round(cw * dpr), ph = Math.round(ch * dpr);
+  if (canvas.width !== pw || canvas.height !== ph) {
+    canvas.width = pw; canvas.height = ph;
+  }
+
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const scale = Math.min(pw / iw, ph / ih);
+  const rw = iw * scale, rh = ih * scale;
+  const ox = (pw - rw) / 2, oy = (ph - rh) / 2;
+  ctx.drawImage(img, ox, oy, rw, rh);
 }
 
 function setMainSrc(url) {
