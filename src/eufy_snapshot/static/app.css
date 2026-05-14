@@ -1312,17 +1312,23 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
     grid-template-columns: 1fr;
     grid-template-rows: 52svh auto;
     height: 100svh;
+    overflow: hidden;
   }
+
+  .image-stage,
+  .filmstrip-area { min-width: 0; }
 
   .image-stage {
     grid-column: 1;
     grid-row: 1;
     min-height: 0;
+    overflow: hidden;
   }
 
   .filmstrip-area {
     grid-column: 1;
     grid-row: 2;
+    overflow: hidden;
   }
 
   /* Panel becomes a fixed bottom drawer */
