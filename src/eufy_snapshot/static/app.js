@@ -77,6 +77,7 @@ const els = {
   liveBtn:           document.getElementById("liveBtn"),
   liveVideo:         document.getElementById("liveVideo"),
   goLiveBtn:         document.getElementById("goLiveBtn"),
+  mainCanvas:        document.getElementById("mainCanvas"),
   boxCanvas:         document.getElementById("boxCanvas"),
   exportField:       document.getElementById("exportField"),
   inBtn:             document.getElementById("inBtn"),
@@ -539,14 +540,30 @@ function renderClassFilter() {
 
 // ── Main render ───────────────────────────────────────────
 
+function _drawToMainCanvas(img) {
+  const canvas = els.mainCanvas;
+  if (!canvas || !img?.naturalWidth) return;
+  canvas.width  = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+  const ctx = canvas.getContext("2d");
+  const cw = canvas.width, ch = canvas.height;
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const scale = Math.min(cw / iw, ch / ih);
+  const rw = iw * scale, rh = ih * scale;
+  const ox = (cw - rw) / 2, oy = (ch - rh) / 2;
+  ctx.clearRect(0, 0, cw, ch);
+  ctx.drawImage(img, ox, oy, rw, rh);
+}
+
 function setMainSrc(url) {
   els.snapshot.src = url;
+  // Canvas updated via onload below
 }
 
 function render() {
   const hasImages = state.images.length > 0;
-  els.snapshot.style.display = hasImages ? "block" : "none";
-  els.empty.style.display    = hasImages ? "none"  : "block";
+  if (els.mainCanvas) els.mainCanvas.style.display = hasImages ? "block" : "none";
+  els.empty.style.display = hasImages ? "none" : "block";
   els.prev.disabled = !hasImages || (!state.loop && state.selected <= 0);
   els.next.disabled = !hasImages || (!state.loop && state.selected >= state.images.length - 1);
 
@@ -665,7 +682,7 @@ function renderFilmstrip() {
       // Hover preview: find the actual frame element under cursor
       framesEl.addEventListener("mousemove", e => {
         if (_dragging) return;
-        if (els.snapshot.style.display === "none") return;
+        if (els.mainCanvas?.style.display === "none") return;
         const frameEl = document.elementFromPoint(e.clientX, e.clientY)?.closest(".frame");
         if (!frameEl) return;
         for (const [path, el] of frameElMap) {
@@ -895,6 +912,7 @@ function startPlay() {
       // Wait until the browser has decoded the frame before advancing.
       // Prevents src reassignment cancelling the in-flight decode.
       try { await els.snapshot.decode(); } catch { /* src changed or error */ }
+      _drawToMainCanvas(els.snapshot);
       _updatePlayStats();
 
       // Honour target fps: sleep for any remaining budget
@@ -945,11 +963,9 @@ function stepFrame(delta) {
 }
 
 // Single click on image → toggle play/pause
-els.snapshot.addEventListener("click", togglePlay);
-
-// Double-click on image → fullscreen (dblclick fires after two clicks,
-// the two single-clicks cancel each other: pause then play → no net change)
-els.snapshot.addEventListener("dblclick", () => {
+const _mainClickTarget = els.mainCanvas || els.snapshot;
+_mainClickTarget.addEventListener("click", togglePlay);
+_mainClickTarget.addEventListener("dblclick", () => {
   const stage = document.querySelector(".image-stage");
   if (document.fullscreenElement) document.exitFullscreen();
   else stage.requestFullscreen().catch(() => {});
@@ -1380,7 +1396,7 @@ async function startLiveStream() {
     if (!resp.ok) throw new Error(await resp.text());
     const answerSdp = await resp.text();
     await _livePC.setRemoteDescription({ type: "answer", sdp: answerSdp });
-    els.snapshot.style.display = "none";
+    if (els.mainCanvas) els.mainCanvas.style.display = "none";
     els.liveVideo.style.display = "block";
     els.liveVideo.play().catch(() => {});
   } catch (err) {
@@ -1398,7 +1414,7 @@ function stopLiveStream() {
     els.liveVideo.srcObject = null;
   }
   els.liveVideo.style.display = "none";
-  els.snapshot.style.display = state.images.length ? "block" : "none";
+  if (els.mainCanvas) els.mainCanvas.style.display = state.images.length ? "block" : "none";
   if (els.goLiveBtn) {
     els.goLiveBtn.textContent = "● LIVE";
     els.goLiveBtn.classList.remove("active");
@@ -1413,7 +1429,10 @@ buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
 
-els.snapshot.addEventListener("load", () => renderBoxes(_boxImg ?? state.images[state.selected]));
+els.snapshot.addEventListener("load", () => {
+  _drawToMainCanvas(els.snapshot);
+  renderBoxes(_boxImg ?? state.images[state.selected]);
+});
 
 // Mobile panel drawer
 const _panel = document.querySelector(".panel");

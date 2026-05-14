@@ -221,16 +221,17 @@ html, body {
 }
 
 #snapshot {
+  display: none !important; /* off-screen decode buffer — never shown */
+  position: absolute;
+}
+
+#mainCanvas {
+  display: none;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  display: none;
   position: relative;
   z-index: 3;
   cursor: pointer;
-  -webkit-transition: none !important;
-  transition: none !important;
-  transform: translateZ(0);
 }
 
 #boxCanvas {
