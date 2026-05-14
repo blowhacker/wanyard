@@ -41,7 +41,9 @@ const state = {
 // ── Elements ──────────────────────────────────────────────
 
 const els = {
-  snapshot:          document.getElementById("snapshot"),
+  snapshot:          document.getElementById("snapshotA"), // points to active buffer; updated by setMainSrc
+  snapshotA:         document.getElementById("snapshotA"),
+  snapshotB:         document.getElementById("snapshotB"),
   empty:             document.getElementById("empty"),
   timestamp:         document.getElementById("timestamp"),
   refreshStatus:     document.getElementById("refreshStatus"),
@@ -539,18 +541,33 @@ function renderClassFilter() {
 
 // ── Main render ───────────────────────────────────────────
 
+let _swapPromise = null;
+const _bufs = () => [els.snapshotA, els.snapshotB];
+
 function setMainSrc(url) {
-  if (els.snapshot.src.endsWith(url)) return; // already showing
-  const temp = new Image();
-  temp.onload = () => { els.snapshot.src = url; };
-  temp.src = url;
-  if (temp.complete) els.snapshot.src = url; // already cached
+  const active = els.snapshot;
+  if (active.src.endsWith(url)) return;
+  const next = active === els.snapshotA ? els.snapshotB : els.snapshotA;
+
+  _swapPromise = new Promise(resolve => {
+    const doSwap = () => {
+      active.style.display = "none";
+      next.style.display   = "block";
+      els.snapshot = next;
+      renderBoxes(_boxImg ?? state.images[state.selected]);
+      resolve();
+    };
+    next.onload  = doSwap;
+    next.onerror = resolve;
+    next.src = url;
+    if (next.complete && next.naturalWidth) doSwap();
+  });
 }
 
 function render() {
   const hasImages = state.images.length > 0;
-  els.snapshot.style.display = hasImages ? "block" : "none";
-  els.empty.style.display    = hasImages ? "none"  : "block";
+  if (!hasImages) { els.snapshotA.style.display = "none"; els.snapshotB.style.display = "none"; }
+  els.empty.style.display = hasImages ? "none" : "block";
   els.prev.disabled = !hasImages || (!state.loop && state.selected <= 0);
   els.next.disabled = !hasImages || (!state.loop && state.selected >= state.images.length - 1);
 
@@ -669,7 +686,7 @@ function renderFilmstrip() {
       // Hover preview: find the actual frame element under cursor
       framesEl.addEventListener("mousemove", e => {
         if (_dragging) return;
-        if (els.snapshot.style.display === "none") return;
+        if (els.snapshot.style.display !== "block") return;
         const frameEl = document.elementFromPoint(e.clientX, e.clientY)?.closest(".frame");
         if (!frameEl) return;
         for (const [path, el] of frameElMap) {
@@ -898,7 +915,7 @@ function startPlay() {
 
       // Wait until the browser has decoded the frame before advancing.
       // Prevents src reassignment cancelling the in-flight decode.
-      try { await els.snapshot.decode(); } catch { /* src changed or error */ }
+      if (_swapPromise) { try { await _swapPromise; } catch {} _swapPromise = null; }
       _updatePlayStats();
 
       // Honour target fps: sleep for any remaining budget
@@ -949,11 +966,13 @@ function stepFrame(delta) {
 }
 
 // Single click on image → toggle play/pause
-els.snapshot.addEventListener("click", togglePlay);
-els.snapshot.addEventListener("dblclick", () => {
-  const stage = document.querySelector(".image-stage");
-  if (document.fullscreenElement) document.exitFullscreen();
-  else stage.requestFullscreen().catch(() => {});
+[els.snapshotA, els.snapshotB].forEach(b => {
+  b.addEventListener("click", togglePlay);
+  b.addEventListener("dblclick", () => {
+    const stage = document.querySelector(".image-stage");
+    if (document.fullscreenElement) document.exitFullscreen();
+    else stage.requestFullscreen().catch(() => {});
+  });
 });
 
 els.prev.addEventListener("click", () => { stopPlay(); stepFrame(-1); });
@@ -1381,7 +1400,8 @@ async function startLiveStream() {
     if (!resp.ok) throw new Error(await resp.text());
     const answerSdp = await resp.text();
     await _livePC.setRemoteDescription({ type: "answer", sdp: answerSdp });
-    els.snapshot.style.display = "none";
+    els.snapshotA.style.display = "none";
+    els.snapshotB.style.display = "none";
     els.liveVideo.style.display = "block";
     els.liveVideo.play().catch(() => {});
   } catch (err) {
@@ -1399,7 +1419,7 @@ function stopLiveStream() {
     els.liveVideo.srcObject = null;
   }
   els.liveVideo.style.display = "none";
-  els.snapshot.style.display = state.images.length ? "block" : "none";
+  // Active buffer will be shown on next setMainSrc / render call
   if (els.goLiveBtn) {
     els.goLiveBtn.textContent = "● LIVE";
     els.goLiveBtn.classList.remove("active");
@@ -1414,7 +1434,7 @@ buildDensityBtns();
 applyDensity(state.density);
 buildSpeedPills();
 
-els.snapshot.addEventListener("load", () => renderBoxes(_boxImg ?? state.images[state.selected]));
+// renderBoxes called inside setMainSrc doSwap after each buffer swap
 
 // Mobile panel drawer
 const _panel = document.querySelector(".panel");
