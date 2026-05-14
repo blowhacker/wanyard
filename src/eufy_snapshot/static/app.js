@@ -1447,7 +1447,8 @@ const _panelToggleMobile = document.getElementById("panelToggleMobile");
 if (_panelToggleMobile) _panelToggleMobile.addEventListener("click", togglePanel);
 // Tap overlay to close
 document.body.addEventListener("click", e => {
-  if (document.body.classList.contains("panel-open") && !_panel.contains(e.target) && e.target !== _panelToggle)
+  const isToggle = e.target === _panelToggle || e.target === _panelToggleMobile || e.target.closest("#panelToggle,#panelToggleMobile");
+  if (document.body.classList.contains("panel-open") && !_panel.contains(e.target) && !isToggle)
     closePanel();
 });
 
