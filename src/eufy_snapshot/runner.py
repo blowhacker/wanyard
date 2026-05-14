@@ -235,7 +235,8 @@ def _run_rtsp_with_detection(
             continue
 
         try:
-            results = model.predict(frame, classes=[0], conf=0.35, verbose=False)
+            from .detect import CCTV_CLASS_IDS
+            results = model.predict(frame, classes=CCTV_CLASS_IDS, conf=0.35, verbose=False)
             has_human, top_conf, boxes = _parse_results(results)
 
             now = time.monotonic()

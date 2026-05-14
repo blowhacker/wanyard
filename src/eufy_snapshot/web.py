@@ -321,6 +321,7 @@ def _item_to_dict(item: ImageItem | None, det_map: dict | None = None) -> dict |
         "size_bytes":  item.size_bytes,
         "has_human":   det["has_human"] if det else None,
         "boxes":       det["boxes"]     if det else None,
+        "classes":     det["classes"]   if det else None,
     }
 
 

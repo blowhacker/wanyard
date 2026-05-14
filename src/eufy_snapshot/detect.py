@@ -16,11 +16,28 @@ CREATE TABLE IF NOT EXISTS detections (
     has_human INTEGER NOT NULL,
     confidence REAL NOT NULL,
     processed_at REAL NOT NULL,
-    boxes_json TEXT
+    boxes_json TEXT,
+    classes_json TEXT
 )
 """
 
 _CONF_THRESHOLD = 0.35
+
+# COCO classes useful for outdoor CCTV
+CCTV_CLASSES = {
+    0: "person",
+    1: "bicycle",
+    2: "car",
+    3: "motorcycle",
+    5: "bus",
+    7: "truck",
+    14: "bird",
+    15: "cat",
+    16: "dog",
+    24: "backpack",
+    28: "suitcase",
+}
+CCTV_CLASS_IDS = list(CCTV_CLASSES.keys())
 
 
 class DetectionStore:
@@ -29,11 +46,11 @@ class DetectionStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute(_DDL)
-            # Migrate existing tables that lack boxes_json
-            try:
-                conn.execute("ALTER TABLE detections ADD COLUMN boxes_json TEXT")
-            except sqlite3.OperationalError:
-                pass  # column already exists
+            for col in ("boxes_json TEXT", "classes_json TEXT"):
+                try:
+                    conn.execute(f"ALTER TABLE detections ADD COLUMN {col}")
+                except sqlite3.OperationalError:
+                    pass
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._path))
@@ -42,13 +59,15 @@ class DetectionStore:
 
     def set(self, path: str, has_human: bool, confidence: float,
             boxes: list[dict] | None = None) -> None:
+        classes = sorted({b["cls"] for b in boxes} if boxes else [])
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO detections"
-                " (path, has_human, confidence, processed_at, boxes_json)"
-                " VALUES (?, ?, ?, ?, ?)",
+                " (path, has_human, confidence, processed_at, boxes_json, classes_json)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
                 (path, int(has_human), confidence, time.time(),
-                 json.dumps(boxes) if boxes else None),
+                 json.dumps(boxes) if boxes else None,
+                 json.dumps(classes)),
             )
 
     def get_many(self, paths: list[str]) -> dict[str, dict]:
@@ -57,25 +76,28 @@ class DetectionStore:
         with self._connect() as conn:
             placeholders = ",".join("?" * len(paths))
             rows = conn.execute(
-                f"SELECT path, has_human, confidence, boxes_json"
+                f"SELECT path, has_human, confidence, boxes_json, classes_json"
                 f" FROM detections WHERE path IN ({placeholders})",
                 paths,
             ).fetchall()
         result = {}
         for row in rows:
-            boxes = json.loads(row["boxes_json"]) if row["boxes_json"] else []
+            boxes   = json.loads(row["boxes_json"])   if row["boxes_json"]   else []
+            classes = json.loads(row["classes_json"]) if row["classes_json"] else []
             result[row["path"]] = {
                 "has_human":  bool(row["has_human"]),
                 "confidence": row["confidence"],
                 "boxes":      boxes,
+                "classes":    classes,
             }
         return result
 
     def processed_paths(self) -> set[str]:
-        """Paths fully processed (has boxes_json set, not NULL)."""
+        """Paths fully processed (boxes_json and classes_json both set)."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT path FROM detections WHERE boxes_json IS NOT NULL"
+                "SELECT path FROM detections"
+                " WHERE boxes_json IS NOT NULL AND classes_json IS NOT NULL"
             ).fetchall()
         return {row["path"] for row in rows}
 
@@ -144,24 +166,34 @@ class DetectionWorker:
             try:
                 abs_path = str(output_dir / item.path)
                 results = model.predict(
-                    abs_path, classes=[0], conf=_CONF_THRESHOLD, verbose=False
+                    abs_path, classes=CCTV_CLASS_IDS,
+                    conf=_CONF_THRESHOLD, verbose=False,
                 )
                 has_human, conf, boxes = _parse_results(results)
                 self._store.set(item.path, has_human, conf, boxes)
-                LOG.debug("detected %s has_human=%s conf=%.2f boxes=%d",
-                          item.path, has_human, conf, len(boxes))
+                LOG.debug("detected %s classes=%s", item.path,
+                          [b["cls"] for b in boxes])
             except Exception:
                 LOG.exception("detection failed for %s", item.path)
 
 
 def _parse_results(results) -> tuple[bool, float, list[dict]]:
-    """Extract has_human, top confidence, and normalised boxes from YOLO output."""
+    """Extract has_human, top confidence, and normalised boxes with class names."""
     if not results or results[0].boxes is None or not len(results[0].boxes):
         return False, 0.0, []
     r = results[0]
     boxes = []
-    for xyxyn, conf in zip(r.boxes.xyxyn.tolist(), r.boxes.conf.tolist()):
+    for xyxyn, conf, cls_id in zip(
+        r.boxes.xyxyn.tolist(),
+        r.boxes.conf.tolist(),
+        r.boxes.cls.tolist(),
+    ):
         x1, y1, x2, y2 = xyxyn
-        boxes.append({"x1": x1, "y1": y1, "x2": x2, "y2": y2, "conf": conf})
-    top_conf = max(b["conf"] for b in boxes)
-    return True, top_conf, boxes
+        cls_name = CCTV_CLASSES.get(int(cls_id), str(int(cls_id)))
+        boxes.append({
+            "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+            "conf": conf, "cls": cls_name,
+        })
+    has_human = any(b["cls"] == "person" for b in boxes)
+    top_conf  = max((b["conf"] for b in boxes if b["cls"] == "person"), default=0.0)
+    return has_human, top_conf, boxes
