@@ -1305,7 +1305,7 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
 @media (max-width: 640px) {
   .viewer {
     grid-template-columns: 1fr;
-    grid-template-rows: 52svh auto;
+    grid-template-rows: 1fr auto;
     height: 100svh;
     overflow: hidden;
   }
@@ -1352,6 +1352,8 @@ details[open].field > summary::after { content: "−"; color: var(--amber); }
     gap: 12px;
     padding: 0 12px;
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    -webkit-mask-image: linear-gradient(to right, black 80%, transparent 100%);
+    mask-image: linear-gradient(to right, black 80%, transparent 100%);
   }
   .filmstrip-bar::-webkit-scrollbar { display: none; }
 
