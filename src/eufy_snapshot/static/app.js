@@ -991,6 +991,8 @@ function humanThumbStyle(img, box) {
   return `background-image:url('${img.url}');background-size:${(1/VIEW_W*100).toFixed(1)}%;background-position:${bpx.toFixed(1)}% ${bpy.toFixed(1)}%;background-repeat:no-repeat`;
 }
 
+let _lastHumanPaths = "";
+
 function renderHumansGrid() {
   if (!els.humansPanel) return;
   const selTs = new Date(state.images[state.selected]?.timestamp).getTime();
@@ -1009,7 +1011,13 @@ function renderHumansGrid() {
     if (humans.length) sections.push({ src, humans });
   }
 
-  if (!sections.length) { els.humansPanel.hidden = true; return; }
+  if (!sections.length) { els.humansPanel.hidden = true; _lastHumanPaths = ""; return; }
+
+  // Bail if same humans as last render — avoids cancelling in-progress AVIF loads
+  const newPaths = sections.flatMap(s => s.humans.slice(0, state.humanCount)).map(i => i.path).join("|");
+  if (newPaths === _lastHumanPaths) return;
+  _lastHumanPaths = newPaths;
+
   els.humansPanel.hidden = false;
   els.humansPanel.innerHTML = "";
 
