@@ -180,8 +180,11 @@ async function loadImages(preserveSelection = true, incremental = false) {
   if (state.source && state.source !== "all") params.set("source", state.source);
   if (state.date) params.set("date", state.date);
   if (state.humansOnly) params.set("humans_only", "1");
-  // Incremental: only fetch images added since last load
-  if (incremental && state.images.length > 0) params.set("offset", state.images.length);
+  // Incremental: only fetch images newer than the last known timestamp
+  if (incremental && state.images.length > 0) {
+    const lastTs = state.images.at(-1)?.timestamp;
+    if (lastTs) params.set("after", lastTs);
+  }
 
   const response = await fetch(`/api/images${params.size ? `?${params}` : ""}`, { cache: "no-store" });
   const payload  = await response.json();

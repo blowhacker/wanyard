@@ -54,13 +54,16 @@ class ImageIndex:
             self._items = items
             return list(self._items)
 
-    def items(self, date: str | None = None, source_id: str | None = None) -> list[ImageItem]:
+    def items(self, date: str | None = None, source_id: str | None = None,
+              after: str | None = None) -> list[ImageItem]:
         with self._lock:
             items = list(self._items)
         if source_id:
             items = [item for item in items if item.source_id == source_id]
         if date:
-            return [item for item in items if item.date == date]
+            items = [item for item in items if item.date == date]
+        if after:
+            items = [item for item in items if item.timestamp > after]
         return items
 
     def latest(self, source_id: str | None = None) -> ImageItem | None:

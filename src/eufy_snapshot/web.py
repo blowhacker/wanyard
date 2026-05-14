@@ -147,11 +147,11 @@ def make_app(
         source = request.query_params.get("source") or None
         if source == "all":
             source = None
-        date       = request.query_params.get("date") or None
+        date        = request.query_params.get("date") or None
         humans_only = request.query_params.get("humans_only") == "1"
-        offset_raw = request.query_params.get("offset")
+        after       = request.query_params.get("after") or None
 
-        all_items = image_index.items(date, source)
+        all_items = image_index.items(date, source, after=after)
 
         det_map: dict = {}
         if detection_store:
@@ -159,14 +159,7 @@ def make_app(
             if humans_only:
                 all_items = [i for i in all_items if det_map.get(i.path, {}).get("has_human")]
 
-        if offset_raw is not None:
-            try:
-                offset = max(0, int(offset_raw))
-            except ValueError:
-                offset = 0
-            items = all_items[offset:]
-        else:
-            items = all_items
+        items = all_items
 
         return JSONResponse({
             "images": [_item_to_dict(i, det_map) for i in items],
