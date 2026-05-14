@@ -269,11 +269,13 @@ function renderSourceSelector() {
   sel.value = state.source;
   sel.addEventListener("change", () => {
     stopPlay();
+    const wasLive = _liveActive;
+    if (wasLive) stopLiveStream();
     state.source = sel.value;
     state.date = "";
     state.selected = -1;
     renderSourceMeta();
-    loadImages(false);
+    loadImages(false).then(() => { if (wasLive) startLiveStream(); });
   });
   els.sourceCtrl.appendChild(sel);
 }
@@ -284,12 +286,14 @@ function makeSourcePill(id, label) {
   btn.textContent = label;
   btn.addEventListener("click", () => {
     stopPlay();
+    const wasLive = _liveActive;
+    if (wasLive) stopLiveStream();
     state.source = id;
     state.date = "";
     state.selected = -1;
     renderSourceSelector();
     renderSourceMeta();
-    loadImages(false);
+    loadImages(false).then(() => { if (wasLive) startLiveStream(); });
   });
   return btn;
 }
