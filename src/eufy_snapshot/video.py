@@ -198,8 +198,7 @@ class VideoWorker:
                 "-rtsp_transport", self.source.rtsp_transport,
                 "-i", url,
                 "-t", str(_SEGMENT_SECONDS),
-                "-c:v", "libx265", "-preset", "ultrafast", "-crf", "28",
-                "-c:a", "aac", "-b:a", "32k",
+                "-c", "copy",  # preserve camera stream quality, no re-encode
                 str(seg_path),
             ],
             capture_output=True, timeout=_SEGMENT_SECONDS + 30, check=False,
