@@ -219,6 +219,22 @@ class VideoSegmentDB:
         return [dict(r) for r in rows]
 
 
+def backfill_events(db: VideoSegmentDB) -> None:
+    """Extract events for any closed segment that has none yet."""
+    with db._connect() as conn:
+        segs = conn.execute(
+            "SELECT s.* FROM segments s"
+            " WHERE s.end_ts IS NOT NULL"
+            " AND NOT EXISTS (SELECT 1 FROM video_events WHERE segment_id=s.id)"
+        ).fetchall()
+    for row in segs:
+        seg = dict(row)
+        dets = db.detections_for_segment(seg["id"])
+        n = extract_events(seg, dets, db)
+        if n:
+            LOG.info("backfilled %d events for segment %s", n, seg["path"][-30:])
+
+
 def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) -> int:
     """Group detections into events and store them."""
     if not detections:

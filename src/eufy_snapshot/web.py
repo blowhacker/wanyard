@@ -60,6 +60,9 @@ def make_app(
         if detection_worker:
             detection_worker.start()
         asyncio.create_task(_register_go2rtc_streams(config, source_db))
+        if video_db:
+            from .video import backfill_events
+            asyncio.create_task(asyncio.to_thread(backfill_events, video_db))
 
         async def _refresh_loop() -> None:
             while True:
