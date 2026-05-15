@@ -267,10 +267,10 @@ def _run_rtsp_with_detection(
                     rel = out.relative_to(config.output_dir).as_posix()
                     detection_store.set(rel, has_human, top_conf, boxes)
 
-            # Tag video segment with detection regardless of save
+            # Event-triggered video recording
             if video_worker:
                 try:
-                    video_worker.add_detection(
+                    video_worker.on_detection(
                         time.time(), has_human, top_conf, boxes,
                         list({b["cls"] for b in boxes}) if boxes else [],
                     )

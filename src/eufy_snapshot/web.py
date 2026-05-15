@@ -59,8 +59,6 @@ def make_app(
             capture_worker.start()
         if detection_worker:
             detection_worker.start()
-        for vw in (video_workers or {}).values():
-            vw.start()
         asyncio.create_task(_register_go2rtc_streams(config, source_db))
 
         async def _refresh_loop() -> None:

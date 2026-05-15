@@ -4,30 +4,31 @@ import json
 import logging
 import os
 import shutil
+import signal
 import sqlite3
 import subprocess
-import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 LOG = logging.getLogger(__name__)
 
-_SEGMENT_SECONDS = 300  # 5-minute segments
-_SPRITE_FPS      = "1/5"   # 1 frame every 5s → 60 frames per segment
-_SPRITE_W        = 160
-_SPRITE_COLS     = 10
-_SPRITE_ROWS     = 6       # 10×6 = 60 tiles
+_POST_EVENT_SECONDS = 30   # keep recording this long after last detection
+_SPRITE_FPS         = "1/5"
+_SPRITE_W           = 160
+_SPRITE_COLS        = 10
+_SPRITE_ROWS        = 6    # 10×6 = 60 tiles
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS segments (
-    id              INTEGER PRIMARY KEY,
-    source_id       TEXT    NOT NULL,
-    path            TEXT    NOT NULL UNIQUE,
-    start_ts        REAL    NOT NULL,
-    end_ts          REAL,
-    spritesheet     TEXT,
-    webvtt          TEXT
+    id          INTEGER PRIMARY KEY,
+    source_id   TEXT    NOT NULL,
+    path        TEXT    NOT NULL UNIQUE,
+    start_ts    REAL    NOT NULL,
+    end_ts      REAL,
+    spritesheet TEXT,
+    webvtt      TEXT
 );
 CREATE INDEX IF NOT EXISTS seg_source_ts ON segments(source_id, start_ts);
 
@@ -90,26 +91,10 @@ class VideoSegmentDB:
                  json.dumps(classes) if classes else None),
             )
 
-    def current_segment_id(self, source_id: str) -> int | None:
-        now = time.time()
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT id FROM segments WHERE source_id=? AND start_ts<=? AND end_ts IS NULL"
-                " ORDER BY start_ts DESC LIMIT 1",
-                (source_id, now),
-            ).fetchone()
-        return row["id"] if row else None
-
-    def list_segments(self, source_id: str | None = None,
-                      date: str | None = None) -> list[dict]:
-        from datetime import datetime, timezone
+    def list_segments(self, source_id: str | None = None) -> list[dict]:
         where, params = [], []
         if source_id:
             where.append("source_id=?"); params.append(source_id)
-        if date:
-            # date is YYYY-MM-DD; filter by UTC day approximation
-            # We'll return and let caller filter by local date
-            pass
         sql = "SELECT * FROM segments"
         if where:
             sql += " WHERE " + " AND ".join(where)
@@ -125,178 +110,181 @@ class VideoSegmentDB:
                 " FROM video_detections WHERE segment_id=? ORDER BY ts_offset",
                 (segment_id,),
             ).fetchall()
-        result = []
-        for r in rows:
-            result.append({
-                "ts_offset":  r["ts_offset"],
-                "has_human":  bool(r["has_human"]),
-                "confidence": r["confidence"],
-                "boxes":   json.loads(r["boxes_json"])   if r["boxes_json"]   else [],
-                "classes": json.loads(r["classes_json"]) if r["classes_json"] else [],
-            })
-        return result
+        return [{
+            "ts_offset":  r["ts_offset"],
+            "has_human":  bool(r["has_human"]),
+            "confidence": r["confidence"],
+            "boxes":   json.loads(r["boxes_json"])   if r["boxes_json"]   else [],
+            "classes": json.loads(r["classes_json"]) if r["classes_json"] else [],
+        } for r in rows]
 
 
 class VideoWorker:
+    """Event-triggered recorder: starts a segment when humans detected,
+    stops _POST_EVENT_SECONDS after last detection."""
+
     def __init__(self, source, video_dir: Path, db: VideoSegmentDB) -> None:
         self.source    = source
         self.video_dir = video_dir
         self.db        = db
-        self._stop     = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._lock     = threading.Lock()
+        self._proc: subprocess.Popen | None = None
+        self._seg_id:    int | None  = None
+        self._seg_path:  Path | None = None
+        self._seg_start: float       = 0.0
+        self._last_det:  float       = 0.0
+        self._recording: bool        = False
 
-    def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._run, name=f"video-{self.source.id}", daemon=True
-        )
-        self._thread.start()
+    def on_detection(self, ts: float, has_human: bool, confidence: float,
+                     boxes: list | None, classes: list | None) -> None:
+        with self._lock:
+            if has_human:
+                self._last_det = ts
+                if not self._recording:
+                    self._start_segment(ts)
+            elif self._recording:
+                if ts - self._last_det >= _POST_EVENT_SECONDS:
+                    self._stop_segment(ts)
+
+            # Tag current segment
+            if self._recording and self._seg_id is not None:
+                offset = max(0.0, ts - self._seg_start)
+                try:
+                    self.db.add_detection(
+                        self._seg_id, offset, has_human, confidence, boxes, classes
+                    )
+                except Exception:
+                    pass
 
     def stop(self) -> None:
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=15)
+        with self._lock:
+            if self._recording:
+                self._stop_segment(time.time())
 
-    def _run(self) -> None:
+    def _start_segment(self, ts: float) -> None:
         from .capture import resolve_rtsp_url
         url = resolve_rtsp_url(self.source)
         if not url:
-            LOG.error("no URL for video source %s", self.source.id)
             return
 
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
-            LOG.error("ffmpeg not found for video recording")
             return
 
-        while not self._stop.is_set():
-            try:
-                self._record_segment(ffmpeg, url)
-            except Exception:
-                LOG.exception("video segment failed for %s", self.source.id)
-                self._stop.wait(5.0)
-
-    def _record_segment(self, ffmpeg: str, url: str) -> None:
-        from datetime import datetime, timezone
-        now   = time.time()
-        dt    = datetime.fromtimestamp(now, tz=timezone.utc)
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         date_dir = self.video_dir / self.source.id / dt.strftime("%Y/%m/%d")
         date_dir.mkdir(parents=True, exist_ok=True)
-
-        seg_name = dt.strftime("%Y-%m-%d_%H-%M-%S.mp4")
-        seg_path = date_dir / seg_name
+        seg_path = date_dir / dt.strftime("%Y-%m-%d_%H-%M-%S.mp4")
         rel_path = seg_path.relative_to(self.video_dir).as_posix()
 
-        seg_id = self.db.open_segment(self.source.id, rel_path, now)
-        LOG.info("video segment started: %s", rel_path)
-
-        r = subprocess.run(
-            [
-                ffmpeg, "-y", "-hide_banner", "-loglevel", "warning",
-                "-use_wallclock_as_timestamps", "1",
-                "-rtsp_transport", self.source.rtsp_transport,
-                "-i", url,
-                "-t", str(_SEGMENT_SECONDS),
-                "-c:v", "copy",       # lossless video
-                "-c:a", "aac",        # re-encode G.711 A-law → AAC (MP4 compatible)
-                "-b:a", "64k",
-                "-movflags", "+faststart",
-                str(seg_path),
-            ],
-            capture_output=True, timeout=_SEGMENT_SECONDS + 30, check=False,
-        )
-
-        end_ts = time.time()
-        if r.returncode != 0 or not seg_path.exists() or seg_path.stat().st_size == 0:
-            err = r.stderr.decode("utf-8", errors="replace")
-            LOG.warning("segment failed for %s (rc=%d): %s",
-                        self.source.id, r.returncode, err[-400:])
-            self.db.close_segment(seg_id, end_ts, None, None)
+        try:
+            proc = subprocess.Popen(
+                [
+                    ffmpeg, "-y", "-hide_banner", "-loglevel", "warning",
+                    "-use_wallclock_as_timestamps", "1",
+                    "-rtsp_transport", self.source.rtsp_transport,
+                    "-i", url,
+                    "-c:v", "copy",
+                    "-c:a", "aac", "-b:a", "64k",
+                    "-movflags", "+faststart",
+                    str(seg_path),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+        except Exception:
+            LOG.exception("failed to start video segment for %s", self.source.id)
             return
 
-        # Generate spritesheet + WebVTT asynchronously
-        t = threading.Thread(
-            target=self._post_process,
-            args=(ffmpeg, seg_path, seg_id, now, end_ts),
-            daemon=True,
-        )
-        t.start()
+        self._proc      = proc
+        self._seg_path  = seg_path
+        self._seg_start = ts
+        self._seg_id    = self.db.open_segment(self.source.id, rel_path, ts)
+        self._recording = True
+        LOG.info("video event recording started: %s", rel_path)
 
-    def _post_process(self, ffmpeg: str, seg_path: Path,
-                      seg_id: int, start_ts: float, end_ts: float) -> None:
+    def _stop_segment(self, ts: float) -> None:
+        proc      = self._proc
+        seg_path  = self._seg_path
+        seg_id    = self._seg_id
+
+        self._recording = False
+        self._proc      = None
+        self._seg_id    = None
+        self._seg_path  = None
+
+        if proc and proc.poll() is None:
+            try:
+                proc.send_signal(signal.SIGTERM)
+                proc.wait(timeout=10)
+            except Exception:
+                proc.kill()
+
+        LOG.info("video event recording stopped (%.0fs)", ts - self._seg_start)
+
+        # Post-process in background
+        if seg_id and seg_path and seg_path.exists() and seg_path.stat().st_size > 0:
+            self.db.close_segment(seg_id, ts, None, None)
+            t = threading.Thread(
+                target=self._post_process, args=(seg_path, seg_id),
+                daemon=True,
+            )
+            t.start()
+        elif seg_id:
+            self.db.close_segment(seg_id, ts, None, None)
+
+    def _post_process(self, seg_path: Path, seg_id: int) -> None:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return
         try:
-            sprite_path = seg_path.with_suffix("") / "sprite.jpg"
-            vtt_path    = seg_path.with_suffix("") / "thumbs.vtt"
-            sprite_path.parent.mkdir(parents=True, exist_ok=True)
+            sprite_dir  = seg_path.with_suffix("")
+            sprite_dir.mkdir(parents=True, exist_ok=True)
+            sprite_path = sprite_dir / "sprite.jpg"
+            vtt_path    = sprite_dir / "thumbs.vtt"
 
-            # Sprite sheet
             r = subprocess.run(
                 [
                     ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                     "-i", str(seg_path),
                     "-vf", f"fps={_SPRITE_FPS},scale={_SPRITE_W}:-1,"
                            f"tile={_SPRITE_COLS}x{_SPRITE_ROWS}",
-                    "-q:v", "5", "-frames:v", "1",
-                    str(sprite_path),
+                    "-q:v", "5", "-frames:v", "1", str(sprite_path),
                 ],
                 capture_output=True, timeout=60, check=False,
             )
-            if r.returncode != 0 or not sprite_path.exists():
-                sprite_path = None
-                vtt_path    = None
-            else:
-                _write_webvtt(vtt_path, sprite_path.name,
-                              _SPRITE_W, int(_SPRITE_W * 9 / 16),
+
+            if r.returncode == 0 and sprite_path.exists():
+                h = int(_SPRITE_W * 9 / 16)
+                _write_webvtt(vtt_path, sprite_path.name, _SPRITE_W, h,
                               _SPRITE_COLS, _SPRITE_FPS)
-
-            sprite_rel = str(sprite_path.relative_to(self.video_dir)) if sprite_path else None
-            vtt_rel    = str(vtt_path.relative_to(self.video_dir))    if vtt_path    else None
-            self.db.close_segment(seg_id, end_ts, sprite_rel, vtt_rel)
-            LOG.info("segment post-processed: %s", seg_path.name)
+                sprite_rel = str(sprite_path.relative_to(self.video_dir))
+                vtt_rel    = str(vtt_path.relative_to(self.video_dir))
+                self.db.close_segment(seg_id, time.time(), sprite_rel, vtt_rel)
+                LOG.info("video post-processed: %s", seg_path.name)
+            else:
+                self.db.close_segment(seg_id, time.time(), None, None)
         except Exception:
-            LOG.exception("post-process failed for segment %d", seg_id)
-            self.db.close_segment(seg_id, end_ts, None, None)
-
-    def add_detection(self, ts: float, has_human: bool, confidence: float,
-                      boxes: list | None, classes: list | None) -> None:
-        seg_id = self.db.current_segment_id(self.source.id)
-        if seg_id is None:
-            return
-        seg = self.db.list_segments(self.source.id)
-        if not seg:
-            return
-        current = next((s for s in seg if s["id"] == seg_id), None)
-        if not current:
-            return
-        ts_offset = max(0.0, ts - current["start_ts"])
-        self.db.add_detection(seg_id, ts_offset, has_human, confidence, boxes, classes)
+            LOG.exception("video post-process failed for %s", seg_path.name)
+            self.db.close_segment(seg_id, time.time(), None, None)
 
 
 def _write_webvtt(path: Path, sprite_name: str, w: int, h: int,
                   cols: int, fps_str: str) -> None:
-    interval = eval(fps_str.replace("/", "/"))  # e.g. 1/5 → 0.2
+    num, den = (int(x) for x in fps_str.split("/"))
+    interval = den / num
     lines = ["WEBVTT", ""]
-    tile = 0
-    t = 0.0
-    while True:
-        col = tile % cols
-        row = tile // cols
-        x, y = col * w, row * h
-        t_end = t + interval
-        lines.append(f"{_vtt_time(t)} --> {_vtt_time(t_end)}")
-        lines.append(f"{sprite_name}#xywh={x},{y},{w},{h}")
-        lines.append("")
-        tile += 1
-        t = t_end
-        if tile >= cols * 6:  # _SPRITE_ROWS
-            break
+    for tile in range(cols * 6):
+        col, row = tile % cols, tile // cols
+        t = tile * interval
+        lines += [
+            f"{_vtt_time(t)} --> {_vtt_time(t + interval)}",
+            f"{sprite_name}#xywh={col*w},{row*h},{w},{h}",
+            "",
+        ]
     path.write_text("\n".join(lines))
 
 
-def _vtt_time(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = seconds % 60
+def _vtt_time(s: float) -> str:
+    h = int(s // 3600); m = int((s % 3600) // 60); s = s % 60
     return f"{h:02d}:{m:02d}:{s:06.3f}"
