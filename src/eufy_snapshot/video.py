@@ -119,27 +119,52 @@ class VideoSegmentDB:
         } for r in rows]
 
 
+_MOBILE_CLASSES     = {"person", "bicycle", "motorcycle", "truck", "bus",
+                        "bird", "cat", "dog"}
+_STATIONARY_CLASSES = {"car", "backpack", "suitcase"}
+
+
+def _is_new_activity(boxes: list | None, prev_counts: dict) -> tuple[bool, dict]:
+    """Returns (should_trigger, new_counts)."""
+    counts: dict[str, int] = {}
+    for b in (boxes or []):
+        counts[b["cls"]] = counts.get(b["cls"], 0) + 1
+
+    # Mobile classes always trigger
+    if any(cls in _MOBILE_CLASSES for cls in counts):
+        return True, counts
+
+    # Stationary: only trigger if count changed
+    for cls in _STATIONARY_CLASSES:
+        if counts.get(cls, 0) != prev_counts.get(cls, 0):
+            return True, counts
+
+    return False, counts
+
+
 class VideoWorker:
-    """Event-triggered recorder: starts a segment when humans detected,
-    stops _POST_EVENT_SECONDS after last detection."""
+    """Event-triggered recorder: records when new/mobile objects detected,
+    stops _POST_EVENT_SECONDS after last event."""
 
     def __init__(self, source, video_dir: Path, db: VideoSegmentDB) -> None:
-        self.source    = source
-        self.video_dir = video_dir
-        self.db        = db
-        self._lock     = threading.Lock()
+        self.source     = source
+        self.video_dir  = video_dir
+        self.db         = db
+        self._lock      = threading.Lock()
         self._proc: subprocess.Popen | None = None
         self._seg_id:    int | None  = None
         self._seg_path:  Path | None = None
         self._seg_start: float       = 0.0
         self._last_det:  float       = 0.0
         self._recording: bool        = False
+        self._prev_counts: dict      = {}
 
     def on_detection(self, ts: float, has_human: bool, confidence: float,
                      boxes: list | None, classes: list | None) -> None:
-        has_detection = bool(boxes)
+        triggered, new_counts = _is_new_activity(boxes, self._prev_counts)
+        self._prev_counts = new_counts
         with self._lock:
-            if has_detection:
+            if triggered:
                 self._last_det = ts
                 if not self._recording:
                     self._start_segment(ts)
