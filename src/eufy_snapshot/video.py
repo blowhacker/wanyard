@@ -199,7 +199,9 @@ class VideoWorker:
                 "-rtsp_transport", self.source.rtsp_transport,
                 "-i", url,
                 "-t", str(_SEGMENT_SECONDS),
-                "-c", "copy",
+                "-c:v", "copy",       # lossless video
+                "-c:a", "aac",        # re-encode G.711 A-law → AAC (MP4 compatible)
+                "-b:a", "64k",
                 "-movflags", "+faststart",
                 str(seg_path),
             ],
