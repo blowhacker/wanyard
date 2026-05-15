@@ -200,7 +200,10 @@ function spriteCss(evt) {
 }
 
 // ── Load event into player ────────────────────────
-const PRE_BUFFER = 5; // seconds before event to start playback
+const PRE_BUFFER   = 5;   // seconds before event to start playback
+let   DETECT_SYNC  = parseFloat(localStorage.getItem("detectSync") || "1.5");
+// detectSync: detections are stored ~N seconds ahead of video timestamps
+// due to ffmpeg/OpenCV RTSP stream drift. Positive = boxes lead video.
 
 function loadEvent(idx) {
   const evt = vs.events[idx];
@@ -323,11 +326,11 @@ function drawBoxes(t) {
   // Find nearest per-second detection to current time
   let boxes = [];
   if (vs.detections.length) {
+    const lookup = t + DETECT_SYNC; // adjust for stream sync offset
     const nearest = vs.detections.reduce((best, d) =>
-      Math.abs(d.ts_offset - t) < Math.abs((best?.ts_offset ?? Infinity) - t) ? d : best,
+      Math.abs(d.ts_offset - lookup) < Math.abs((best?.ts_offset ?? Infinity) - lookup) ? d : best,
     null);
-    // Only draw if within 1.5s of a stored detection
-    if (nearest && Math.abs(nearest.ts_offset - t) < 1.5) {
+    if (nearest && Math.abs(nearest.ts_offset - lookup) < 1.5) {
       boxes = nearest.boxes || [];
     }
   } else {
@@ -375,6 +378,23 @@ function fmtSecs(s) {
   const m = Math.floor(s/60), sec = Math.floor(s%60);
   return `${m}:${String(sec).padStart(2,"0")}`;
 }
+
+// ── Box sync control ──────────────────────────────
+function updateSyncLabel() {
+  const el = $("syncLabel");
+  if (el) el.textContent = `${DETECT_SYNC > 0 ? "+" : ""}${DETECT_SYNC.toFixed(1)}s`;
+}
+$("syncMinus")?.addEventListener("click", () => {
+  DETECT_SYNC = Math.max(-5, DETECT_SYNC - 0.5);
+  localStorage.setItem("detectSync", DETECT_SYNC);
+  updateSyncLabel();
+});
+$("syncPlus")?.addEventListener("click", () => {
+  DETECT_SYNC = Math.min(5, DETECT_SYNC + 0.5);
+  localStorage.setItem("detectSync", DETECT_SYNC);
+  updateSyncLabel();
+});
+updateSyncLabel();
 
 // ── Boot ──────────────────────────────────────────
 init();
