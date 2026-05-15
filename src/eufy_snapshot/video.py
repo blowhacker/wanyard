@@ -53,8 +53,9 @@ class VideoSegmentDB:
             conn.executescript(_DDL)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._path))
+        conn = sqlite3.connect(str(self._path), timeout=10)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
@@ -225,7 +226,11 @@ class VideoWorker:
         self._proc      = proc
         self._seg_path  = seg_path
         self._seg_start = ts
-        self._seg_id    = self.db.open_segment(self.source.id, rel_path, ts)
+        try:
+            self._seg_id = self.db.open_segment(self.source.id, rel_path, ts)
+        except Exception:
+            LOG.exception("failed to register segment in DB for %s", self.source.id)
+            self._seg_id = None
         self._recording = True
         LOG.info("video event recording started: %s", rel_path)
 
