@@ -345,19 +345,29 @@ function drawBoxes(t) {
   const rw = iw*scale, rh = ih*scale;
   const ox = (cw-rw)/2, oy = (ch-rh)/2;
 
+  const evtClass = vs.events[vs.eventIdx]?.class;
   for (const box of boxes) {
+    const isPrimary = box.cls === evtClass;
     const color = BOX_COLORS[box.cls] || "#ccd8e4";
     const x = ox + box.x1*rw, y = oy + box.y1*rh;
     const w = (box.x2-box.x1)*rw, h = (box.y2-box.y1)*rh;
-    ctx.strokeStyle = color; ctx.lineWidth = 2;
+
+    ctx.globalAlpha = isPrimary ? 1.0 : 0.25;
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = isPrimary ? 2.5 : 1;
     ctx.strokeRect(x, y, w, h);
-    const label = `${box.cls} ${Math.round(box.conf*100)}%`;
-    ctx.font = "bold 11px 'IBM Plex Mono',monospace";
-    const tw = ctx.measureText(label).width + 6;
-    const ty = y > 18 ? y-18 : y+h;
-    ctx.fillStyle = color; ctx.fillRect(x-1, ty, tw, 16);
-    ctx.fillStyle = "#050709"; ctx.fillText(label, x+2, ty+11);
+
+    if (isPrimary) {
+      const label = `${box.cls} ${Math.round(box.conf*100)}%`;
+      ctx.font = "bold 11px 'IBM Plex Mono',monospace";
+      const tw = ctx.measureText(label).width + 6;
+      const ty = y > 18 ? y-18 : y+h;
+      ctx.fillStyle = color; ctx.fillRect(x-1, ty, tw, 16);
+      ctx.globalAlpha = 1.0;
+      ctx.fillStyle = "#050709"; ctx.fillText(label, x+2, ty+11);
+    }
   }
+  ctx.globalAlpha = 1.0;
 }
 
 // ── Utils ─────────────────────────────────────────
