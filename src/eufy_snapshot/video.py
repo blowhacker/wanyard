@@ -137,8 +137,9 @@ class VideoWorker:
 
     def on_detection(self, ts: float, has_human: bool, confidence: float,
                      boxes: list | None, classes: list | None) -> None:
+        has_detection = bool(boxes)
         with self._lock:
-            if has_human:
+            if has_detection:
                 self._last_det = ts
                 if not self._recording:
                     self._start_segment(ts)
