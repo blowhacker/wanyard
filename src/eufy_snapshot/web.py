@@ -307,6 +307,55 @@ def make_app(
 
     # ── Video API ─────────────────────────────────────────────
 
+    async def api_thumb(request: Request) -> Response:
+        """Extract a single frame from a video file at timestamp t."""
+        if not video_dir:
+            return Response(status_code=404)
+        rel = request.query_params.get("path", "")
+        t   = float(request.query_params.get("t", 0))
+        if ".." in rel or not rel:
+            return Response(status_code=400)
+        seg_path = (video_dir / rel).resolve()
+        if not seg_path.is_file():
+            return Response(status_code=404)
+
+        # Disk cache alongside segment
+        cache_dir  = seg_path.parent / ".thumbcache"
+        cache_file = cache_dir / f"{seg_path.stem}_{t:.1f}.jpg"
+
+        if not cache_file.exists():
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            ffmpeg = shutil.which("ffmpeg")
+            r = await asyncio.to_thread(subprocess.run, [
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", str(t), "-i", str(seg_path),
+                "-frames:v", "1", "-q:v", "5", str(cache_file),
+            ], capture_output=True, timeout=10, check=False)
+            if r.returncode != 0 or not cache_file.exists():
+                return Response(status_code=404)
+
+        return FileResponse(cache_file, media_type="image/jpeg",
+                            headers={"Cache-Control": "public, max-age=604800, immutable"})
+
+    async def api_video2_timeline(request: Request) -> JSONResponse:
+        """Segments list for the video2 filmstrip."""
+        if not video_db:
+            return JSONResponse({"segments": []})
+        source_id = request.query_params.get("source") or None
+        segs = await asyncio.to_thread(video_db.list_segments, source_id)
+        # Attach event class summary per segment
+        with video_db._connect() as conn:
+            rows = conn.execute(
+                "SELECT segment_id, class, COUNT(*) as n"
+                " FROM video_events GROUP BY segment_id, class"
+            ).fetchall()
+        summary: dict[int, dict] = {}
+        for r in rows:
+            summary.setdefault(r["segment_id"], {})[r["class"]] = r["n"]
+        for s in segs:
+            s["classes"] = summary.get(s["id"], {})
+        return JSONResponse({"segments": segs})
+
     async def api_video_events(request: Request) -> JSONResponse:
         if not video_db:
             return JSONResponse({"events": []})
@@ -360,6 +409,9 @@ def make_app(
 
     routes = [
         Route("/api/health",                api_health),
+        Route("/api/thumb",                 api_thumb),
+        Route("/api/video2/timeline",       api_video2_timeline),
+        Route("/video2",                    lambda r: FileResponse(static_dir / "video2.html")),
         Route("/api/video/events",          api_video_events),
         Route("/api/video/classes",         api_video_class_counts),
         Route("/api/video/segments",        api_video_segments),

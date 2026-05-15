@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Video² — Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/app.css">
+    <link rel="stylesheet" href="/video2.css">
+  </head>
+  <body>
+    <main class="viewer v2-viewer">
+
+      <!-- ── Image stage ───────────────────────────── -->
+      <section class="image-stage v2-stage">
+        <div class="corner tl"></div><div class="corner tr"></div>
+        <div class="corner bl"></div><div class="corner br"></div>
+        <div class="hud-top">
+          <span id="v2HudSource" class="hud-source"></span>
+          <div style="display:flex;align-items:center;gap:10px">
+            <a href="/" class="v2-stills-link">← STILLS</a>
+            <span class="hud-rec"><span class="rec-dot"></span>REC</span>
+          </div>
+        </div>
+        <video id="v2Player" playsinline></video>
+        <canvas id="v2BoxCanvas"></canvas>
+        <div id="v2Empty" class="empty">NO SIGNAL</div>
+        <div class="hud-bottom">
+          <span id="v2HudTime" class="hud-ts"></span>
+        </div>
+        <button id="v2JumpLatest" class="jump-latest" hidden>&#8595; LATEST</button>
+        <button id="v2GoLiveBtn" class="go-live-btn" hidden>&#9679; LIVE</button>
+      </section>
+
+      <!-- ── Panel ─────────────────────────────────── -->
+      <aside class="panel">
+        <div class="panel-head">
+          <span class="panel-brand">VIDEO²</span>
+          <div class="panel-head-right">
+            <button id="v2LiveBtn" class="live-btn" title="Follow latest">LIVE</button>
+            <div id="v2RefreshStatus" class="refresh-badge">AUTO</div>
+          </div>
+        </div>
+        <div class="ts-block">
+          <div class="ts-label">PLAYING</div>
+          <div id="v2Timestamp" class="timestamp">--</div>
+        </div>
+        <div class="field-block">
+          <div class="field" id="v2SourceField">
+            <div class="field-label">Source</div>
+            <div id="v2SourceCtrl" class="source-ctrl"></div>
+          </div>
+          <div class="field" id="v2DateField">
+            <div class="field-label">Date</div>
+            <div id="v2DateCtrl" class="date-ctrl-wrap"></div>
+          </div>
+          <div class="field" id="v2ClassField" hidden>
+            <div class="field-label">Class</div>
+            <div id="v2ClassCtrl" class="class-chips"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ── Filmstrip ─────────────────────────────── -->
+      <div class="filmstrip-area">
+        <div class="filmstrip-bar">
+          <div class="fb-transport">
+            <button id="v2Prev" title="Previous (←)">&#8249;</button>
+            <button id="v2PlayBtn" title="Play / Pause (Space)">&#9654;</button>
+            <button id="v2Next" title="Next (→)">&#8250;</button>
+          </div>
+          <div class="fb-play">
+            <div id="v2SpeedPills" class="speed-pills"></div>
+            <button id="v2LoopBtn" class="loop-btn active" title="Loop">LOOP</button>
+          </div>
+          <div class="fb-stats">
+            <span id="v2TimeDisp" class="frame-counter"></span>
+            <span id="v2SpeedDisp" class="fps-display"></span>
+          </div>
+          <div class="fb-filter">
+            <button id="v2BoxToggle" class="humans-btn active" title="Toggle boxes">BOX</button>
+          </div>
+          <div class="fb-density">
+            <div id="v2DensityBtns" class="density-btns"></div>
+          </div>
+        </div>
+        <div id="v2Filmstrip" class="filmstrip" aria-label="Video timeline"></div>
+      </div>
+
+    </main>
+    <script src="/video2.js"></script>
+  </body>
+</html>

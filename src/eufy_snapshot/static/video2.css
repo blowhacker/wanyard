@@ -1,0 +1,69 @@
+.v2-viewer { /* same grid as main viewer */ }
+
+.v2-stage #v2Player {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  display: none;
+  position: relative; z-index: 3;
+  cursor: pointer;
+}
+
+#v2BoxCanvas {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 4; pointer-events: none;
+}
+
+.v2-stills-link {
+  font-family: var(--font);
+  font-size: 0.56rem; font-weight: 500;
+  letter-spacing: 0.12em;
+  color: var(--text-lo); text-decoration: none;
+  padding: 3px 7px;
+  border: 1px solid var(--border-lo);
+  border-radius: var(--r);
+  transition: color .12s, border-color .12s;
+}
+.v2-stills-link:hover { color: var(--amber); border-color: var(--amber-border); }
+
+/* Video frame cells in filmstrip */
+.v2-frame {
+  flex-shrink: 0;
+  position: relative;
+  width: var(--frame-w);
+  height: var(--frame-h);
+  border: 1px solid var(--border-lo);
+  border-radius: var(--r);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.08s, opacity 0.08s;
+  background: var(--bg-stage);
+}
+.v2-frame:hover { border-color: var(--border-hi); opacity: 0.9; }
+.v2-frame.v2-active { border-color: var(--amber); }
+.v2-frame.v2-loading { opacity: 0.4; }
+
+.v2-frame img {
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+}
+
+.v2-frame-ts {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  padding: 2px 3px 1px;
+  font-size: 0.5rem; font-family: var(--font); font-weight: 300;
+  color: rgba(200,212,224,.8);
+  background: linear-gradient(transparent, rgba(0,0,0,.75));
+  letter-spacing: 0.02em; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.v2-frame.v2-active .v2-frame-ts { color: var(--amber-bright); }
+
+/* Detection ticks on frames */
+.v2-det-tick {
+  position: absolute; top: 0; width: 2px; height: 4px;
+  pointer-events: none; z-index: 2;
+}
+.v2-tick-person   { background: var(--green); }
+.v2-tick-animal   { background: #20c0b0; }
+.v2-tick-vehicle  { background: var(--amber); }
