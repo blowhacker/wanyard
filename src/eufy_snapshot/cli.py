@@ -90,7 +90,7 @@ def cmd_serve(config: AppConfig) -> int:
     video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
     video_db  = VideoSegmentDB(video_dir / ".video.db")
     video_workers = {
-        s.id: VideoWorker(s, video_dir, video_db)
+        s.id: VideoWorker(s, video_dir, video_db, model=detection_model)
         for s in all_sources if s.type == "rtsp" and s.enabled
     }
 

@@ -201,7 +201,7 @@ function spriteCss(evt) {
 
 // ── Load event into player ────────────────────────
 const PRE_BUFFER   = 5;   // seconds before event to start playback
-let   DETECT_SYNC  = parseFloat(localStorage.getItem("detectSync") || "1.5");
+let   DETECT_SYNC  = parseFloat(localStorage.getItem("detectSync") || "0.0");
 // detectSync: detections are stored ~N seconds ahead of video timestamps
 // due to ffmpeg/OpenCV RTSP stream drift. Positive = boxes lead video.
 
