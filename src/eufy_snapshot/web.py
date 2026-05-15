@@ -326,12 +326,16 @@ def make_app(
         if not cache_file.exists():
             cache_dir.mkdir(parents=True, exist_ok=True)
             ffmpeg = shutil.which("ffmpeg")
-            r = await asyncio.to_thread(subprocess.run, [
-                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-                "-ss", str(t), "-i", str(seg_path),
-                "-frames:v", "1", "-q:v", "5", str(cache_file),
-            ], capture_output=True, timeout=10, check=False)
-            if r.returncode != 0 or not cache_file.exists():
+            # Try requested time, fall back to slightly earlier if at/beyond end
+            for attempt_t in [t, max(0, t - 2), max(0, t - 5)]:
+                r = await asyncio.to_thread(subprocess.run, [
+                    ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                    "-ss", str(attempt_t), "-i", str(seg_path),
+                    "-frames:v", "1", "-q:v", "5", str(cache_file),
+                ], capture_output=True, timeout=10, check=False)
+                if r.returncode == 0 and cache_file.exists():
+                    break
+            if not cache_file.exists():
                 return Response(status_code=404)
 
         return FileResponse(cache_file, media_type="image/jpeg",

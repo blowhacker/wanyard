@@ -26,6 +26,18 @@
 }
 .v2-stills-link:hover { color: var(--amber); border-color: var(--amber-border); }
 
+/* New frames badge */
+.v2-new-badge {
+  height: 28px; width: auto; padding: 0 10px;
+  font-family: var(--font); font-size: 0.62rem;
+  font-weight: 500; letter-spacing: 0.1em;
+  background: rgba(42,172,106,.15);
+  border: 1px solid var(--green);
+  border-radius: var(--r); color: var(--green);
+  cursor: pointer; flex-shrink: 0;
+  animation: pulse-g 1.5s ease-in-out infinite;
+}
+
 /* Video frame cells in filmstrip */
 .v2-frame {
   flex-shrink: 0;

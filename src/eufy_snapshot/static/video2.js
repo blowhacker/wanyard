@@ -73,6 +73,7 @@ const v2el = {
 // Maps: {segId}_{t} -> DOM element
 const v2FrameMap = new Map();
 let v2ActiveFrameEl = null;
+let v2NewSegCount   = 0; // count of new segments not yet scrolled to
 const v2Observer = new IntersectionObserver(entries => {
   entries.forEach(e => {
     if (e.isIntersecting) {
@@ -156,13 +157,30 @@ function v2RenderSourceCtrl() {
 }
 
 // ── Load timeline ─────────────────────────────────
+const v2NewBadge = document.getElementById("v2NewBadge");
+if (v2NewBadge) v2NewBadge.addEventListener("click", () => {
+  v2NewBadge.hidden = true;
+  if (v2.segments.length) {
+    const latest = v2.segments[0];
+    v2LoadSegment(latest, Math.max(0, (latest.end_ts||0) - latest.start_ts - 5));
+  }
+});
+
 async function v2LoadTimeline(incremental = false) {
+  const prevCount = v2.segments.length;
   const p = new URLSearchParams();
   if (v2.source !== "all") p.set("source", v2.source);
   const r = await fetch(`/api/video2/timeline?${p}`, { cache: "no-store" });
   if (!r.ok) return;
   const { segments } = await r.json();
+  const newCount = segments.length - prevCount;
   v2.segments = segments;
+
+  // Show new-frames badge if new segments arrived and user isn't in LIVE mode
+  if (incremental && newCount > 0 && !v2.live && v2NewBadge) {
+    v2NewBadge.textContent = `↓ ${newCount} NEW`;
+    v2NewBadge.hidden = false;
+  }
 
   // Load events for class filter
   const ep = new URLSearchParams({ limit: "500" });
@@ -297,8 +315,8 @@ function v2RenderFilmstrip() {
       // Thumbnails for this segment
       const steps = dur > 0 ? Math.max(1, Math.ceil(dur / interval)) : 1;
       for (let i = 0; i < steps; i++) {
-        const t = i * interval;
-        if (t > dur && dur > 0) break;
+        const t = Math.min(i * interval, Math.max(0, dur - 1)); // clamp to valid range
+        if (i > 0 && t >= dur && dur > 0) break;
         const absTs = seg.start_ts + t;
         const frameEl = v2BuildFrame(seg, t, absTs);
         framesEl.appendChild(frameEl);
@@ -381,10 +399,10 @@ function v2LoadSegment(seg, offset) {
   const src = v2.sources.find(s => s.id === seg.source_id);
   if (v2el.hudSource) v2el.hudSource.textContent = (src?.name || seg.source_id).toUpperCase();
 
-  v2HighlightActiveFrame();
+  v2HighlightActiveFrame(true); // scroll on explicit load
 }
 
-function v2HighlightActiveFrame() {
+function v2HighlightActiveFrame(forceScroll = false) {
   if (v2ActiveFrameEl) v2ActiveFrameEl.classList.remove("v2-active");
   v2ActiveFrameEl = null;
   if (!v2.curSeg) return;
@@ -396,10 +414,14 @@ function v2HighlightActiveFrame() {
   if (el) {
     el.classList.add("v2-active");
     v2ActiveFrameEl = el;
-    el.closest(".frames")?.scrollTo({
-      left: el.offsetLeft - el.closest(".frames").clientWidth / 2 + el.offsetWidth / 2,
-      behavior: "smooth"
-    });
+    // Only scroll if user explicitly navigated or in LIVE mode
+    if (forceScroll || v2.live) {
+      const framesEl = el.closest(".frames");
+      if (framesEl) framesEl.scrollTo({
+        left: el.offsetLeft - framesEl.clientWidth / 2 + el.offsetWidth / 2,
+        behavior: "smooth"
+      });
+    }
   }
 }
 
@@ -483,7 +505,7 @@ function v2DrawBoxes(t) {
     const color = V2_BOX_COLORS[box.cls] || "#ccd8e4";
     const x = ox + box.x1*rw, y = oy + box.y1*rh;
     const w = (box.x2-box.x1)*rw, h = (box.y2-box.y1)*rh;
-    ctx.globalAlpha = isPrimary ? 1.0 : 0.45;
+    ctx.globalAlpha = isPrimary ? 1.0 : 0.65;
     ctx.strokeStyle = color; ctx.lineWidth = isPrimary ? 2.5 : 1;
     ctx.strokeRect(x, y, w, h);
     if (isPrimary) {
