@@ -1,12 +1,14 @@
 // ── State ─────────────────────────────────────────
 const vs = {
-  sources:   [],
-  source:    "all",
-  date:      "",
-  cls:       "all",
-  events:    [],
-  eventIdx:  -1,   // index into vs.events of current event
-  classes:   {},
+  sources:       [],
+  source:        "all",
+  date:          "",
+  cls:           "all",
+  events:        [],
+  eventIdx:      -1,
+  classes:       {},
+  detections:    [],   // per-second detections for current segment
+  loadedSegId:   null, // which segment's detections are loaded
 };
 
 const BOX_COLORS = {
@@ -219,7 +221,6 @@ function loadEvent(idx) {
   vEls.player.style.display = "block";
 
   if (vEls.player.dataset.src !== url) {
-    // New video — wait for metadata before seeking
     vEls.player.src = url;
     vEls.player.dataset.src = url;
     vEls.player.load();
@@ -228,9 +229,18 @@ function loadEvent(idx) {
       vEls.player.play().catch(() => {});
     }, { once: true });
   } else {
-    // Same video already loaded — seek directly
     vEls.player.currentTime = seekTo;
     vEls.player.play().catch(() => {});
+  }
+
+  // Load per-second detections for this segment (for live box rendering)
+  if (evt.segment_id !== vs.loadedSegId) {
+    vs.detections    = [];
+    vs.loadedSegId   = evt.segment_id;
+    fetch(`/api/video/detections?segment_id=${evt.segment_id}`, { cache: "no-store" })
+      .then(r => r.json())
+      .then(d => { vs.detections = d.detections || []; })
+      .catch(() => {});
   }
 
   // HUD
@@ -303,21 +313,30 @@ function updateNavBtns() {
 function drawBoxes(t) {
   const canvas = vEls.boxCanvas;
   const video  = vEls.player;
-  const evt    = vs.events[vs.eventIdx];
-  if (!canvas || !evt) return;
+  if (!canvas || !video.videoWidth) return;
 
   canvas.width  = canvas.clientWidth;
   canvas.height = canvas.clientHeight;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (!video.videoWidth) return;
-
-  // Show boxes only within the event window
-  const off = t;
-  if (off < evt.start_off - PRE_BUFFER - 0.5 || off > evt.end_off + 1) return;
-
-  const boxes = evt.boxes_json ? JSON.parse(evt.boxes_json) : [];
+  // Find nearest per-second detection to current time
+  let boxes = [];
+  if (vs.detections.length) {
+    const nearest = vs.detections.reduce((best, d) =>
+      Math.abs(d.ts_offset - t) < Math.abs((best?.ts_offset ?? Infinity) - t) ? d : best,
+    null);
+    // Only draw if within 1.5s of a stored detection
+    if (nearest && Math.abs(nearest.ts_offset - t) < 1.5) {
+      boxes = nearest.boxes || [];
+    }
+  } else {
+    // Fallback to event representative boxes when detections not loaded yet
+    const evt = vs.events[vs.eventIdx];
+    if (evt && t >= evt.start_off - PRE_BUFFER - 0.5 && t <= evt.end_off + 1) {
+      boxes = evt.boxes_json ? JSON.parse(evt.boxes_json) : [];
+    }
+  }
   if (!boxes.length) return;
 
   const cw = canvas.width, ch = canvas.height;
