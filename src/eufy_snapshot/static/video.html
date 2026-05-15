@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Video — Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/app.css">
+    <link rel="stylesheet" href="/video.css">
+  </head>
+  <body class="video-body">
+    <div class="video-layout">
+
+      <!-- ── Top bar ───────────────────────────────── -->
+      <div class="video-topbar">
+        <a href="/" class="video-back-btn" title="Back to snapshots">← SNAPSHOTS</a>
+        <span class="video-brand">VIDEO</span>
+        <div id="videoSourceCtrl" class="video-source-ctrl"></div>
+      </div>
+
+      <!-- ── Player ────────────────────────────────── -->
+      <div class="video-stage">
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+        <div class="video-hud-top">
+          <span id="videoHudSource" class="hud-source"></span>
+          <span id="videoHudTime" class="hud-ts"></span>
+        </div>
+        <video id="videoPlayer" playsinline controls></video>
+        <canvas id="videoBoxCanvas"></canvas>
+        <div id="videoEmpty" class="empty">SELECT A SEGMENT</div>
+      </div>
+
+      <!-- ── Detection scrubber ────────────────────── -->
+      <div class="video-scrubber-area">
+        <div id="videoScrubber" class="video-scrubber">
+          <div id="videoScrubberBar" class="video-scrubber-bar"></div>
+          <div id="videoScrubberHead" class="video-scrubber-head"></div>
+          <canvas id="videoThumbCanvas" class="video-thumb-canvas"></canvas>
+        </div>
+        <div id="videoScrubberLabels" class="video-scrubber-labels"></div>
+      </div>
+
+      <!-- ── Segment list ──────────────────────────── -->
+      <div class="video-sidebar">
+        <div class="video-date-ctrl">
+          <div class="field-label">DATE</div>
+          <div id="videoDateCtrl" class="date-ctrl-wrap"></div>
+        </div>
+        <div id="videoSegmentList" class="video-segment-list"></div>
+      </div>
+
+    </div>
+    <script src="/video.js"></script>
+  </body>
+</html>

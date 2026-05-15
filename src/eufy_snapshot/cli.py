@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from .db import SourceDB
 from .detect import DetectionStore, DetectionWorker
 from .index import ImageIndex
 from .runner import CaptureWorker, run_loop
+from .video import VideoSegmentDB, VideoWorker
 from .web import make_app
 
 
@@ -84,10 +86,21 @@ def cmd_serve(config: AppConfig) -> int:
     det_worker = DetectionWorker(det_store, image_index)
     detection_model = _load_yolo_model()
     worker = CaptureWorker(config, image_index, source_db=source_db,
-                           detection_model=detection_model, detection_store=det_store)
+                           detection_model=detection_model, detection_store=det_store,
+                           video_workers=video_workers)
+
+    # Video recording
+    video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
+    video_db  = VideoSegmentDB(video_dir / ".video.db")
+    video_workers = {
+        s.id: VideoWorker(s, video_dir, video_db)
+        for s in all_sources if s.type == "rtsp" and s.enabled
+    }
+
     app = make_app(
         config, image_index, source_db=source_db, capture_worker=worker,
         detection_store=det_store, detection_worker=det_worker,
+        video_dir=video_dir, video_db=video_db, video_workers=video_workers,
     )
     _serve(app, config)
     return 0

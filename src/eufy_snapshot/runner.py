@@ -23,12 +23,14 @@ class CaptureWorker:
         source_db=None,
         detection_model=None,
         detection_store=None,
+        video_workers=None,
     ) -> None:
         self.config = config
         self.image_index = image_index
         self.source_db = source_db
         self.detection_model = detection_model
         self.detection_store = detection_store
+        self.video_workers = video_workers or {}
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
 
@@ -47,7 +49,8 @@ class CaptureWorker:
                     target=_run_rtsp_with_detection,
                     args=(self.config, source, self.detection_model,
                           self.image_index, self._stop.is_set,
-                          self.detection_store),
+                          self.detection_store,
+                          self.video_workers.get(source.id)),
                     name=f"detect-{source.id}",
                     daemon=True,
                 )
@@ -195,6 +198,7 @@ def _run_rtsp_with_detection(
     image_index: ImageIndex | None,
     should_stop: Callable[[], bool],
     detection_store=None,
+    video_worker=None,
 ) -> None:
     import cv2
     import tempfile
@@ -262,6 +266,16 @@ def _run_rtsp_with_detection(
                 if detection_store:
                     rel = out.relative_to(config.output_dir).as_posix()
                     detection_store.set(rel, has_human, top_conf, boxes)
+
+            # Tag video segment with detection regardless of save
+            if video_worker:
+                try:
+                    video_worker.add_detection(
+                        time.time(), has_human, top_conf, boxes,
+                        list({b["cls"] for b in boxes}) if boxes else [],
+                    )
+                except Exception:
+                    pass
                 reason = "human" if has_human else "baseline"
                 LOG.info("captured %s for %s [%s] conf=%.2f", out.name, source.name, reason, top_conf)
 

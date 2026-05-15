@@ -45,6 +45,9 @@ def make_app(
     capture_worker=None,
     detection_store=None,
     detection_worker=None,
+    video_dir=None,
+    video_db=None,
+    video_workers=None,
 ) -> Starlette:
     import eufy_snapshot
     static_dir = Path(eufy_snapshot.__file__).parent / "static"
@@ -56,6 +59,8 @@ def make_app(
             capture_worker.start()
         if detection_worker:
             detection_worker.start()
+        for vw in (video_workers or {}).values():
+            vw.start()
         asyncio.create_task(_register_go2rtc_streams(config, source_db))
 
         async def _refresh_loop() -> None:
@@ -72,6 +77,8 @@ def make_app(
                 await asyncio.to_thread(capture_worker.stop)
             if detection_worker:
                 await asyncio.to_thread(detection_worker.stop)
+            for vw in (video_workers or {}).values():
+                await asyncio.to_thread(vw.stop)
 
     # ── API handlers ──────────────────────────────────────
 
@@ -292,8 +299,46 @@ def make_app(
             "port": 1984,
         })
 
+    # ── Video API ─────────────────────────────────────────────
+
+    async def api_video_segments(request: Request) -> JSONResponse:
+        if not video_db:
+            return JSONResponse({"segments": []})
+        source_id = request.query_params.get("source") or None
+        segs = await asyncio.to_thread(video_db.list_segments, source_id)
+        return JSONResponse({"segments": segs})
+
+    async def api_video_detections(request: Request) -> JSONResponse:
+        if not video_db:
+            return JSONResponse({"detections": []})
+        seg_id = request.query_params.get("segment_id")
+        if not seg_id:
+            return JSONResponse({"error": "segment_id required"}, status_code=400)
+        dets = await asyncio.to_thread(video_db.detections_for_segment, int(seg_id))
+        return JSONResponse({"detections": dets})
+
+    async def serve_video_file(request: Request) -> Response:
+        if not video_dir:
+            return Response(status_code=404)
+        rel = unquote(request.path_params["path"])
+        if ".." in rel:
+            return Response(status_code=403)
+        path = (video_dir / rel).resolve()
+        if not path.is_file():
+            return Response(status_code=404)
+        suffix = path.suffix.lower()
+        media = {"mp4": "video/mp4", "jpg": "image/jpeg", "vtt": "text/vtt"}.get(suffix[1:])
+        headers = {"Accept-Ranges": "bytes"}
+        if suffix == ".mp4":
+            headers["Cache-Control"] = "no-cache"
+        return FileResponse(path, media_type=media, headers=headers)
+
     routes = [
         Route("/api/health",                api_health),
+        Route("/api/video/segments",        api_video_segments),
+        Route("/api/video/detections",      api_video_detections),
+        Route("/video/files/{path:path}",   serve_video_file),
+        Route("/video",                     lambda r: FileResponse(static_dir / "video.html")),
         Route("/api/live",                  api_live),
         Route("/api/sources",               api_sources,        methods=["GET", "POST"]),
         Route("/api/sources/{source_id}",   api_delete_source,  methods=["DELETE"]),

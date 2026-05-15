@@ -1,0 +1,215 @@
+.video-body { overflow: hidden; }
+
+.video-layout {
+  display: grid;
+  grid-template-columns: 1fr 260px;
+  grid-template-rows: 44px 1fr 80px;
+  height: 100vh;
+  background: var(--bg-deep);
+}
+
+/* ── Top bar ─────────────────────────────────────── */
+.video-topbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 18px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-sub);
+  flex-shrink: 0;
+}
+
+.video-back-btn {
+  font-family: var(--font);
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  color: var(--text-lo);
+  text-decoration: none;
+  padding: 4px 8px;
+  border: 1px solid var(--border-lo);
+  border-radius: var(--r);
+  transition: color 0.12s, border-color 0.12s;
+}
+.video-back-btn:hover { color: var(--amber); border-color: var(--amber-border); }
+
+.video-brand {
+  font-size: 0.56rem;
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  color: var(--text-lo);
+}
+
+.video-source-ctrl { display: flex; gap: 4px; margin-left: auto; }
+
+/* ── Player ──────────────────────────────────────── */
+.video-stage {
+  grid-column: 1;
+  grid-row: 2;
+  position: relative;
+  background: var(--bg-stage);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#videoPlayer {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  position: relative;
+  z-index: 3;
+}
+
+#videoBoxCanvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.video-hud-top {
+  position: absolute;
+  top: 16px; left: 20px; right: 20px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+  z-index: 7;
+}
+
+/* ── Detection scrubber ──────────────────────────── */
+.video-scrubber-area {
+  grid-column: 1;
+  grid-row: 3;
+  background: var(--bg-strip);
+  border-top: 1px solid var(--border-lo);
+  padding: 10px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.video-scrubber {
+  position: relative;
+  height: 32px;
+  background: var(--bg-section);
+  border: 1px solid var(--border-lo);
+  border-radius: var(--r);
+  cursor: pointer;
+  overflow: visible;
+}
+
+.video-scrubber-bar {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  background: var(--amber-dim);
+  border-radius: var(--r) 0 0 var(--r);
+  pointer-events: none;
+}
+
+.video-scrubber-head {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: calc(100% + 6px);
+  background: var(--amber);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.video-thumb-canvas {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  border: 1px solid var(--border-hi);
+  border-radius: 2px;
+  pointer-events: none;
+  display: none;
+  z-index: 10;
+}
+
+.video-scrubber-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.48rem;
+  color: var(--text-lo);
+  letter-spacing: 0.06em;
+}
+
+/* Detection ticks on scrubber */
+.vtick {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  opacity: 0.7;
+  pointer-events: none;
+}
+.vtick-person   { background: var(--green); }
+.vtick-vehicle  { background: var(--amber); }
+.vtick-animal   { background: #20c0b0; }
+
+/* ── Sidebar ─────────────────────────────────────── */
+.video-sidebar {
+  grid-column: 2;
+  grid-row: 2 / 4;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-lo);
+  overflow: hidden;
+}
+
+.video-date-ctrl {
+  padding: 12px 14px 8px;
+  border-bottom: 1px solid var(--border-sub);
+  flex-shrink: 0;
+}
+
+.video-segment-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hi) transparent;
+}
+
+.video-segment-item {
+  padding: 8px 14px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 0.1s, border-color 0.1s;
+}
+.video-segment-item:hover { background: var(--bg-section); }
+.video-segment-item.active {
+  border-left-color: var(--amber);
+  background: var(--amber-dim);
+}
+
+.vseg-time {
+  font-size: 0.72rem;
+  color: var(--text-hi);
+  letter-spacing: 0.04em;
+}
+.vseg-meta {
+  font-size: 0.52rem;
+  color: var(--text-lo);
+  margin-top: 2px;
+}
+.vseg-classes { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+.vseg-class-tag {
+  font-size: 0.44rem;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-hi);
+  color: var(--text-mid);
+  letter-spacing: 0.06em;
+}
+
+.vseg-no-sprite { color: var(--text-lo); font-size: 0.5rem; text-align: center; padding: 8px; }
