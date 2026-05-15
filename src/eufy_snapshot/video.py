@@ -194,21 +194,23 @@ class VideoWorker:
 
         r = subprocess.run(
             [
-                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "warning",
+                "-use_wallclock_as_timestamps", "1",
                 "-rtsp_transport", self.source.rtsp_transport,
                 "-i", url,
                 "-t", str(_SEGMENT_SECONDS),
-                "-c", "copy",  # preserve camera stream quality, no re-encode
+                "-c", "copy",
+                "-movflags", "+faststart",
                 str(seg_path),
             ],
             capture_output=True, timeout=_SEGMENT_SECONDS + 30, check=False,
         )
 
         end_ts = time.time()
-        if r.returncode != 0 or not seg_path.exists():
-            LOG.warning("segment failed for %s: %s",
-                        self.source.id,
-                        r.stderr.decode("utf-8", errors="replace")[:200])
+        if r.returncode != 0 or not seg_path.exists() or seg_path.stat().st_size == 0:
+            err = r.stderr.decode("utf-8", errors="replace")
+            LOG.warning("segment failed for %s (rc=%d): %s",
+                        self.source.id, r.returncode, err[-400:])
             self.db.close_segment(seg_id, end_ts, None, None)
             return
 
