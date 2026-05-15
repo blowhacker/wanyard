@@ -85,17 +85,18 @@ def cmd_serve(config: AppConfig) -> int:
     det_store = DetectionStore(config.output_dir / ".detections.db")
     det_worker = DetectionWorker(det_store, image_index)
     detection_model = _load_yolo_model()
-    worker = CaptureWorker(config, image_index, source_db=source_db,
-                           detection_model=detection_model, detection_store=det_store,
-                           video_workers=video_workers)
 
-    # Video recording
+    # Video recording — must be before CaptureWorker so workers can be passed in
     video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
     video_db  = VideoSegmentDB(video_dir / ".video.db")
     video_workers = {
         s.id: VideoWorker(s, video_dir, video_db)
         for s in all_sources if s.type == "rtsp" and s.enabled
     }
+
+    worker = CaptureWorker(config, image_index, source_db=source_db,
+                           detection_model=detection_model, detection_store=det_store,
+                           video_workers=video_workers)
 
     app = make_app(
         config, image_index, source_db=source_db, capture_worker=worker,
