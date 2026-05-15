@@ -212,23 +212,26 @@ function loadEvent(idx) {
   vEls.eventList.children[idx]?.classList.add("active");
   vEls.eventList.children[idx]?.scrollIntoView({ block: "nearest" });
 
-  // Load video
-  const url = `/video/files/${evt.seg_path}`;
-  if (vEls.player.dataset.src !== url) {
-    vEls.player.src = url;
-    vEls.player.dataset.src = url;
-    vEls.player.load();
-  }
+  const url    = `/video/files/${evt.seg_path}`;
+  const seekTo = Math.max(0, evt.start_off - PRE_BUFFER);
 
   vEls.empty.style.display  = "none";
   vEls.player.style.display = "block";
 
-  const seekTo = Math.max(0, evt.start_off - PRE_BUFFER);
-  vEls.player.addEventListener("loadedmetadata", function onMeta() {
-    vEls.player.removeEventListener("loadedmetadata", onMeta);
+  if (vEls.player.dataset.src !== url) {
+    // New video — wait for metadata before seeking
+    vEls.player.src = url;
+    vEls.player.dataset.src = url;
+    vEls.player.load();
+    vEls.player.addEventListener("loadedmetadata", () => {
+      vEls.player.currentTime = seekTo;
+      vEls.player.play().catch(() => {});
+    }, { once: true });
+  } else {
+    // Same video already loaded — seek directly
     vEls.player.currentTime = seekTo;
     vEls.player.play().catch(() => {});
-  }, { once: true });
+  }
 
   // HUD
   const srcName = vs.sources.find(s => s.id === evt.source_id)?.name || evt.source_id;
