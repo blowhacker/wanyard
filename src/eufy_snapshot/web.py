@@ -149,7 +149,8 @@ def make_app(
             source = None
         date        = request.query_params.get("date") or None
         humans_only = request.query_params.get("humans_only") == "1"
-        after       = request.query_params.get("after") or None
+        after_raw   = request.query_params.get("after")
+        after       = float(after_raw) if after_raw else None
 
         all_items = image_index.items(date, source, after=after)
 

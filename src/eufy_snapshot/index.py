@@ -20,8 +20,8 @@ TIMESTAMP_RE = re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})_(?P<time>\d{2}-\d{2}-\d{
 class ImageItem:
     path: str
     url: str
-    timestamp: str
-    date: str
+    timestamp: float   # Unix seconds (tz-agnostic)
+    date: str          # YYYY-MM-DD in configured timezone (for date selector)
     source_id: str
     source_name: str
     size_bytes: int
@@ -47,22 +47,20 @@ class ImageIndex:
         items = sorted(
             self._scan_images(),
             key=lambda item: item.timestamp,
-            reverse=True,
-        )[: self.max_items]
-        items.reverse()
+        )[-self.max_items:]
         with self._lock:
             self._items = items
             return list(self._items)
 
     def items(self, date: str | None = None, source_id: str | None = None,
-              after: str | None = None) -> list[ImageItem]:
+              after: float | None = None) -> list[ImageItem]:
         with self._lock:
             items = list(self._items)
         if source_id:
             items = [item for item in items if item.source_id == source_id]
         if date:
             items = [item for item in items if item.date == date]
-        if after:
+        if after is not None:
             items = [item for item in items if item.timestamp > after]
         return items
 
@@ -100,17 +98,18 @@ class ImageIndex:
                 if path in seen or not path.is_file() or ".thumbs" in path.parts:
                     continue
                 seen.add(path)
-                timestamp = timestamp_from_path(path, self.tz)
-                if timestamp is None:
+                result = timestamp_from_path(path, self.tz)
+                if result is None:
                     continue
+                unix_ts, date_str = result
                 rel = path.relative_to(self.output_dir).as_posix()
                 source_id = self._source_id_for_relative_path(rel)
                 source = self.sources.get(source_id)
                 yield ImageItem(
                     path=rel,
                     url=f"/images/{quote(rel)}",
-                    timestamp=timestamp.isoformat(),
-                    date=timestamp.date().isoformat(),
+                    timestamp=unix_ts,
+                    date=date_str,
                     source_id=source_id,
                     source_name=source.name if source else source_id,
                     size_bytes=path.stat().st_size,
@@ -126,13 +125,15 @@ class ImageIndex:
         return "unknown"
 
 
-def timestamp_from_path(path: Path, tz: ZoneInfo) -> datetime | None:
+def timestamp_from_path(path: Path, tz: ZoneInfo) -> tuple[float, str] | None:
+    """Returns (unix_timestamp, YYYY-MM-DD) or None."""
     match = TIMESTAMP_RE.search(path.name)
     if not match:
         return None
     value = f"{match.group('date')} {match.group('time').replace('-', ':')}"
     try:
-        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz)
+        dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz)
+        return dt.timestamp(), dt.date().isoformat()
     except ValueError:
         return None
 

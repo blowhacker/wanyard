@@ -608,10 +608,10 @@ function render() {
 
 function countsBetween(allItems, sampledItems) {
   const counts = new Array(sampledItems.length).fill(0);
-  const sampledTs = sampledItems.map(img => new Date(img.timestamp).getTime());
+  const sampledTs = sampledItems.map(img => img.timestamp * 1000);
   let si = 0;
   for (const img of allItems) {
-    const t = new Date(img.timestamp).getTime();
+    const t = img.timestamp * 1000;
     while (si + 1 < sampledTs.length && sampledTs[si + 1] <= t) si++;
     counts[si]++;
   }
@@ -623,7 +623,7 @@ function subsample(images, sampleMinutes) {
   const result = [];
   let lastTs = -Infinity;
   for (const img of images) {
-    const ts = new Date(img.timestamp).getTime();
+    const ts = img.timestamp * 1000;
     if (ts - lastTs >= threshold) { result.push(img); lastTs = ts; }
   }
   return result;
@@ -734,17 +734,17 @@ function renderFilmstrip() {
 
     for (let i = strip.paths.length; i < sampled.length; i++) {
       const img = sampled[i];
-      const ts  = new Date(img.timestamp);
+      const ts  = img.timestamp * 1000;
       if (strip.lastTs !== null) {
-        const ph = Math.floor(strip.lastTs.getTime() / 3600000);
-        const th = Math.floor(ts.getTime() / 3600000);
+        const ph = Math.floor(strip.lastTs / 3600000);
+        const th = Math.floor(ts / 3600000);
         for (let h = ph + 1; h <= th; h++) {
           strip.framesEl.appendChild(buildHourMarker(new Date(h * 3600000)));
         }
       }
       strip.framesEl.appendChild(buildFrame(img, counts ? counts[i] : 1));
       strip.paths.push(img.path);
-      strip.lastTs = ts;
+      strip.lastTs = ts; // ms
     }
 
     for (const path of strip.paths) {
@@ -858,7 +858,7 @@ let _playId  = 0;
 const _statBuf = []; // { wall: ms, imgTs: ms } for rolling fps + footage speed
 
 function _updatePlayStats() {
-  const imgTs = new Date(state.images[state.selected]?.timestamp).getTime();
+  const imgTs = (state.images[state.selected]?.timestamp ?? 0) * 1000;
   if (isNaN(imgTs)) return;
   _statBuf.push({ wall: performance.now(), imgTs });
   if (_statBuf.length > 14) _statBuf.shift();
@@ -941,7 +941,7 @@ function togglePlay() { state.playing ? stopPlay() : startPlay(); }
 // ── Staleness ─────────────────────────────────────────────
 
 function updateStaleness(latestTimestamp) {
-  const ageMs = Date.now() - new Date(latestTimestamp).getTime();
+  const ageMs = Date.now() - latestTimestamp * 1000;
   els.refreshStatus.classList.toggle("stale", ageMs > 5 * 60 * 1000);
 }
 
@@ -1024,7 +1024,7 @@ let _lastHumanPaths = "";
 
 function renderHumansGrid() {
   if (!els.humansPanel) return;
-  const selTs = new Date(state.images[state.selected]?.timestamp).getTime();
+  const selTs = state.images[state.selected]?.timestamp;
   if (!selTs) { els.humansPanel.hidden = true; return; }
 
   // One section per source
@@ -1177,7 +1177,7 @@ async function exportRange() {
 
   const fps        = Math.min(60, Math.round(1000 / SPEEDS[state.playSpeed].ms));
   const sourceName = frames[0]?.source_name || srcId || "export";
-  const fmtTs = ts => ts ? ts.slice(0, 19).replace("T", "_").replaceAll(":", "-") : "";
+  const fmtTs = ts => ts ? new Date(ts * 1000).toISOString().slice(0, 19).replace("T", "_").replaceAll(":", "-") : "";
   const startTs    = fmtTs(frames[0]?.timestamp);
   const endTs      = fmtTs(frames[frames.length - 1]?.timestamp);
 
@@ -1286,8 +1286,8 @@ async function loadHealth() {
 // ── Formatters ────────────────────────────────────────────
 
 function formatTime(timestamp) {
-  const d = new Date(timestamp);
-  if (Number.isNaN(d.getTime())) return timestamp;
+  const d = new Date(timestamp * 1000);
+  if (Number.isNaN(d.getTime())) return String(timestamp);
   return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
@@ -1300,7 +1300,7 @@ function formatInterval(seconds) {
 }
 
 function formatTimestamp(timestamp) {
-  const d = new Date(timestamp);
+  const d = new Date(timestamp * 1000);
   if (Number.isNaN(d.getTime())) return timestamp;
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(d);
 }
