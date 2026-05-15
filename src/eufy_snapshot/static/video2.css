@@ -71,6 +71,14 @@
 }
 .v2-frame.v2-active .v2-frame-ts { color: var(--amber-bright); }
 
+/* Rewind button — wider than square */
+#v2Rewind {
+  width: auto !important;
+  padding: 0 8px;
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+}
+
 /* Detection ticks on frames */
 .v2-det-tick {
   position: absolute; top: 0; width: 2px; height: 4px;

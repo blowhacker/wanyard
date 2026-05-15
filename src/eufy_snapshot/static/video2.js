@@ -14,7 +14,7 @@ const V2_SPEEDS = [
   { label: "4×",  rate: 4.0 },
 ];
 
-const V2_PRE_BUFFER  = 3;   // seconds before event start
+const V2_PRE_BUFFER  = 0;   // start exactly at detection
 const V2_POST_BUFFER = 10;  // seconds after event end before jumping
 
 const V2_BOX_COLORS = {
@@ -634,6 +634,10 @@ function v2DrawBoxes(t) {
 // ── Controls ──────────────────────────────────────
 v2el.playBtn.addEventListener("click", () => {
   v2.playing ? v2el.player.pause() : v2el.player.play().catch(()=>{});
+});
+
+document.getElementById("v2Rewind")?.addEventListener("click", () => {
+  v2el.player.currentTime = Math.max(0, v2el.player.currentTime - 10);
 });
 
 function v2NextEvent() {
