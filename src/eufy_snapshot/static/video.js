@@ -355,7 +355,7 @@ function drawBoxes(t) {
     const x = ox + box.x1*rw, y = oy + box.y1*rh;
     const w = (box.x2-box.x1)*rw, h = (box.y2-box.y1)*rh;
 
-    ctx.globalAlpha = isPrimary ? 1.0 : 0.25;
+    ctx.globalAlpha = isPrimary ? 1.0 : 0.45;
     ctx.strokeStyle = color;
     ctx.lineWidth   = isPrimary ? 2.5 : 1;
     ctx.strokeRect(x, y, w, h);
