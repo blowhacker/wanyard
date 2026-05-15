@@ -14,6 +14,9 @@ const V2_SPEEDS = [
   { label: "4×",  rate: 4.0 },
 ];
 
+const V2_PRE_BUFFER  = 3;   // seconds before event start
+const V2_POST_BUFFER = 10;  // seconds after event end before jumping
+
 const V2_BOX_COLORS = {
   person:"#2aac6a",bird:"#20c0b0",cat:"#20c0b0",dog:"#20c0b0",
   car:"#c08020",truck:"#c08020",bus:"#c08020",motorcycle:"#c08020",bicycle:"#c08020",
@@ -32,10 +35,12 @@ const v2 = {
   cls:         "all",
   density:     parseInt(localStorage.getItem("v2density") || "3", 10),
   speed:       parseInt(localStorage.getItem("v2speed") || "1", 10),
-  live:        false,
-  showBoxes:   localStorage.getItem("v2boxes") !== "0",
-  loop:        true,
-  curSeg:      null,   // current segment object
+  live:          false,
+  showBoxes:     localStorage.getItem("v2boxes") !== "0",
+  loop:          true,
+  curSeg:        null,
+  eventPlaylist: [],   // ordered events when cls filter active
+  curEventIdx:   -1,   // which event is playing (-1 = not in event mode)   // current segment object
   curOff:      0,      // current offset in segment (seconds)
   playing:     false,
   classes:     {},
@@ -265,16 +270,114 @@ function v2FilteredSegments() {
   let segs = v2.segments;
   if (v2.date) segs = segs.filter(s => new Date(s.start_ts*1000).toLocaleDateString("sv") === v2.date);
   if (v2.cls !== "all") segs = segs.filter(s => s.classes?.[v2.cls] > 0);
-  return segs.slice().reverse(); // oldest first for filmstrip
+  return segs.slice().reverse(); // oldest first
+}
+
+function v2FilteredEvents() {
+  let evts = v2.events;
+  if (v2.source !== "all") evts = evts.filter(e => e.source_id === v2.source);
+  if (v2.date) evts = evts.filter(e => new Date(e.abs_ts*1000).toLocaleDateString("sv") === v2.date);
+  if (v2.cls !== "all") evts = evts.filter(e => e.class === v2.cls);
+  return evts.slice().sort((a, b) => a.abs_ts - b.abs_ts); // chronological
+}
+
+function v2MakeScrollable(framesEl) {
+  let _dx=0,_ds=0,_drag=false;
+  framesEl.addEventListener("mousedown",e=>{if(e.button)return;_drag=true;_dx=e.pageX;_ds=framesEl.scrollLeft;framesEl.classList.add("dragging");e.preventDefault();});
+  document.addEventListener("mousemove",e=>{if(_drag)framesEl.scrollLeft=_ds-(e.pageX-_dx);});
+  document.addEventListener("mouseup",()=>{if(!_drag)return;_drag=false;framesEl.classList.remove("dragging");});
+  framesEl.addEventListener("wheel",e=>{if(Math.abs(e.deltaX)>Math.abs(e.deltaY))return;e.preventDefault();framesEl.scrollLeft+=e.deltaY;},{passive:false});
 }
 
 function v2RenderFilmstrip() {
   v2el.filmstrip.innerHTML = "";
   v2FrameMap.clear(); v2ActiveFrameEl = null;
+
+  if (v2.cls !== "all") {
+    v2RenderEventFilmstrip();
+  } else {
+    v2RenderSegmentFilmstrip();
+  }
+  v2HighlightActiveFrame();
+}
+
+function v2RenderEventFilmstrip() {
+  const evts = v2FilteredEvents();
+  v2.eventPlaylist = evts;
+
+  if (!evts.length) return;
+
+  // Group by source
+  const groups = new Map();
+  evts.forEach(e => {
+    if (!groups.has(e.source_id)) groups.set(e.source_id, []);
+    groups.get(e.source_id).push(e);
+  });
+
+  for (const [srcId, srcEvts] of groups) {
+    const src = v2.sources.find(s => s.id === srcId);
+    const stripEl = document.createElement("div"); stripEl.className = "strip";
+    const labelEl = document.createElement("div"); labelEl.className = "strip-label";
+    labelEl.textContent = src?.name || srcId;
+    const framesEl = document.createElement("div"); framesEl.className = "frames";
+    v2MakeScrollable(framesEl);
+
+    let lastHour = null;
+    srcEvts.forEach((evt, evtIdx) => {
+      const evtHour = Math.floor(evt.abs_ts / 3600);
+      if (lastHour !== null && evtHour > lastHour) {
+        const m = document.createElement("div"); m.className = "hour-mark";
+        const ml = document.createElement("span"); ml.className = "hour-mark-label";
+        ml.textContent = new Date(evtHour * 3600000).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
+        m.appendChild(ml); framesEl.appendChild(m);
+      }
+      lastHour = evtHour;
+
+      // Find the segment for this event
+      const seg = v2.segments.find(s => s.id === evt.segment_id);
+      if (!seg) return;
+      const t = Math.max(0, evt.start_off - 1);
+      const frameEl = v2BuildEventFrame(seg, evt, t);
+      framesEl.appendChild(frameEl);
+      v2FrameMap.set(`evt_${evt.id}`, frameEl);
+      v2Observer.observe(frameEl);
+    });
+
+    stripEl.appendChild(labelEl); stripEl.appendChild(framesEl);
+    v2el.filmstrip.appendChild(stripEl);
+  }
+}
+
+function v2BuildEventFrame(seg, evt, t) {
+  const frame = document.createElement("div");
+  frame.className = "v2-frame";
+
+  const img = document.createElement("img");
+  img.alt = ""; img.loading = "lazy";
+  img.dataset.src = `/api/thumb?path=${encodeURIComponent(seg.path)}&t=${t.toFixed(1)}`;
+  img.onerror = () => frame.classList.add("v2-loading");
+
+  const ts = document.createElement("div");
+  ts.className = "v2-frame-ts";
+  const dur = Math.round(evt.end_off - evt.start_off);
+  ts.textContent = new Date(evt.abs_ts * 1000).toLocaleTimeString(undefined,
+    {hour:"2-digit",minute:"2-digit",second:"2-digit"}) + (dur > 0 ? ` ${dur}s` : "");
+
+  frame.appendChild(img); frame.appendChild(ts);
+
+  const playlistIdx = v2.eventPlaylist.indexOf(evt);
+  frame.addEventListener("click", () => {
+    v2.curEventIdx = playlistIdx;
+    v2LoadSegment(seg, Math.max(0, evt.start_off - V2_PRE_BUFFER));
+  });
+  return frame;
+}
+
+function v2RenderSegmentFilmstrip() {
+  v2.eventPlaylist = []; v2.curEventIdx = -1;
   const segs = v2FilteredSegments();
   if (!segs.length) return;
 
-  // Group by source
   const groups = new Map();
   segs.forEach(s => {
     if (!groups.has(s.source_id)) groups.set(s.source_id, []);
@@ -287,35 +390,27 @@ function v2RenderFilmstrip() {
     const src = v2.sources.find(s => s.id === srcId);
     const stripEl = document.createElement("div"); stripEl.className = "strip";
     const labelEl = document.createElement("div"); labelEl.className = "strip-label";
-    labelEl.textContent = src?.name || srcId; labelEl.title = src?.name || srcId;
+    labelEl.textContent = src?.name || srcId;
     const framesEl = document.createElement("div"); framesEl.className = "frames";
-
-    // Drag to scroll
-    let _dx=0,_ds=0,_drag=false;
-    framesEl.addEventListener("mousedown",e=>{if(e.button)return;_drag=true;_dx=e.pageX;_ds=framesEl.scrollLeft;framesEl.classList.add("dragging");e.preventDefault();});
-    document.addEventListener("mousemove",e=>{if(_drag)framesEl.scrollLeft=_ds-(e.pageX-_dx);});
-    document.addEventListener("mouseup",()=>{if(!_drag)return;_drag=false;framesEl.classList.remove("dragging");});
-    framesEl.addEventListener("wheel",e=>{if(Math.abs(e.deltaX)>Math.abs(e.deltaY))return;e.preventDefault();framesEl.scrollLeft+=e.deltaY;},{passive:false});
+    v2MakeScrollable(framesEl);
 
     let lastHour = null;
     srcSegs.forEach(seg => {
       const dur = seg.end_ts ? (seg.end_ts - seg.start_ts) : 0;
-      // Hour markers
       const segHour = Math.floor(seg.start_ts / 3600);
       if (lastHour !== null && segHour > lastHour) {
         for (let h = lastHour + 1; h <= segHour; h++) {
           const m = document.createElement("div"); m.className = "hour-mark";
           const ml = document.createElement("span"); ml.className = "hour-mark-label";
-          ml.textContent = new Date(h * 3600000).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
+          ml.textContent = new Date(h*3600000).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
           m.appendChild(ml); framesEl.appendChild(m);
         }
       }
       lastHour = Math.floor((seg.start_ts + dur) / 3600);
 
-      // Thumbnails for this segment
       const steps = dur > 0 ? Math.max(1, Math.ceil(dur / interval)) : 1;
       for (let i = 0; i < steps; i++) {
-        const t = Math.min(i * interval, Math.max(0, dur - 1)); // clamp to valid range
+        const t = Math.min(i * interval, Math.max(0, dur - 1));
         if (i > 0 && t >= dur && dur > 0) break;
         const absTs = seg.start_ts + t;
         const frameEl = v2BuildFrame(seg, t, absTs);
@@ -328,8 +423,6 @@ function v2RenderFilmstrip() {
     stripEl.appendChild(labelEl); stripEl.appendChild(framesEl);
     v2el.filmstrip.appendChild(stripEl);
   }
-
-  v2HighlightActiveFrame();
 }
 
 function v2BuildFrame(seg, t, absTs) {
@@ -407,10 +500,16 @@ function v2HighlightActiveFrame(forceScroll = false) {
   v2ActiveFrameEl = null;
   if (!v2.curSeg) return;
 
-  const interval = V2_DENSITY[v2.density - 1].intervalSec;
-  const nearestT = Math.round(v2.curOff / interval) * interval;
-  const key = `${v2.curSeg.id}_${nearestT}`;
-  const el = v2FrameMap.get(key);
+  let key;
+  if (v2.cls !== "all" && v2.curEventIdx >= 0) {
+    const evt = v2.eventPlaylist[v2.curEventIdx];
+    key = evt ? `evt_${evt.id}` : null;
+  } else {
+    const interval = V2_DENSITY[v2.density - 1].intervalSec;
+    const nearestT = Math.round(v2.curOff / interval) * interval;
+    key = `${v2.curSeg.id}_${nearestT}`;
+  }
+  const el = key ? v2FrameMap.get(key) : null;
   if (el) {
     el.classList.add("v2-active");
     v2ActiveFrameEl = el;
@@ -448,6 +547,15 @@ v2el.player.addEventListener("timeupdate", () => {
     v2el.timestamp.textContent = `${src?.name || v2.curSeg.source_id} · ${new Date(abs*1000).toLocaleString(undefined,{dateStyle:"medium",timeStyle:"medium"})}`;
   }
 
+  // Event mode: auto-advance to next event when current window ends
+  if (v2.cls !== "all" && v2.curEventIdx >= 0 && v2.curSeg) {
+    const evt = v2.eventPlaylist[v2.curEventIdx];
+    if (evt && evt.segment_id === v2.curSeg.id && t > evt.end_off + V2_POST_BUFFER) {
+      v2NextEvent();
+      return;
+    }
+  }
+
   // Update filmstrip highlight every ~5s
   if (Math.abs(t - (v2FrameMap._lastHighlightT || -999)) > V2_DENSITY[v2.density-1].intervalSec / 2) {
     v2FrameMap._lastHighlightT = t;
@@ -460,7 +568,9 @@ v2el.player.addEventListener("timeupdate", () => {
 v2el.player.addEventListener("play",  () => { v2.playing = true;  v2el.playBtn.textContent = "■"; v2el.playBtn.classList.add("playing"); });
 v2el.player.addEventListener("pause", () => { v2.playing = false; v2el.playBtn.textContent = "▶"; v2el.playBtn.classList.remove("playing"); });
 v2el.player.addEventListener("ended", () => {
-  // Auto-advance to next segment
+  if (v2.cls !== "all" && v2.eventPlaylist.length) {
+    v2NextEvent(); return;
+  }
   if (v2.curSeg) {
     const segs = v2FilteredSegments();
     const idx  = segs.findIndex(s => s.id === v2.curSeg.id);
@@ -526,8 +636,34 @@ v2el.playBtn.addEventListener("click", () => {
   v2.playing ? v2el.player.pause() : v2el.player.play().catch(()=>{});
 });
 
+function v2NextEvent() {
+  const next = v2.curEventIdx + 1;
+  if (next < v2.eventPlaylist.length) {
+    v2JumpToEventIdx(next);
+  } else if (v2.loop && v2.eventPlaylist.length) {
+    v2JumpToEventIdx(0);
+  } else {
+    v2el.player.pause();
+  }
+}
+
+function v2PrevEvent() {
+  const prev = v2.curEventIdx - 1;
+  if (prev >= 0) v2JumpToEventIdx(prev);
+}
+
+function v2JumpToEventIdx(idx) {
+  const evt = v2.eventPlaylist[idx];
+  if (!evt) return;
+  v2.curEventIdx = idx;
+  const seg = v2.segments.find(s => s.id === evt.segment_id);
+  if (!seg) return;
+  v2LoadSegment(seg, Math.max(0, evt.start_off - V2_PRE_BUFFER));
+  if (v2.playing) v2el.player.play().catch(()=>{});
+}
+
 v2el.prev.addEventListener("click", () => {
-  // Seek to previous event or start of previous segment
+  if (v2.cls !== "all" && v2.eventPlaylist.length) { v2PrevEvent(); return; }
   const evts = v2.events.filter(e => !v2.curSeg || e.source_id === v2.curSeg.source_id);
   const curAbs = v2.curSeg ? v2.curSeg.start_ts + v2el.player.currentTime : 0;
   const prev = evts.slice().reverse().find(e => e.abs_ts < curAbs - 2);
@@ -535,6 +671,7 @@ v2el.prev.addEventListener("click", () => {
 });
 
 v2el.next.addEventListener("click", () => {
+  if (v2.cls !== "all" && v2.eventPlaylist.length) { v2NextEvent(); return; }
   const evts = v2.events.filter(e => !v2.curSeg || e.source_id === v2.curSeg.source_id);
   const curAbs = v2.curSeg ? v2.curSeg.start_ts + v2el.player.currentTime : 0;
   const next = evts.find(e => e.abs_ts > curAbs + 2);
