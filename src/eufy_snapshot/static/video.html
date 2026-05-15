@@ -13,46 +13,61 @@
   <body class="video-body">
     <div class="video-layout">
 
-      <!-- ── Top bar ───────────────────────────────── -->
-      <div class="video-topbar">
-        <a href="/" class="video-back-btn" title="Back to snapshots">← SNAPSHOTS</a>
-        <span class="video-brand">VIDEO</span>
-        <div id="videoSourceCtrl" class="video-source-ctrl"></div>
-      </div>
-
-      <!-- ── Player ────────────────────────────────── -->
-      <div class="video-stage">
-        <div class="corner tl"></div>
-        <div class="corner tr"></div>
-        <div class="corner bl"></div>
-        <div class="corner br"></div>
-        <div class="video-hud-top">
-          <span id="videoHudSource" class="hud-source"></span>
-          <span id="videoHudTime" class="hud-ts"></span>
+      <!-- ── Sidebar ────────────────────────────────── -->
+      <aside class="video-sidebar">
+        <div class="video-sidebar-head">
+          <a href="/" class="video-back">← SNAPSHOTS</a>
+          <span class="video-brand">VIDEO</span>
         </div>
-        <video id="videoPlayer" playsinline controls></video>
-        <canvas id="videoBoxCanvas"></canvas>
-        <div id="videoEmpty" class="empty">SELECT A SEGMENT</div>
-      </div>
 
-      <!-- ── Detection scrubber ────────────────────── -->
-      <div class="video-scrubber-area">
-        <div id="videoScrubber" class="video-scrubber">
-          <div id="videoScrubberBar" class="video-scrubber-bar"></div>
-          <div id="videoScrubberHead" class="video-scrubber-head"></div>
-          <canvas id="videoThumbCanvas" class="video-thumb-canvas"></canvas>
+        <!-- Source + Date -->
+        <div class="video-filters">
+          <div id="videoSourceCtrl" class="video-source-ctrl"></div>
+          <div id="videoDateCtrl"   class="date-chips"></div>
         </div>
-        <div id="videoScrubberLabels" class="video-scrubber-labels"></div>
-      </div>
 
-      <!-- ── Segment list ──────────────────────────── -->
-      <div class="video-sidebar">
-        <div class="video-date-ctrl">
-          <div class="field-label">DATE</div>
-          <div id="videoDateCtrl" class="date-ctrl-wrap"></div>
+        <!-- Class chips -->
+        <div id="videoClassCtrl" class="video-class-chips"></div>
+
+        <!-- Event list -->
+        <div id="videoEventList" class="video-event-list">
+          <div class="video-empty-state">No events yet</div>
         </div>
-        <div id="videoSegmentList" class="video-segment-list"></div>
-      </div>
+      </aside>
+
+      <!-- ── Main ───────────────────────────────────── -->
+      <main class="video-main">
+        <div class="video-stage">
+          <div class="corner tl"></div><div class="corner tr"></div>
+          <div class="corner bl"></div><div class="corner br"></div>
+          <div class="video-hud-top">
+            <span id="videoHudSource" class="hud-source"></span>
+            <span id="videoHudTime"   class="hud-ts"></span>
+          </div>
+          <video id="videoPlayer" playsinline></video>
+          <canvas id="videoBoxCanvas"></canvas>
+          <div id="videoEmpty" class="empty">SELECT AN EVENT</div>
+        </div>
+
+        <!-- Scrubber -->
+        <div class="video-scrubber-wrap">
+          <div id="videoScrubber" class="video-scrubber">
+            <div id="videoProgress" class="video-progress"></div>
+            <div id="videoHead"     class="video-head"></div>
+          </div>
+          <div id="videoScrubLabels" class="video-scrub-labels"></div>
+        </div>
+
+        <!-- Player controls -->
+        <div class="video-controls">
+          <button id="videoPrev"  class="vctr-btn" title="Previous event">&#8249;</button>
+          <button id="videoPlay"  class="vctr-btn vctr-play" title="Play/Pause">&#9654;</button>
+          <button id="videoNext"  class="vctr-btn" title="Next event">&#8250;</button>
+          <span   id="videoTime"  class="vctr-time">--:--</span>
+          <button id="videoFull"  class="vctr-btn vctr-right" title="Fullscreen">&#9974;</button>
+          <span   id="videoLive"  class="vctr-live-badge" hidden>● LIVE</span>
+        </div>
+      </main>
 
     </div>
     <script src="/video.js"></script>

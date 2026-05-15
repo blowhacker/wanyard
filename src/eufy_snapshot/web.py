@@ -299,6 +299,25 @@ def make_app(
 
     # ── Video API ─────────────────────────────────────────────
 
+    async def api_video_events(request: Request) -> JSONResponse:
+        if not video_db:
+            return JSONResponse({"events": []})
+        source_id = request.query_params.get("source") or None
+        cls       = request.query_params.get("class")  or None
+        date      = request.query_params.get("date")   or None
+        limit     = int(request.query_params.get("limit", 100))
+        events = await asyncio.to_thread(
+            video_db.list_events, source_id, cls, date, limit
+        )
+        return JSONResponse({"events": events})
+
+    async def api_video_class_counts(request: Request) -> JSONResponse:
+        if not video_db:
+            return JSONResponse({"classes": {}})
+        source_id = request.query_params.get("source") or None
+        counts = await asyncio.to_thread(video_db.class_counts, source_id)
+        return JSONResponse({"classes": counts})
+
     async def api_video_segments(request: Request) -> JSONResponse:
         if not video_db:
             return JSONResponse({"segments": []})
@@ -333,6 +352,8 @@ def make_app(
 
     routes = [
         Route("/api/health",                api_health),
+        Route("/api/video/events",          api_video_events),
+        Route("/api/video/classes",         api_video_class_counts),
         Route("/api/video/segments",        api_video_segments),
         Route("/api/video/detections",      api_video_detections),
         Route("/video/files/{path:path}",   serve_video_file),

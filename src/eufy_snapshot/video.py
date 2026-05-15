@@ -14,12 +14,16 @@ from pathlib import Path
 
 LOG = logging.getLogger(__name__)
 
-_POST_EVENT_SECONDS  = 30    # keep recording this long after last detection
-_MAX_SEGMENT_SECONDS = 600   # force-close after 10 min regardless
-_SPRITE_FPS         = "1/5"
-_SPRITE_W           = 160
-_SPRITE_COLS        = 10
-_SPRITE_ROWS        = 6    # 10×6 = 60 tiles
+_POST_EVENT_SECONDS  = 30
+_MAX_SEGMENT_SECONDS = 600
+_SPRITE_FPS          = "1/5"
+_SPRITE_W            = 160
+_SPRITE_COLS         = 10
+_SPRITE_ROWS         = 6
+_EVENT_GAP_SECONDS   = 2.0    # detections within this gap = same event
+_CLASS_PRIORITY      = ["person", "bird", "cat", "dog",
+                         "bus", "truck", "motorcycle", "bicycle", "car",
+                         "backpack", "suitcase"]
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS segments (
@@ -43,7 +47,44 @@ CREATE TABLE IF NOT EXISTS video_detections (
     classes_json TEXT
 );
 CREATE INDEX IF NOT EXISTS vdet_seg ON video_detections(segment_id, ts_offset);
+
+CREATE TABLE IF NOT EXISTS video_events (
+    id          INTEGER PRIMARY KEY,
+    segment_id  INTEGER REFERENCES segments(id) ON DELETE CASCADE,
+    source_id   TEXT    NOT NULL,
+    abs_ts      REAL    NOT NULL,
+    class       TEXT    NOT NULL,
+    start_off   REAL    NOT NULL,
+    end_off     REAL    NOT NULL,
+    confidence  REAL    NOT NULL DEFAULT 0,
+    boxes_json  TEXT
+);
+CREATE INDEX IF NOT EXISTS vevt_source_ts ON video_events(source_id, abs_ts);
+CREATE INDEX IF NOT EXISTS vevt_class     ON video_events(class, abs_ts);
 """
+
+_MOBILE_CLASSES     = {"person", "bicycle", "motorcycle", "truck", "bus",
+                        "bird", "cat", "dog"}
+_STATIONARY_CLASSES = {"car", "backpack", "suitcase"}
+
+
+def _dominant_class(classes: list[str]) -> str:
+    for c in _CLASS_PRIORITY:
+        if c in classes:
+            return c
+    return classes[0] if classes else "unknown"
+
+
+def _is_new_activity(boxes: list | None, prev_counts: dict) -> tuple[bool, dict]:
+    counts: dict[str, int] = {}
+    for b in (boxes or []):
+        counts[b["cls"]] = counts.get(b["cls"], 0) + 1
+    if any(cls in _MOBILE_CLASSES for cls in counts):
+        return True, counts
+    for cls in _STATIONARY_CLASSES:
+        if counts.get(cls, 0) != prev_counts.get(cls, 0):
+            return True, counts
+    return False, counts
 
 
 class VideoSegmentDB:
@@ -93,17 +134,12 @@ class VideoSegmentDB:
                  json.dumps(classes) if classes else None),
             )
 
-    def list_segments(self, source_id: str | None = None) -> list[dict]:
-        where, params = [], []
-        if source_id:
-            where.append("source_id=?"); params.append(source_id)
-        sql = "SELECT * FROM segments"
-        if where:
-            sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY start_ts DESC"
+    def get_segment(self, segment_id: int) -> dict | None:
         with self._connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+            row = conn.execute(
+                "SELECT * FROM segments WHERE id=?", (segment_id,)
+            ).fetchone()
+        return dict(row) if row else None
 
     def detections_for_segment(self, segment_id: int) -> list[dict]:
         with self._connect() as conn:
@@ -120,34 +156,118 @@ class VideoSegmentDB:
             "classes": json.loads(r["classes_json"]) if r["classes_json"] else [],
         } for r in rows]
 
+    def insert_events(self, events: list[dict]) -> None:
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO video_events"
+                "(segment_id, source_id, abs_ts, class, start_off, end_off, confidence, boxes_json)"
+                " VALUES(:segment_id,:source_id,:abs_ts,:class,:start_off,:end_off,:confidence,:boxes_json)",
+                events,
+            )
 
-_MOBILE_CLASSES     = {"person", "bicycle", "motorcycle", "truck", "bus",
-                        "bird", "cat", "dog"}
-_STATIONARY_CLASSES = {"car", "backpack", "suitcase"}
+    def list_events(self, source_id: str | None = None, cls: str | None = None,
+                    date: str | None = None, limit: int = 100) -> list[dict]:
+        where, params = ["1"], []
+        if source_id and source_id != "all":
+            where.append("e.source_id=?"); params.append(source_id)
+        if cls and cls != "all":
+            where.append("e.class=?"); params.append(cls)
+        if date:
+            # date is YYYY-MM-DD local; filter by Unix day boundary approximately
+            import calendar
+            from datetime import date as ddate
+            d = ddate.fromisoformat(date)
+            # rough UTC bounds (±1 day for timezone safety, client filters)
+            lo = calendar.timegm(d.timetuple()) - 86400
+            hi = lo + 3 * 86400
+            where.append("e.abs_ts BETWEEN ? AND ?")
+            params += [lo, hi]
+        sql = (
+            "SELECT e.*, s.path as seg_path, s.spritesheet, s.start_ts as seg_start_ts"
+            " FROM video_events e JOIN segments s ON s.id=e.segment_id"
+            f" WHERE {' AND '.join(where)}"
+            " ORDER BY e.abs_ts DESC LIMIT ?"
+        )
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def class_counts(self, source_id: str | None = None) -> dict[str, int]:
+        with self._connect() as conn:
+            if source_id and source_id != "all":
+                rows = conn.execute(
+                    "SELECT class, COUNT(*) as n FROM video_events WHERE source_id=? GROUP BY class",
+                    (source_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT class, COUNT(*) as n FROM video_events GROUP BY class"
+                ).fetchall()
+        return {r["class"]: r["n"] for r in rows}
+
+    def list_segments(self, source_id: str | None = None) -> list[dict]:
+        where, params = [], []
+        if source_id and source_id != "all":
+            where.append("source_id=?"); params.append(source_id)
+        sql = "SELECT * FROM segments"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY start_ts DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
 
-def _is_new_activity(boxes: list | None, prev_counts: dict) -> tuple[bool, dict]:
-    """Returns (should_trigger, new_counts)."""
-    counts: dict[str, int] = {}
-    for b in (boxes or []):
-        counts[b["cls"]] = counts.get(b["cls"], 0) + 1
+def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) -> int:
+    """Group detections into events and store them."""
+    if not detections:
+        return 0
 
-    # Mobile classes always trigger
-    if any(cls in _MOBILE_CLASSES for cls in counts):
-        return True, counts
+    seg_start = segment["start_ts"]
+    events: list[dict] = []
+    current: dict | None = None
 
-    # Stationary: only trigger if count changed
-    for cls in _STATIONARY_CLASSES:
-        if counts.get(cls, 0) != prev_counts.get(cls, 0):
-            return True, counts
+    for det in detections:
+        classes = det.get("classes") or []
+        if not classes:
+            continue
+        dom = _dominant_class(classes)
+        off = det["ts_offset"]
 
-    return False, counts
+        if current is None:
+            current = {"cls": dom, "start": off, "end": off,
+                       "conf": det["confidence"], "boxes": det.get("boxes")}
+        elif dom == current["cls"] and (off - current["end"]) <= _EVENT_GAP_SECONDS:
+            current["end"] = off
+            if det["confidence"] > current["conf"]:
+                current["conf"] = det["confidence"]
+                current["boxes"] = det.get("boxes")
+        else:
+            events.append(current)
+            current = {"cls": dom, "start": off, "end": off,
+                       "conf": det["confidence"], "boxes": det.get("boxes")}
+
+    if current:
+        events.append(current)
+
+    rows = [{
+        "segment_id": segment["id"],
+        "source_id":  segment["source_id"],
+        "abs_ts":     seg_start + e["start"],
+        "class":      e["cls"],
+        "start_off":  e["start"],
+        "end_off":    e["end"],
+        "confidence": e["conf"],
+        "boxes_json": json.dumps(e["boxes"]) if e["boxes"] else None,
+    } for e in events]
+
+    if rows:
+        db.insert_events(rows)
+    return len(rows)
 
 
 class VideoWorker:
-    """Event-triggered recorder: records when new/mobile objects detected,
-    stops _POST_EVENT_SECONDS after last event."""
-
     def __init__(self, source, video_dir: Path, db: VideoSegmentDB) -> None:
         self.source     = source
         self.video_dir  = video_dir
@@ -167,7 +287,6 @@ class VideoWorker:
         self._prev_counts = new_counts
         with self._lock:
             if self._recording and (ts - self._seg_start) >= _MAX_SEGMENT_SECONDS:
-                # Force-close and restart regardless of activity
                 self._stop_segment(ts)
                 if triggered:
                     self._last_det = ts
@@ -180,7 +299,6 @@ class VideoWorker:
                 if ts - self._last_det >= _POST_EVENT_SECONDS:
                     self._stop_segment(ts)
 
-            # Tag current segment
             if self._recording and self._seg_id is not None:
                 offset = max(0.0, ts - self._seg_start)
                 try:
@@ -200,36 +318,27 @@ class VideoWorker:
         url = resolve_rtsp_url(self.source)
         if not url:
             return
-
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             return
-
         dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         date_dir = self.video_dir / self.source.id / dt.strftime("%Y/%m/%d")
         date_dir.mkdir(parents=True, exist_ok=True)
         seg_path = date_dir / dt.strftime("%Y-%m-%d_%H-%M-%S.mp4")
         rel_path = seg_path.relative_to(self.video_dir).as_posix()
-
         try:
             proc = subprocess.Popen(
-                [
-                    ffmpeg, "-y", "-hide_banner", "-loglevel", "warning",
-                    "-use_wallclock_as_timestamps", "1",
-                    "-rtsp_transport", self.source.rtsp_transport,
-                    "-i", url,
-                    "-c:v", "copy",
-                    "-c:a", "aac", "-b:a", "64k",
-                    "-movflags", "+faststart",
-                    str(seg_path),
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                [ffmpeg, "-y", "-hide_banner", "-loglevel", "warning",
+                 "-use_wallclock_as_timestamps", "1",
+                 "-rtsp_transport", self.source.rtsp_transport,
+                 "-i", url,
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
+                 "-movflags", "+faststart", str(seg_path)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             )
         except Exception:
             LOG.exception("failed to start video segment for %s", self.source.id)
             return
-
         self._proc      = proc
         self._seg_path  = seg_path
         self._seg_start = ts
@@ -242,32 +351,17 @@ class VideoWorker:
         LOG.info("video event recording started: %s", rel_path)
 
     def _stop_segment(self, ts: float) -> None:
-        proc      = self._proc
-        seg_path  = self._seg_path
-        seg_id    = self._seg_id
-
-        self._recording = False
-        self._proc      = None
-        self._seg_id    = None
-        self._seg_path  = None
-
+        proc = self._proc; seg_path = self._seg_path; seg_id = self._seg_id
+        self._recording = False; self._proc = None
+        self._seg_id = None; self._seg_path = None
         if proc and proc.poll() is None:
-            try:
-                proc.send_signal(signal.SIGTERM)
-                proc.wait(timeout=10)
-            except Exception:
-                proc.kill()
-
+            try: proc.send_signal(signal.SIGTERM); proc.wait(timeout=10)
+            except Exception: proc.kill()
         LOG.info("video event recording stopped (%.0fs)", ts - self._seg_start)
-
-        # Post-process in background
         if seg_id and seg_path and seg_path.exists() and seg_path.stat().st_size > 0:
             self.db.close_segment(seg_id, ts, None, None)
-            t = threading.Thread(
-                target=self._post_process, args=(seg_path, seg_id),
-                daemon=True,
-            )
-            t.start()
+            threading.Thread(target=self._post_process,
+                             args=(seg_path, seg_id), daemon=True).start()
         elif seg_id:
             self.db.close_segment(seg_id, ts, None, None)
 
@@ -280,28 +374,30 @@ class VideoWorker:
             sprite_dir.mkdir(parents=True, exist_ok=True)
             sprite_path = sprite_dir / "sprite.jpg"
             vtt_path    = sprite_dir / "thumbs.vtt"
-
             r = subprocess.run(
-                [
-                    ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-                    "-i", str(seg_path),
-                    "-vf", f"fps={_SPRITE_FPS},scale={_SPRITE_W}:-1,"
-                           f"tile={_SPRITE_COLS}x{_SPRITE_ROWS}",
-                    "-q:v", "5", "-frames:v", "1", str(sprite_path),
-                ],
+                [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                 "-i", str(seg_path),
+                 "-vf", f"fps={_SPRITE_FPS},scale={_SPRITE_W}:-1,"
+                        f"tile={_SPRITE_COLS}x{_SPRITE_ROWS}",
+                 "-q:v", "5", "-frames:v", "1", str(sprite_path)],
                 capture_output=True, timeout=60, check=False,
             )
-
+            sprite_rel = vtt_rel = None
             if r.returncode == 0 and sprite_path.exists():
                 h = int(_SPRITE_W * 9 / 16)
                 _write_webvtt(vtt_path, sprite_path.name, _SPRITE_W, h,
                               _SPRITE_COLS, _SPRITE_FPS)
                 sprite_rel = str(sprite_path.relative_to(self.video_dir))
                 vtt_rel    = str(vtt_path.relative_to(self.video_dir))
-                self.db.close_segment(seg_id, time.time(), sprite_rel, vtt_rel)
-                LOG.info("video post-processed: %s", seg_path.name)
-            else:
-                self.db.close_segment(seg_id, time.time(), None, None)
+
+            seg = self.db.get_segment(seg_id)
+            self.db.close_segment(seg_id, time.time(), sprite_rel, vtt_rel)
+
+            # Extract events from detections
+            if seg:
+                dets = self.db.detections_for_segment(seg_id)
+                n = extract_events(seg, dets, self.db)
+                LOG.info("video post-processed: %s (%d events)", seg_path.name, n)
         except Exception:
             LOG.exception("video post-process failed for %s", seg_path.name)
             self.db.close_segment(seg_id, time.time(), None, None)
@@ -315,11 +411,8 @@ def _write_webvtt(path: Path, sprite_name: str, w: int, h: int,
     for tile in range(cols * 6):
         col, row = tile % cols, tile // cols
         t = tile * interval
-        lines += [
-            f"{_vtt_time(t)} --> {_vtt_time(t + interval)}",
-            f"{sprite_name}#xywh={col*w},{row*h},{w},{h}",
-            "",
-        ]
+        lines += [f"{_vtt_time(t)} --> {_vtt_time(t+interval)}",
+                  f"{sprite_name}#xywh={col*w},{row*h},{w},{h}", ""]
     path.write_text("\n".join(lines))
 
 

@@ -1,380 +1,348 @@
 // ── State ─────────────────────────────────────────
-
-const vState = {
-  sources:     [],
-  source:      "all",
-  segments:    [],
-  segment:     null,      // currently loaded segment object
-  detections:  [],        // for current segment
-  date:        "",
+const vs = {
+  sources:   [],
+  source:    "all",
+  date:      "",
+  cls:       "all",
+  events:    [],
+  eventIdx:  -1,   // index into vs.events of current event
+  classes:   {},
 };
 
 const BOX_COLORS = {
   person: "#2aac6a", bird: "#20c0b0", cat: "#20c0b0", dog: "#20c0b0",
-  car: "#c08020", truck: "#c08020", bus: "#c08020", motorcycle: "#c08020", bicycle: "#c08020",
+  car: "#c08020", truck: "#c08020", bus: "#c08020",
+  motorcycle: "#c08020", bicycle: "#c08020",
 };
-const VEHICLE_CLS = new Set(["car","truck","bus","motorcycle","bicycle"]);
-const ANIMAL_CLS  = new Set(["bird","cat","dog"]);
 
 // ── Elements ──────────────────────────────────────
-
+const $ = id => document.getElementById(id);
 const vEls = {
-  player:       document.getElementById("videoPlayer"),
-  boxCanvas:    document.getElementById("videoBoxCanvas"),
-  empty:        document.getElementById("videoEmpty"),
-  sourceCtrl:   document.getElementById("videoSourceCtrl"),
-  segList:      document.getElementById("videoSegmentList"),
-  scrubber:     document.getElementById("videoScrubber"),
-  scrubBar:     document.getElementById("videoScrubberBar"),
-  scrubHead:    document.getElementById("videoScrubberHead"),
-  thumbCanvas:  document.getElementById("videoThumbCanvas"),
-  scrubLabels:  document.getElementById("videoScrubberLabels"),
-  hudSource:    document.getElementById("videoHudSource"),
-  hudTime:      document.getElementById("videoHudTime"),
-  dateCtrl:     document.getElementById("videoDateCtrl"),
+  player:    $("videoPlayer"),
+  boxCanvas: $("videoBoxCanvas"),
+  empty:     $("videoEmpty"),
+  sourceCtrl:$("videoSourceCtrl"),
+  dateCtrl:  $("videoDateCtrl"),
+  classCtrl: $("videoClassCtrl"),
+  eventList: $("videoEventList"),
+  scrubber:  $("videoScrubber"),
+  progress:  $("videoProgress"),
+  head:      $("videoHead"),
+  scrubLabels:$("videoScrubLabels"),
+  hudSource: $("videoHudSource"),
+  hudTime:   $("videoHudTime"),
+  playBtn:   $("videoPlay"),
+  prevBtn:   $("videoPrev"),
+  nextBtn:   $("videoNext"),
+  timeDisp:  $("videoTime"),
+  fullBtn:   $("videoFull"),
+  liveBadge: $("videoLive"),
 };
 
-// ── Load data ─────────────────────────────────────
-
+// ── Init ──────────────────────────────────────────
 async function init() {
-  const sr = await fetch("/api/sources", { cache: "no-store" });
-  if (sr.ok) {
-    const d = await sr.json();
-    vState.sources = d.sources || [];
+  const r = await fetch("/api/sources", { cache: "no-store" });
+  if (r.ok) vs.sources = (await r.json()).sources || [];
+  renderSourceCtrl();
+  await refresh();
+  setInterval(refresh, 10000);
+}
+
+async function refresh() {
+  await Promise.all([loadClasses(), loadEvents()]);
+}
+
+// ── Data loading ──────────────────────────────────
+async function loadClasses() {
+  const p = new URLSearchParams();
+  if (vs.source !== "all") p.set("source", vs.source);
+  const r = await fetch(`/api/video/classes?${p}`, { cache: "no-store" });
+  if (r.ok) vs.classes = (await r.json()).classes || {};
+  renderClassCtrl();
+}
+
+async function loadEvents() {
+  const p = new URLSearchParams({ limit: "200" });
+  if (vs.source !== "all") p.set("source", vs.source);
+  if (vs.cls    !== "all") p.set("class",  vs.cls);
+  if (vs.date)              p.set("date",   vs.date);
+  const r = await fetch(`/api/video/events?${p}`, { cache: "no-store" });
+  if (!r.ok) return;
+  const fresh = (await r.json()).events || [];
+
+  const prevLen = vs.events.length;
+  vs.events = fresh;
+
+  renderDateCtrl();
+  renderEventList();
+
+  // Auto-load most recent on first load
+  if (prevLen === 0 && vs.events.length > 0 && vs.eventIdx < 0) {
+    loadEvent(0);
   }
-  renderSourceSelector();
-  await loadSegments();
 }
 
-async function loadSegments() {
-  const params = new URLSearchParams();
-  if (vState.source && vState.source !== "all") params.set("source", vState.source);
-  const r = await fetch(`/api/video/segments?${params}`, { cache: "no-store" });
-  if (!r.ok) return;
-  const d = await r.json();
-  vState.segments = d.segments || [];
-  renderDateSelector();
-  renderSegmentList();
-}
-
-async function loadDetections(segmentId) {
-  const r = await fetch(`/api/video/detections?segment_id=${segmentId}`, { cache: "no-store" });
-  if (!r.ok) return;
-  const d = await r.json();
-  vState.detections = d.detections || [];
-  renderScrubberTicks();
-}
-
-// ── Render source selector ─────────────────────────
-
-function renderSourceSelector() {
+// ── Source selector ───────────────────────────────
+function renderSourceCtrl() {
   vEls.sourceCtrl.innerHTML = "";
-  const sources = vState.sources.filter(s => s.type === "rtsp" || s.type === "rtsp");
-  const all = makeSourceBtn("all", "ALL");
-  vEls.sourceCtrl.appendChild(all);
-  for (const s of sources) {
-    vEls.sourceCtrl.appendChild(makeSourceBtn(s.id, s.name));
-  }
-}
-
-function makeSourceBtn(id, label) {
-  const btn = document.createElement("button");
-  btn.className = "source-pill" + (vState.source === id ? " active" : "");
-  btn.textContent = label;
-  btn.addEventListener("click", () => {
-    vState.source = id;
-    renderSourceSelector();
-    loadSegments();
+  const sources = vs.sources.filter(s => s.type === "rtsp");
+  [{ id: "all", name: "ALL" }, ...sources].forEach(s => {
+    const btn = document.createElement("button");
+    btn.className = "source-pill" + (vs.source === s.id ? " active" : "");
+    btn.textContent = s.name || s.id;
+    btn.addEventListener("click", () => {
+      vs.source = s.id; vs.cls = "all"; vs.date = "";
+      renderSourceCtrl(); refresh();
+    });
+    vEls.sourceCtrl.appendChild(btn);
   });
-  return btn;
 }
 
 // ── Date selector ─────────────────────────────────
-
-function renderDateSelector() {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const dates = [...new Set(vState.segments.map(s =>
-    new Date(s.start_ts * 1000).toLocaleDateString("sv") // YYYY-MM-DD
+function renderDateCtrl() {
+  const dates = [...new Set(vs.events.map(e =>
+    new Date(e.abs_ts * 1000).toLocaleDateString("sv")
   ))].sort().reverse();
 
   vEls.dateCtrl.innerHTML = "";
   if (!dates.length) return;
 
-  if (!vState.date || !dates.includes(vState.date)) vState.date = dates[0];
-
-  const chips = document.createElement("div");
-  chips.className = "date-chips";
-  const allChip = document.createElement("button");
-  allChip.className = "date-chip" + (!vState.date ? " active" : "");
-  allChip.textContent = "ALL";
-  allChip.addEventListener("click", () => { vState.date = ""; renderDateSelector(); renderSegmentList(); });
-  chips.appendChild(allChip);
-
-  for (const d of dates) {
-    const btn = document.createElement("button");
-    btn.className = "date-chip" + (vState.date === d ? " active" : "");
-    btn.textContent = formatDateLabel(d);
-    btn.addEventListener("click", () => { vState.date = d; renderDateSelector(); renderSegmentList(); });
-    chips.appendChild(btn);
-  }
-  vEls.dateCtrl.appendChild(chips);
+  const chip = (d, label) => {
+    const b = document.createElement("button");
+    b.className = "date-chip" + (vs.date === d ? " active" : "");
+    b.textContent = label;
+    b.addEventListener("click", () => { vs.date = d; refresh(); });
+    vEls.dateCtrl.appendChild(b);
+  };
+  chip("", "ALL");
+  dates.forEach(d => chip(d, fmtDateLabel(d)));
 }
 
-function formatDateLabel(dateStr) {
+function fmtDateLabel(d) {
   const today = new Date().toLocaleDateString("sv");
-  const yest  = new Date(Date.now() - 86400000).toLocaleDateString("sv");
-  if (dateStr === today) return "TODAY";
-  if (dateStr === yest)  return "YESTERDAY";
-  const d = new Date(dateStr + "T12:00:00");
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const yest  = new Date(Date.now()-86400000).toLocaleDateString("sv");
+  if (d === today) return "TODAY";
+  if (d === yest)  return "YESTERDAY";
+  return new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-// ── Segment list ──────────────────────────────────
+// ── Class chips ───────────────────────────────────
+function renderClassCtrl() {
+  vEls.classCtrl.innerHTML = "";
+  const entries = [["all", "ALL"], ...Object.entries(vs.classes).sort((a,b) => b[1]-a[1])];
+  entries.forEach(([c, count]) => {
+    const btn = document.createElement("button");
+    btn.className = "class-chip" + (vs.cls === c ? " active" : "");
+    btn.textContent = c === "all" ? "ALL" : `${c} ×${count}`;
+    btn.addEventListener("click", () => { vs.cls = c; loadEvents(); });
+    vEls.classCtrl.appendChild(btn);
+  });
+}
 
-function renderSegmentList() {
-  vEls.segList.innerHTML = "";
-  let segs = vState.segments;
-  if (vState.date) {
-    segs = segs.filter(s =>
-      new Date(s.start_ts * 1000).toLocaleDateString("sv") === vState.date
-    );
-  }
-  if (!segs.length) {
-    vEls.segList.innerHTML = '<div style="padding:12px;font-size:.58rem;color:var(--text-lo)">No segments</div>';
+// ── Event list ────────────────────────────────────
+function renderEventList() {
+  vEls.eventList.innerHTML = "";
+  if (!vs.events.length) {
+    vEls.eventList.innerHTML = '<div class="video-empty-state">No events yet</div>';
     return;
   }
-  for (const seg of segs) {
-    vEls.segList.appendChild(makeSegmentItem(seg));
-  }
+  vs.events.forEach((evt, i) => {
+    vEls.eventList.appendChild(makeEventItem(evt, i));
+  });
 }
 
-function makeSegmentItem(seg) {
+function makeEventItem(evt, idx) {
   const el = document.createElement("div");
-  el.className = "video-segment-item" + (vState.segment?.id === seg.id ? " active" : "");
+  el.className = "video-event-item" + (vs.eventIdx === idx ? " active" : "");
 
-  const start = new Date(seg.start_ts * 1000);
-  const dur   = seg.end_ts ? Math.round(seg.end_ts - seg.start_ts) : null;
+  // Thumbnail from spritesheet
+  const thumb = document.createElement("div");
+  thumb.className = "vei-thumb";
+  if (evt.spritesheet) {
+    thumb.style.cssText = spriteCss(evt);
+  }
+  el.appendChild(thumb);
+
+  const meta = document.createElement("div");
+  meta.className = "vei-meta";
+
+  const cls = document.createElement("div");
+  cls.className = `vei-class vei-class-${evt.class}`;
+  cls.textContent = evt.class.toUpperCase();
 
   const t = document.createElement("div");
-  t.className = "vseg-time";
-  t.textContent = start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  t.className = "vei-time";
+  t.textContent = new Date(evt.abs_ts * 1000).toLocaleTimeString(undefined,
+    { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-  const m = document.createElement("div");
-  m.className = "vseg-meta";
-  m.textContent = dur ? `${Math.floor(dur/60)}m${dur%60}s` : "recording…";
+  const src = document.createElement("div");
+  src.className = "vei-dur";
+  const dur = Math.round(evt.end_off - evt.start_off);
+  const srcName = vs.sources.find(s => s.id === evt.source_id)?.name || evt.source_id;
+  src.textContent = `${srcName} · ${dur > 0 ? dur + "s" : "<1s"}`;
 
-  el.appendChild(t);
-  el.appendChild(m);
-
-  el.addEventListener("click", () => loadSegment(seg));
+  meta.appendChild(cls); meta.appendChild(t); meta.appendChild(src);
+  el.appendChild(meta);
+  el.addEventListener("click", () => loadEvent(idx));
   return el;
 }
 
-// ── Load segment into player ──────────────────────
+function spriteCss(evt) {
+  const INTERVAL = 5, W = 160, H = 90, COLS = 10;
+  const tile = Math.floor(evt.start_off / INTERVAL);
+  const col = tile % COLS, row = Math.floor(tile / COLS);
+  const url = `/video/files/${evt.spritesheet}`;
+  const scale = 1 / (W / 64); // thumb width = 64px
+  return `background-image:url('${url}');background-size:${COLS*W*scale}px auto;` +
+         `background-position:-${col*W*scale}px -${row*H*scale}px;background-repeat:no-repeat`;
+}
 
-async function loadSegment(seg) {
-  vState.segment = seg;
-  vState.detections = [];
-  renderSegmentList();
+// ── Load event into player ────────────────────────
+const PRE_BUFFER = 5; // seconds before event to start playback
 
-  const url = `/video/files/${seg.path}`;
-  vEls.player.src = url;
-  vEls.player.load();
+function loadEvent(idx) {
+  const evt = vs.events[idx];
+  if (!evt) return;
+  vs.eventIdx = idx;
 
-  // WebVTT trickplay
-  for (const t of Array.from(vEls.player.textTracks)) {
-    vEls.player.removeChild(t.track?.owner);
+  // Update list highlight
+  for (const el of vEls.eventList.querySelectorAll(".video-event-item")) {
+    el.classList.remove("active");
   }
-  if (seg.webvtt) {
-    const track = document.createElement("track");
-    track.kind    = "metadata";
-    track.src     = `/video/files/${seg.webvtt}`;
-    track.default = true;
-    vEls.player.appendChild(track);
+  vEls.eventList.children[idx]?.classList.add("active");
+  vEls.eventList.children[idx]?.scrollIntoView({ block: "nearest" });
+
+  // Load video
+  const url = `/video/files/${evt.seg_path}`;
+  if (vEls.player.dataset.src !== url) {
+    vEls.player.src = url;
+    vEls.player.dataset.src = url;
+    vEls.player.load();
   }
 
   vEls.empty.style.display  = "none";
   vEls.player.style.display = "block";
 
-  if (vState.segment.id) await loadDetections(seg.id);
+  const seekTo = Math.max(0, evt.start_off - PRE_BUFFER);
+  vEls.player.addEventListener("loadedmetadata", function onMeta() {
+    vEls.player.removeEventListener("loadedmetadata", onMeta);
+    vEls.player.currentTime = seekTo;
+    vEls.player.play().catch(() => {});
+  }, { once: true });
 
-  const dur = seg.end_ts ? seg.end_ts - seg.start_ts : 300;
-  renderScrubberLabels(seg.start_ts, dur);
+  // HUD
+  const srcName = vs.sources.find(s => s.id === evt.source_id)?.name || evt.source_id;
+  if (vEls.hudSource) vEls.hudSource.textContent = srcName.toUpperCase();
 
-  if (vEls.hudSource) {
-    const src = vState.sources.find(s => s.id === seg.source_id);
-    vEls.hudSource.textContent = (src?.name || seg.source_id).toUpperCase();
-  }
+  renderScrubLabels(evt);
+  updateNavBtns();
 }
 
-// ── Scrubber ──────────────────────────────────────
-
-function renderScrubberTicks() {
-  // Remove old ticks
-  for (const el of vEls.scrubber.querySelectorAll(".vtick")) el.remove();
-  if (!vState.segment) return;
-
-  const dur = vState.segment.end_ts
-    ? vState.segment.end_ts - vState.segment.start_ts
-    : 300;
-
-  for (const det of vState.detections) {
-    const pct = (det.ts_offset / dur) * 100;
-    const tick = document.createElement("div");
-    tick.className = "vtick " + tickClass(det.classes);
-    tick.style.left = `${pct}%`;
-    vEls.scrubber.appendChild(tick);
-  }
-}
-
-function tickClass(classes) {
-  if (!classes?.length) return "vtick-vehicle";
-  if (classes.some(c => c === "person")) return "vtick-person";
-  if (classes.some(c => ANIMAL_CLS.has(c))) return "vtick-animal";
-  return "vtick-vehicle";
-}
-
-function renderScrubberLabels(startTs, dur) {
+function renderScrubLabels(evt) {
   vEls.scrubLabels.innerHTML = "";
-  const n = 5;
-  for (let i = 0; i <= n; i++) {
-    const t = startTs + (dur * i / n);
-    const d = new Date(t * 1000);
-    const span = document.createElement("span");
-    span.textContent = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-    vEls.scrubLabels.appendChild(span);
-  }
+  const dur = vEls.player.duration || (evt.end_off + 30);
+  [0, 0.25, 0.5, 0.75, 1].forEach(r => {
+    const s = document.createElement("span");
+    const t = r * dur;
+    s.textContent = fmtSecs(t);
+    vEls.scrubLabels.appendChild(s);
+  });
 }
 
-// Scrubber click/drag → seek
-let _scrubDragging = false;
-
-function scrubSeek(e) {
-  if (!vState.segment) return;
-  const rect = vEls.scrubber.getBoundingClientRect();
-  const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-  const dur = vState.segment.end_ts
-    ? vState.segment.end_ts - vState.segment.start_ts : 300;
-  vEls.player.currentTime = ratio * dur;
-}
-
-vEls.scrubber.addEventListener("mousedown", e => { _scrubDragging = true; scrubSeek(e); e.preventDefault(); });
-document.addEventListener("mousemove", e => { if (_scrubDragging) scrubSeek(e); });
-document.addEventListener("mouseup",   () => { _scrubDragging = false; });
-
-// Scrubber hover → trickplay thumbnail
-vEls.scrubber.addEventListener("mousemove", e => {
-  if (!vState.segment?.spritesheet) { vEls.thumbCanvas.style.display = "none"; return; }
-  const rect = vEls.scrubber.getBoundingClientRect();
-  const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-  const dur = vState.segment.end_ts
-    ? vState.segment.end_ts - vState.segment.start_ts : 300;
-  const ts_offset = ratio * dur;
-  drawSpriteThumbnail(ts_offset, e.clientX - rect.left);
-});
-vEls.scrubber.addEventListener("mouseleave", () => { vEls.thumbCanvas.style.display = "none"; });
-
-const _spriteCache = {};
-
-function drawSpriteThumbnail(tsOffset, xPos) {
-  const seg = vState.segment;
-  if (!seg?.spritesheet) return;
-  const spriteUrl = `/video/files/${seg.spritesheet}`;
-  const INTERVAL = 5, W = 160, H = 90, COLS = 10;
-  const tileIdx = Math.floor(tsOffset / INTERVAL);
-  const col = tileIdx % COLS, row = Math.floor(tileIdx / COLS);
-
-  const tc = vEls.thumbCanvas;
-  tc.width = W; tc.height = H;
-  tc.style.display = "block";
-  tc.style.left = `${Math.max(0, xPos - W/2)}px`;
-
-  const ctx = tc.getContext("2d");
-
-  const draw = (img) => {
-    ctx.drawImage(img, col * W, row * H, W, H, 0, 0, W, H);
-    // Overlay bounding boxes for nearest detection
-    const nearest = vState.detections.reduce((best, d) =>
-      Math.abs(d.ts_offset - tsOffset) < Math.abs((best?.ts_offset ?? Infinity) - tsOffset) ? d : best,
-    null);
-    if (nearest?.boxes) drawBoxesOnThumb(ctx, nearest.boxes, W, H);
-  };
-
-  if (_spriteCache[spriteUrl]) { draw(_spriteCache[spriteUrl]); return; }
-  const img = new Image();
-  img.onload = () => { _spriteCache[spriteUrl] = img; draw(img); };
-  img.src = spriteUrl;
-}
-
-function drawBoxesOnThumb(ctx, boxes, w, h) {
-  for (const box of boxes) {
-    const color = BOX_COLORS[box.cls] || "#ccd8e4";
-    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
-    ctx.strokeRect(box.x1 * w, box.y1 * h, (box.x2 - box.x1) * w, (box.y2 - box.y1) * h);
-  }
-}
-
-// ── Video player events ───────────────────────────
-
+// ── Player events ─────────────────────────────────
 vEls.player.addEventListener("timeupdate", () => {
   const t = vEls.player.currentTime;
-  const seg = vState.segment;
-  if (!seg) return;
-  const dur = vEls.player.duration || (seg.end_ts ? seg.end_ts - seg.start_ts : 300);
-
-  // Update scrubber bar + head
-  const pct = dur ? (t / dur) * 100 : 0;
-  vEls.scrubBar.style.width = `${pct}%`;
-  vEls.scrubHead.style.left = `${pct}%`;
-
-  // HUD time
-  const absTs = seg.start_ts + t;
-  if (vEls.hudTime) vEls.hudTime.textContent = new Date(absTs * 1000).toLocaleTimeString();
-
-  // Box overlay
-  drawVideoBoxes(t);
+  const dur = vEls.player.duration || 1;
+  const pct = (t / dur) * 100;
+  vEls.progress.style.width = `${pct}%`;
+  vEls.head.style.left      = `${pct}%`;
+  vEls.timeDisp.textContent = `${fmtSecs(t)} / ${fmtSecs(dur)}`;
+  if (vEls.hudTime) {
+    const evt = vs.events[vs.eventIdx];
+    if (evt) vEls.hudTime.textContent =
+      new Date((evt.abs_ts - evt.start_off + t) * 1000).toLocaleTimeString();
+  }
+  drawBoxes(t);
 });
 
-function drawVideoBoxes(currentTime) {
+vEls.player.addEventListener("play",  () => { vEls.playBtn.textContent = "■"; });
+vEls.player.addEventListener("pause", () => { vEls.playBtn.textContent = "▶"; });
+
+// Scrubber
+vEls.scrubber.addEventListener("click", e => {
+  const rect = vEls.scrubber.getBoundingClientRect();
+  const ratio = (e.clientX - rect.left) / rect.width;
+  vEls.player.currentTime = ratio * (vEls.player.duration || 0);
+});
+
+// Controls
+vEls.playBtn.addEventListener("click", () => {
+  vEls.player.paused ? vEls.player.play() : vEls.player.pause();
+});
+vEls.prevBtn.addEventListener("click", () => {
+  if (vs.eventIdx < vs.events.length - 1) loadEvent(vs.eventIdx + 1);
+});
+vEls.nextBtn.addEventListener("click", () => {
+  if (vs.eventIdx > 0) loadEvent(vs.eventIdx - 1);
+});
+vEls.fullBtn.addEventListener("click", () => {
+  const stage = document.querySelector(".video-stage");
+  document.fullscreenElement ? document.exitFullscreen()
+    : stage.requestFullscreen().catch(() => {});
+});
+
+function updateNavBtns() {
+  vEls.prevBtn.disabled = vs.eventIdx >= vs.events.length - 1;
+  vEls.nextBtn.disabled = vs.eventIdx <= 0;
+}
+
+// ── Box overlay ───────────────────────────────────
+function drawBoxes(t) {
   const canvas = vEls.boxCanvas;
-  if (!canvas) return;
-  const video = vEls.player;
+  const video  = vEls.player;
+  const evt    = vs.events[vs.eventIdx];
+  if (!canvas || !evt) return;
 
   canvas.width  = canvas.clientWidth;
   canvas.height = canvas.clientHeight;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (!vState.detections.length || !video.videoWidth) return;
+  if (!video.videoWidth) return;
 
-  // Find nearest detection within 0.6s
-  const nearest = vState.detections.reduce((best, d) =>
-    Math.abs(d.ts_offset - currentTime) < Math.abs((best?.ts_offset ?? Infinity) - currentTime) ? d : best,
-  null);
-  if (!nearest || Math.abs(nearest.ts_offset - currentTime) > 0.6) return;
-  if (!nearest.boxes?.length) return;
+  // Show boxes only within the event window
+  const off = t;
+  if (off < evt.start_off - PRE_BUFFER - 0.5 || off > evt.end_off + 1) return;
+
+  const boxes = evt.boxes_json ? JSON.parse(evt.boxes_json) : [];
+  if (!boxes.length) return;
 
   const cw = canvas.width, ch = canvas.height;
   const iw = video.videoWidth, ih = video.videoHeight;
   const scale = Math.min(cw / iw, ch / ih);
-  const rw = iw * scale, rh = ih * scale;
-  const ox = (cw - rw) / 2, oy = (ch - rh) / 2;
+  const rw = iw*scale, rh = ih*scale;
+  const ox = (cw-rw)/2, oy = (ch-rh)/2;
 
-  for (const box of nearest.boxes) {
-    const x = ox + box.x1 * rw, y = oy + box.y1 * rh;
-    const w = (box.x2 - box.x1) * rw, h = (box.y2 - box.y1) * rh;
+  for (const box of boxes) {
     const color = BOX_COLORS[box.cls] || "#ccd8e4";
+    const x = ox + box.x1*rw, y = oy + box.y1*rh;
+    const w = (box.x2-box.x1)*rw, h = (box.y2-box.y1)*rh;
     ctx.strokeStyle = color; ctx.lineWidth = 2;
     ctx.strokeRect(x, y, w, h);
-    const label = `${box.cls} ${Math.round(box.conf * 100)}%`;
-    ctx.font = "bold 11px 'IBM Plex Mono', monospace";
+    const label = `${box.cls} ${Math.round(box.conf*100)}%`;
+    ctx.font = "bold 11px 'IBM Plex Mono',monospace";
     const tw = ctx.measureText(label).width + 6;
-    const ty = y > 18 ? y - 18 : y + h;
-    ctx.fillStyle = color; ctx.fillRect(x - 1, ty, tw, 16);
-    ctx.fillStyle = "#050709"; ctx.fillText(label, x + 2, ty + 11);
+    const ty = y > 18 ? y-18 : y+h;
+    ctx.fillStyle = color; ctx.fillRect(x-1, ty, tw, 16);
+    ctx.fillStyle = "#050709"; ctx.fillText(label, x+2, ty+11);
   }
 }
 
-// ── Init ──────────────────────────────────────────
+// ── Utils ─────────────────────────────────────────
+function fmtSecs(s) {
+  const m = Math.floor(s/60), sec = Math.floor(s%60);
+  return `${m}:${String(sec).padStart(2,"0")}`;
+}
 
+// ── Boot ──────────────────────────────────────────
 init();
