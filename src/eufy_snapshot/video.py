@@ -14,7 +14,8 @@ from pathlib import Path
 
 LOG = logging.getLogger(__name__)
 
-_POST_EVENT_SECONDS = 30   # keep recording this long after last detection
+_POST_EVENT_SECONDS  = 30    # keep recording this long after last detection
+_MAX_SEGMENT_SECONDS = 600   # force-close after 10 min regardless
 _SPRITE_FPS         = "1/5"
 _SPRITE_W           = 160
 _SPRITE_COLS        = 10
@@ -165,7 +166,13 @@ class VideoWorker:
         triggered, new_counts = _is_new_activity(boxes, self._prev_counts)
         self._prev_counts = new_counts
         with self._lock:
-            if triggered:
+            if self._recording and (ts - self._seg_start) >= _MAX_SEGMENT_SECONDS:
+                # Force-close and restart regardless of activity
+                self._stop_segment(ts)
+                if triggered:
+                    self._last_det = ts
+                    self._start_segment(ts)
+            elif triggered:
                 self._last_det = ts
                 if not self._recording:
                     self._start_segment(ts)
