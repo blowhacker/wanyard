@@ -182,69 +182,92 @@ class V2Timeline {
     const W = c.clientWidth, H = c.clientHeight;
     c.width = W * dpr; c.height = H * dpr;
     ctx.scale(dpr, dpr);
-
-    const SEG_TOP = 4, SEG_H = H - 28, LABEL_Y = H - 6;
-
     ctx.clearRect(0, 0, W, H);
 
-    // ── Recording segments (gray bands) ──────────────
-    ctx.fillStyle = "rgba(255,255,255,0.06)";
-    for (const s of this._segs) {
-      const x1 = this._tsToX(s.start_ts);
-      const x2 = this._tsToX(s.end_ts ?? this._to);
-      if (x2 < 0 || x1 > W) continue;
-      ctx.fillRect(Math.max(0, x1), SEG_TOP, Math.min(W, x2) - Math.max(0, x1), SEG_H);
-    }
+    // Unique sources from segments
+    const srcIds = [...new Set(this._segs.map(s => s.source_id))];
+    if (!srcIds.length) return;
 
-    // ── Event dots ────────────────────────────────────
-    for (const e of this._evts) {
-      const x = this._tsToX(e.abs_ts);
-      if (x < 0 || x > W) continue;
-      const color = BOX_COLORS[e.class] || "#ccd8e4";
-      const isActive = this._clipIdx != null && e.abs_ts === this._activeEvtTs;
-      ctx.fillStyle = color;
-      ctx.globalAlpha = isActive ? 1 : 0.7;
-      const r = isActive ? 5 : 3;
-      ctx.beginPath();
-      ctx.arc(x, SEG_TOP + SEG_H / 2, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
+    const LABEL_AREA = 20;            // bottom labels
+    const LANE_H = Math.floor((H - LABEL_AREA) / srcIds.length);
+    const SRC_W  = 60;                // left label column
+    const DRAW_W = W - SRC_W;
+
+    const tsToX = ts => SRC_W + ((ts - this._from) / (this._to - this._from)) * DRAW_W;
+
+    // ── Per-source lanes ──────────────────────────────
+    srcIds.forEach((srcId, row) => {
+      const TOP = row * LANE_H + 2;
+      const BOT = TOP + LANE_H - 4;
+      const MID = (TOP + BOT) / 2;
+      const LH  = BOT - TOP;
+
+      // Source label
+      ctx.fillStyle = "rgba(107,120,137,0.9)";
+      ctx.font = `9px 'IBM Plex Mono',monospace`;
+      ctx.textAlign = "right";
+      const label = this._srcName?.[srcId] || srcId.replace(/tapo-?/i,"");
+      ctx.fillText(label.slice(0,10), SRC_W - 4, MID + 3.5);
+
+      // Lane separator
+      if (row > 0) {
+        ctx.fillStyle = "rgba(255,255,255,0.04)";
+        ctx.fillRect(SRC_W, TOP - 2, DRAW_W, 1);
+      }
+
+      // Segment bands
+      ctx.fillStyle = "rgba(255,255,255,0.07)";
+      for (const s of this._segs.filter(x => x.source_id === srcId)) {
+        const x1 = tsToX(s.start_ts), x2 = tsToX(s.end_ts ?? this._to);
+        if (x2 < SRC_W || x1 > W) continue;
+        ctx.fillRect(Math.max(SRC_W, x1), TOP, Math.min(W, x2) - Math.max(SRC_W, x1), LH);
+      }
+
+      // Event dots
+      for (const e of this._evts.filter(x => x.source_id === srcId)) {
+        const x = tsToX(e.abs_ts);
+        if (x < SRC_W || x > W) continue;
+        ctx.fillStyle = BOX_COLORS[e.class] || "#ccd8e4";
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.arc(x, MID, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    });
 
     // ── Hour labels ────────────────────────────────────
+    const LABEL_Y = H - 5;
     ctx.fillStyle = "rgba(74,94,110,0.8)";
-    ctx.font = `${Math.round(10 * dpr) / dpr}px 'IBM Plex Mono',monospace`;
+    ctx.font = `9px 'IBM Plex Mono',monospace`;
     ctx.textAlign = "center";
     const interval = this._labelInterval();
     let t0 = Math.ceil(this._from / interval) * interval;
     while (t0 <= this._to) {
-      const x = this._tsToX(t0);
-      if (x >= 0 && x <= W) {
-        const d = new Date(t0 * 1000);
-        const label = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-        ctx.fillText(label, x, LABEL_Y);
-        ctx.fillStyle = "rgba(74,94,110,0.25)";
-        ctx.fillRect(x, SEG_TOP, 1, SEG_H);
+      const x = tsToX(t0);
+      if (x >= SRC_W && x <= W) {
+        ctx.fillText(new Date(t0*1000).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}), x, LABEL_Y);
+        ctx.fillStyle = "rgba(74,94,110,0.15)";
+        ctx.fillRect(x, 0, 1, H - LABEL_AREA);
         ctx.fillStyle = "rgba(74,94,110,0.8)";
       }
       t0 += interval;
     }
 
-    // ── Playhead ──────────────────────────────────────
+    // ── Playhead (spans all lanes) ────────────────────
     if (this._head != null) {
-      const x = this._tsToX(this._head);
-      if (x >= 0 && x <= W) {
+      const x = tsToX(this._head);
+      if (x >= SRC_W && x <= W) {
         ctx.fillStyle = "#c08020";
-        ctx.fillRect(x - 1, SEG_TOP, 2, SEG_H);
+        ctx.fillRect(x - 1, 0, 2, H - LABEL_AREA);
         ctx.beginPath();
-        ctx.moveTo(x - 5, SEG_TOP);
-        ctx.lineTo(x + 5, SEG_TOP);
-        ctx.lineTo(x, SEG_TOP + 8);
-        ctx.closePath();
-        ctx.fill();
+        ctx.moveTo(x-5,0); ctx.lineTo(x+5,0); ctx.lineTo(x,7);
+        ctx.closePath(); ctx.fill();
       }
     }
   }
+
+  setSrcNames(map) { this._srcName = map; }
 
   _labelInterval() {
     const span = this._to - this._from;
@@ -406,6 +429,10 @@ async function load() {
   st.classes  = cr.classes || {};
 
   player.setSegments(newSegs);
+  // Pass source name lookup for lane labels
+  const srcNames = {};
+  st.sources.forEach(s => srcNames[s.id] = s.name || s.id);
+  timeline.setSrcNames(srcNames);
   timeline.setData(filteredSegs(), filteredEvts());
 
   renderClassCtrl();
