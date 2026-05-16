@@ -1,89 +1,90 @@
-.v2-viewer { /* same grid as main viewer */ }
-
-.v2-stage #v2Player {
-  width: 100%; height: 100%;
-  object-fit: contain;
-  display: none;
-  position: relative; z-index: 3;
-  cursor: pointer;
+.v2-viewer {
+  grid-template-rows: minmax(0, 1fr) 110px;
 }
 
+/* Stage */
+.v2-stage #v2Video {
+  width: 100%; height: 100%; object-fit: contain;
+  display: none; position: relative; z-index: 3; cursor: pointer;
+}
 #v2BoxCanvas {
   position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
   z-index: 4; pointer-events: none;
 }
-
-.v2-stills-link {
-  font-family: var(--font);
-  font-size: 0.56rem; font-weight: 500;
-  letter-spacing: 0.12em;
-  color: var(--text-lo); text-decoration: none;
-  padding: 3px 7px;
-  border: 1px solid var(--border-lo);
-  border-radius: var(--r);
+.v2-back {
+  font-family: var(--font); font-size: 0.56rem; font-weight: 500;
+  letter-spacing: 0.12em; color: var(--text-lo); text-decoration: none;
+  padding: 3px 7px; border: 1px solid var(--border-lo); border-radius: var(--r);
   transition: color .12s, border-color .12s;
 }
-.v2-stills-link:hover { color: var(--amber); border-color: var(--amber-border); }
+.v2-back:hover { color: var(--amber); border-color: var(--amber-border); }
 
-/* New frames badge */
-.v2-new-badge {
-  height: 28px; width: auto; padding: 0 10px;
-  font-family: var(--font); font-size: 0.62rem;
-  font-weight: 500; letter-spacing: 0.1em;
-  background: rgba(42,172,106,.15);
-  border: 1px solid var(--green);
-  border-radius: var(--r); color: var(--green);
-  cursor: pointer; flex-shrink: 0;
-  animation: pulse-g 1.5s ease-in-out infinite;
+/* Timeline area */
+.v2-timeline-area {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-strip);
+  border-top: 1px solid var(--border-lo);
 }
 
-/* Video frame cells in filmstrip */
-.v2-frame {
-  flex-shrink: 0;
+.v2-timeline-wrap {
+  flex: 1;
   position: relative;
-  width: var(--frame-w);
-  height: var(--frame-h);
-  border: 1px solid var(--border-lo);
-  border-radius: var(--r);
-  overflow: hidden;
-  cursor: pointer;
-  transition: border-color 0.08s, opacity 0.08s;
-  background: var(--bg-stage);
+  min-height: 0;
 }
-.v2-frame:hover { border-color: var(--border-hi); opacity: 0.9; }
-.v2-frame.v2-active { border-color: var(--amber); }
-.v2-frame.v2-loading { opacity: 0.4; }
 
-.v2-frame img {
+.v2-timeline {
   width: 100%; height: 100%;
-  object-fit: cover; display: block;
+  cursor: crosshair;
+  display: block;
 }
 
-.v2-frame-ts {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  padding: 2px 3px 1px;
-  font-size: 0.5rem; font-family: var(--font); font-weight: 300;
-  color: rgba(200,212,224,.8);
-  background: linear-gradient(transparent, rgba(0,0,0,.75));
-  letter-spacing: 0.02em; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis;
-}
-.v2-frame.v2-active .v2-frame-ts { color: var(--amber-bright); }
-
-/* Rewind button — wider than square */
-#v2Rewind {
+/* Controls */
+.v2-rewind-btn {
   width: auto !important;
   padding: 0 8px;
   font-size: 0.58rem;
   letter-spacing: 0.04em;
 }
 
-/* Detection ticks on frames */
-.v2-det-tick {
-  position: absolute; top: 0; width: 2px; height: 4px;
-  pointer-events: none; z-index: 2;
+.v2-load-more {
+  height: 28px; width: auto; padding: 0 10px;
+  font-family: var(--font); font-size: 0.60rem;
+  font-weight: 500; letter-spacing: 0.08em;
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r); color: var(--text-mid);
+  cursor: pointer;
+  transition: border-color .12s, color .12s;
 }
-.v2-tick-person   { background: var(--green); }
-.v2-tick-animal   { background: #20c0b0; }
-.v2-tick-vehicle  { background: var(--amber); }
+.v2-load-more:hover { color: var(--amber); border-color: var(--amber-border); }
+
+.vctr-play {
+  border-color: var(--amber-border) !important;
+  color: var(--amber) !important;
+  background: var(--amber-dim) !important;
+}
+
+/* Thumbnail preview on hover */
+.v2-thumb-preview {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  pointer-events: none;
+  z-index: 10;
+  border: 1px solid var(--border-hi);
+  border-radius: 2px;
+  background: var(--bg-stage);
+  overflow: hidden;
+}
+.v2-thumb-preview img {
+  width: 160px; height: 90px;
+  object-fit: cover; display: block;
+}
+.v2-thumb-ts {
+  font-size: 0.48rem; font-family: var(--font);
+  color: var(--text-mid); padding: 2px 4px;
+  white-space: nowrap; text-align: center;
+}

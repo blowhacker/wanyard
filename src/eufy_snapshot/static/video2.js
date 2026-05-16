@@ -1,618 +1,598 @@
-// ── Constants ─────────────────────────────────────
-const V2_DENSITY = [
-  { intervalSec: 300, label: "½H"  },
-  { intervalSec:  60, label: "10M" },
-  { intervalSec:  30, label: "ALL" },
-  { intervalSec:  15, label: "LG"  },
-  { intervalSec:   5, label: "XL"  },
-];
+// ═══════════════════════════════════════════════════════
+// V2Player — transparent segment-aware video playback
+// ═══════════════════════════════════════════════════════
+class V2Player {
+  constructor(videoEl) {
+    this._v    = videoEl;
+    this._segs = [];        // sorted by start_ts
+    this._clips  = [];      // [[start_ts, end_ts], ...]
+    this._clipIdx = -1;
+    this._watchFn = null;
 
-const V2_SPEEDS = [
-  { label: "½×",  rate: 0.5 },
-  { label: "1×",  rate: 1.0 },
-  { label: "2×",  rate: 2.0 },
-  { label: "4×",  rate: 4.0 },
-];
+    // Callbacks (set externally)
+    this.onTimeUpdate  = null;
+    this.onClipEnd     = null;
+    this.onPlay        = null;
+    this.onPause       = null;
 
-const V2_PRE_BUFFER  = 0;   // start exactly at detection
-const V2_POST_BUFFER = 10;  // seconds after event end before jumping
+    this._v.addEventListener("timeupdate", () => {
+      this._checkClipEnd();
+      this.onTimeUpdate?.();
+    });
+    this._v.addEventListener("play",  () => this.onPlay?.());
+    this._v.addEventListener("pause", () => this.onPause?.());
+    this._v.addEventListener("ended", () => this._advance());
+  }
 
-const V2_BOX_COLORS = {
+  setSegments(segments) {
+    this._segs = [...segments].sort((a, b) => a.start_ts - b.start_ts);
+  }
+
+  // Find segment containing unix_ts
+  segmentFor(ts) {
+    return this._segs.find(s => s.start_ts <= ts && (s.end_ts ?? Infinity) > ts);
+  }
+
+  get currentTs() {
+    const seg = this._curSeg();
+    return seg ? seg.start_ts + this._v.currentTime : null;
+  }
+
+  get paused() { return this._v.paused; }
+
+  _curSeg() {
+    return this._segs.find(s => `/video/files/${s.path}` === this._v.dataset.src);
+  }
+
+  // ── Core seek ────────────────────────────────────────
+  seek(unix_ts) {
+    const seg = this.segmentFor(unix_ts);
+    if (!seg) return false;
+    const offset = Math.max(0, unix_ts - seg.start_ts);
+    const url = `/video/files/${seg.path}`;
+    if (this._v.dataset.src !== url) {
+      this._v.src = url;
+      this._v.dataset.src = url;
+      this._v.load();
+      this._v.addEventListener("loadedmetadata", () => {
+        this._v.currentTime = offset;
+      }, { once: true });
+    } else {
+      this._v.currentTime = offset;
+    }
+    return true;
+  }
+
+  play()  { this._v.play().catch(() => {}); }
+  pause() { this._v.pause(); }
+
+  setRate(rate) { this._v.playbackRate = rate; }
+
+  rewind(secs = 10) {
+    this._v.currentTime = Math.max(0, this._v.currentTime - secs);
+  }
+
+  // ── Clip playlist ─────────────────────────────────────
+  // clips: [[start_ts, end_ts], ...] — play each range in sequence
+  playClips(clips, startIdx = 0) {
+    this._clips   = clips;
+    this._clipIdx = startIdx;
+    this._playClip(startIdx);
+  }
+
+  get clipIdx()   { return this._clipIdx; }
+  get clipCount() { return this._clips.length; }
+
+  next() {
+    if (this._clipIdx + 1 < this._clips.length) this._playClip(this._clipIdx + 1);
+    else this.onClipEnd?.();
+  }
+
+  prev() {
+    if (this._clipIdx > 0) this._playClip(this._clipIdx - 1);
+  }
+
+  _playClip(idx) {
+    if (idx < 0 || idx >= this._clips.length) return;
+    this._clipIdx = idx;
+    const [start] = this._clips[idx];
+    if (this.seek(start)) {
+      this._v.addEventListener("loadedmetadata", () => this.play(), { once: true });
+      if (this._v.readyState >= 2) this.play();
+    }
+  }
+
+  _checkClipEnd() {
+    if (this._clipIdx < 0 || !this._clips.length) return;
+    const [, end] = this._clips[this._clipIdx];
+    if (end != null && this.currentTs != null && this.currentTs >= end) {
+      this._advance();
+    }
+  }
+
+  _advance() {
+    if (this._clipIdx + 1 < this._clips.length) {
+      this._playClip(this._clipIdx + 1);
+    } else {
+      this.onClipEnd?.();
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// V2Timeline — proportional canvas timeline
+// ═══════════════════════════════════════════════════════
+const BOX_COLORS = {
   person:"#2aac6a",bird:"#20c0b0",cat:"#20c0b0",dog:"#20c0b0",
   car:"#c08020",truck:"#c08020",bus:"#c08020",motorcycle:"#c08020",bicycle:"#c08020",
 };
-const V2_MOBILE = new Set(["person","bird","cat","dog","bus","truck","motorcycle","bicycle"]);
-const V2_ANIMAL = new Set(["bird","cat","dog"]);
 
-// ── State ─────────────────────────────────────────
-const v2 = {
-  segments:    [],
-  events:      [],
-  detections:  {},   // segmentId -> [{ts_offset, boxes, classes}]
-  sources:     [],
-  source:      "all",
-  date:        "",
-  cls:         "all",
-  density:     parseInt(localStorage.getItem("v2density") || "3", 10),
-  speed:       parseInt(localStorage.getItem("v2speed") || "1", 10),
-  live:          false,
-  showBoxes:     localStorage.getItem("v2boxes") !== "0",
-  loop:          true,
-  curSeg:        null,
-  eventPlaylist: [],   // ordered events when cls filter active
-  curEventIdx:   -1,   // which event is playing (-1 = not in event mode)   // current segment object
-  curOff:      0,      // current offset in segment (seconds)
-  playing:     false,
-  classes:     {},
-};
+class V2Timeline {
+  constructor(canvasEl, thumbPreview) {
+    this._c    = canvasEl;
+    this._prev = thumbPreview;
+    this._ctx  = canvasEl.getContext("2d");
+    this._segs = [];
+    this._evts = [];
+    this._from = Date.now() / 1000 - 6 * 3600;  // 6h ago
+    this._to   = Date.now() / 1000;
+    this._head = null;   // playhead unix_ts
 
-// ── Elements ──────────────────────────────────────
-const v2el = {
-  player:    document.getElementById("v2Player"),
-  boxCanvas: document.getElementById("v2BoxCanvas"),
-  empty:     document.getElementById("v2Empty"),
-  filmstrip: document.getElementById("v2Filmstrip"),
-  timestamp: document.getElementById("v2Timestamp"),
-  hudSource: document.getElementById("v2HudSource"),
-  hudTime:   document.getElementById("v2HudTime"),
-  sourceCtrl:document.getElementById("v2SourceCtrl"),
-  dateCtrl:  document.getElementById("v2DateCtrl"),
-  classCtrl: document.getElementById("v2ClassCtrl"),
-  classField:document.getElementById("v2ClassField"),
-  playBtn:   document.getElementById("v2PlayBtn"),
-  prev:      document.getElementById("v2Prev"),
-  next:      document.getElementById("v2Next"),
-  speedPills:document.getElementById("v2SpeedPills"),
-  loopBtn:   document.getElementById("v2LoopBtn"),
-  timeDisp:  document.getElementById("v2TimeDisp"),
-  speedDisp: document.getElementById("v2SpeedDisp"),
-  boxToggle: document.getElementById("v2BoxToggle"),
-  densityBtns:document.getElementById("v2DensityBtns"),
-  jumpLatest:document.getElementById("v2JumpLatest"),
-  liveBtn:   document.getElementById("v2LiveBtn"),
-  goLiveBtn: document.getElementById("v2GoLiveBtn"),
-  refresh:   document.getElementById("v2RefreshStatus"),
-};
+    this.onSeek    = null;  // callback(unix_ts)
+    this.onHover   = null;  // callback(unix_ts | null)
 
-// ── Filmstrip frame map ───────────────────────────
-// Maps: {segId}_{t} -> DOM element
-const v2FrameMap = new Map();
-let v2ActiveFrameEl = null;
-let v2NewSegCount   = 0; // count of new segments not yet scrolled to
-const v2Observer = new IntersectionObserver(entries => {
-  entries.forEach(e => {
-    if (e.isIntersecting) {
-      const img = e.target.querySelector("img");
-      if (img && img.dataset.src) { img.src = img.dataset.src; delete img.dataset.src; }
-      v2Observer.unobserve(e.target);
+    this._bindEvents();
+  }
+
+  setData(segments, events) {
+    this._segs = segments;
+    this._evts = events;
+    this.draw();
+  }
+
+  setWindow(from_ts, to_ts) {
+    this._from = from_ts;
+    this._to   = to_ts;
+    this.draw();
+  }
+
+  extendBack(hours = 6) {
+    this._from -= hours * 3600;
+    this.draw();
+    return this._from;
+  }
+
+  setPlayhead(unix_ts) {
+    this._head = unix_ts;
+    this.draw();
+  }
+
+  // Map timestamp to canvas x
+  _tsToX(ts) {
+    return ((ts - this._from) / (this._to - this._from)) * this._c.width;
+  }
+
+  _xToTs(x) {
+    return this._from + (x / this._c.width) * (this._to - this._from);
+  }
+
+  draw() {
+    const c = this._c, ctx = this._ctx;
+    const dpr = window.devicePixelRatio || 1;
+    const W = c.clientWidth, H = c.clientHeight;
+    c.width = W * dpr; c.height = H * dpr;
+    ctx.scale(dpr, dpr);
+
+    const SEG_TOP = 4, SEG_H = H - 28, LABEL_Y = H - 6;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // ── Recording segments (gray bands) ──────────────
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    for (const s of this._segs) {
+      const x1 = this._tsToX(s.start_ts);
+      const x2 = this._tsToX(s.end_ts ?? this._to);
+      if (x2 < 0 || x1 > W) continue;
+      ctx.fillRect(Math.max(0, x1), SEG_TOP, Math.min(W, x2) - Math.max(0, x1), SEG_H);
     }
-  });
-}, { rootMargin: "200px" });
 
-// ── Init ──────────────────────────────────────────
-async function v2Init() {
-  const r = await fetch("/api/sources", { cache: "no-store" });
-  if (r.ok) v2.sources = (await r.json()).sources || [];
-  v2BuildDensityBtns(); v2ApplyDensity(v2.density);
-  v2BuildSpeedPills();
-  v2RenderSourceCtrl();
-  await v2LoadTimeline();
-  setInterval(async () => {
-    if (v2el.refresh) v2el.refresh.textContent = "SYNC";
-    await v2LoadTimeline(true);
-    if (v2el.refresh) v2el.refresh.textContent = "AUTO";
-  }, 10000);
-}
+    // ── Event dots ────────────────────────────────────
+    for (const e of this._evts) {
+      const x = this._tsToX(e.abs_ts);
+      if (x < 0 || x > W) continue;
+      const color = BOX_COLORS[e.class] || "#ccd8e4";
+      const isActive = this._clipIdx != null && e.abs_ts === this._activeEvtTs;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = isActive ? 1 : 0.7;
+      const r = isActive ? 5 : 3;
+      ctx.beginPath();
+      ctx.arc(x, SEG_TOP + SEG_H / 2, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
 
-// ── Density ───────────────────────────────────────
-function v2BuildDensityBtns() {
-  v2el.densityBtns.innerHTML = "";
-  V2_DENSITY.forEach((d, i) => {
-    const btn = document.createElement("button");
-    btn.className = "density-btn" + (i + 1 === v2.density ? " active" : "");
-    btn.textContent = d.label;
-    btn.title = `1 thumb per ${d.intervalSec}s`;
-    btn.addEventListener("click", () => v2ApplyDensity(i + 1));
-    v2el.densityBtns.appendChild(btn);
-  });
-}
+    // ── Hour labels ────────────────────────────────────
+    ctx.fillStyle = "rgba(74,94,110,0.8)";
+    ctx.font = `${Math.round(10 * dpr) / dpr}px 'IBM Plex Mono',monospace`;
+    ctx.textAlign = "center";
+    const interval = this._labelInterval();
+    let t0 = Math.ceil(this._from / interval) * interval;
+    while (t0 <= this._to) {
+      const x = this._tsToX(t0);
+      if (x >= 0 && x <= W) {
+        const d = new Date(t0 * 1000);
+        const label = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+        ctx.fillText(label, x, LABEL_Y);
+        ctx.fillStyle = "rgba(74,94,110,0.25)";
+        ctx.fillRect(x, SEG_TOP, 1, SEG_H);
+        ctx.fillStyle = "rgba(74,94,110,0.8)";
+      }
+      t0 += interval;
+    }
 
-function v2ApplyDensity(level) {
-  v2.density = level; localStorage.setItem("v2density", level);
-  document.documentElement.style.setProperty("--frame-w", `${[38,56,78,100,130][level-1]}px`);
-  document.documentElement.style.setProperty("--frame-h", `${[22,32,44,56,73][level-1]}px`);
-  Array.from(v2el.densityBtns.children).forEach((b, i) =>
-    b.classList.toggle("active", i + 1 === level));
-  v2RenderFilmstrip();
-}
+    // ── Playhead ──────────────────────────────────────
+    if (this._head != null) {
+      const x = this._tsToX(this._head);
+      if (x >= 0 && x <= W) {
+        ctx.fillStyle = "#c08020";
+        ctx.fillRect(x - 1, SEG_TOP, 2, SEG_H);
+        ctx.beginPath();
+        ctx.moveTo(x - 5, SEG_TOP);
+        ctx.lineTo(x + 5, SEG_TOP);
+        ctx.lineTo(x, SEG_TOP + 8);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
 
-// ── Speed ─────────────────────────────────────────
-function v2BuildSpeedPills() {
-  v2el.speedPills.innerHTML = "";
-  V2_SPEEDS.forEach((s, i) => {
-    const btn = document.createElement("button");
-    btn.className = "speed-pill" + (i === v2.speed ? " active" : "");
-    btn.textContent = s.label;
-    btn.addEventListener("click", () => {
-      v2.speed = i; localStorage.setItem("v2speed", i);
-      v2el.player.playbackRate = V2_SPEEDS[i].rate;
-      v2BuildSpeedPills();
+  _labelInterval() {
+    const span = this._to - this._from;
+    if (span > 20 * 3600) return 4 * 3600;
+    if (span > 8  * 3600) return 2 * 3600;
+    if (span > 3  * 3600) return 3600;
+    if (span > 90 * 60)  return 30 * 60;
+    return 15 * 60;
+  }
+
+  _bindEvents() {
+    let hoverTimer = null;
+    const c = this._c;
+
+    c.addEventListener("click", e => {
+      const rect = c.getBoundingClientRect();
+      const ts = this._xToTs(e.clientX - rect.left);
+      this.onSeek?.(ts);
     });
-    v2el.speedPills.appendChild(btn);
+
+    c.addEventListener("mousemove", e => {
+      const rect = c.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const ts = this._xToTs(x);
+      this.onHover?.(ts, e.clientX);
+
+      // Thumbnail preview
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        this._showThumb(ts, e.clientX, rect);
+      }, 80);
+    });
+
+    c.addEventListener("mouseleave", () => {
+      clearTimeout(hoverTimer);
+      this._prev.hidden = true;
+      this.onHover?.(null);
+    });
+  }
+
+  _showThumb(ts, clientX, canvasRect) {
+    // Find segment for this ts
+    const seg = this._segs.find(s => s.start_ts <= ts && (s.end_ts ?? Infinity) > ts);
+    if (!seg) { this._prev.hidden = true; return; }
+    const offset = Math.max(0, ts - seg.start_ts);
+    const img = this._prev.querySelector("img");
+    const tsEl = this._prev.querySelector(".v2-thumb-ts");
+    img.src = `/api/thumb?path=${encodeURIComponent(seg.path)}&t=${offset.toFixed(1)}`;
+    tsEl.textContent = new Date(ts * 1000).toLocaleTimeString(undefined,
+      { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const left = Math.max(0, Math.min(clientX - canvasRect.left - 80, canvasRect.width - 164));
+    this._prev.style.left = `${left}px`;
+    this._prev.hidden = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// App state & init
+// ═══════════════════════════════════════════════════════
+const V2_SPEEDS = [
+  { label: "½×", rate: 0.5 },
+  { label: "1×", rate: 1.0 },
+  { label: "2×", rate: 2.0 },
+  { label: "4×", rate: 4.0 },
+];
+const V2_POST_BUFFER = 10;
+
+const st = {
+  sources:  [],
+  source:   "all",
+  cls:      "all",
+  classes:  {},
+  segments: [],
+  events:   [],
+  dets:     {},     // segId → [{ts_offset, boxes, classes}]
+  speed:    parseInt(localStorage.getItem("v2speed") || "1", 10),
+  loop:     true,
+  showBoxes:localStorage.getItem("v2boxes") !== "0",
+  live:     false,
+};
+
+const $ = id => document.getElementById(id);
+const el = {
+  video:    $("v2Video"),
+  canvas:   $("v2BoxCanvas"),
+  empty:    $("v2Empty"),
+  timeline: $("v2Timeline"),
+  thumb:    $("v2ThumbPreview"),
+  hudSrc:   $("v2HudSource"),
+  hudTs:    $("v2HudTs"),
+  ts:       $("v2Timestamp"),
+  srcCtrl:  $("v2SourceCtrl"),
+  clsField: $("v2ClassField"),
+  clsCtrl:  $("v2ClassCtrl"),
+  play:     $("v2Play"),
+  prev:     $("v2Prev"),
+  next:     $("v2Next"),
+  rewind:   $("v2Rewind"),
+  speeds:   $("v2Speeds"),
+  loop:     $("v2Loop"),
+  timeDisp: $("v2TimeDisp"),
+  boxes:    $("v2Boxes"),
+  loadMore: $("v2LoadMore"),
+  status:   $("v2Status"),
+  liveBtn:  $("v2LiveBtn"),
+  goLive:   $("v2GoLive"),
+};
+
+const player   = new V2Player(el.video);
+const timeline = new V2Timeline(el.timeline, el.thumb);
+
+// ── Player callbacks ──────────────────────────────────
+player.onTimeUpdate = () => {
+  const ts = player.currentTs;
+  if (!ts) return;
+  timeline.setPlayhead(ts);
+  el.timeDisp.textContent = fmtTs(ts);
+  if (el.hudTs) el.hudTs.textContent = new Date(ts * 1000).toLocaleTimeString(undefined,
+    { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  if (el.ts) {
+    const src = st.sources.find(s => s.id === st.source) || st.sources[0];
+    el.ts.textContent = `${src?.name || st.source} · ${new Date(ts*1000).toLocaleString(undefined,{dateStyle:"short",timeStyle:"medium"})}`;
+  }
+  drawBoxes(ts);
+};
+player.onPlay  = () => { el.play.textContent = "■"; el.play.classList.add("playing"); };
+player.onPause = () => { el.play.textContent = "▶"; el.play.classList.remove("playing"); };
+player.onClipEnd = () => {
+  if (st.loop && player.clipCount > 0) {
+    player.playClips(player._clips, 0);
+  } else {
+    player.pause();
+  }
+};
+
+// ── Timeline callbacks ────────────────────────────────
+timeline.onSeek = (ts) => {
+  setLive(false);
+  player.seek(ts);
+  player.play();
+};
+
+// ── Data loading ──────────────────────────────────────
+async function load() {
+  const p = new URLSearchParams();
+  if (st.source !== "all") p.set("source", st.source);
+  const [sr, er, cr] = await Promise.all([
+    fetch(`/api/video2/timeline?${p}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})),
+    fetch(`/api/video/events?limit=2000&${p}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})),
+    fetch(`/api/video/classes?${p}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})),
+  ]);
+
+  const newSegs = sr.segments || [];
+  const newEvts = er.events   || [];
+
+  const prevLen = st.segments.length;
+  st.segments = newSegs;
+  st.events   = newEvts;
+  st.classes  = cr.classes || {};
+
+  player.setSegments(newSegs);
+  timeline.setData(filteredSegs(), filteredEvts());
+
+  renderClassCtrl();
+
+  // Auto-seek to latest on first load
+  if (prevLen === 0 && newSegs.length) {
+    const latest = newSegs[0];
+    if (latest?.end_ts) {
+      player.seek(Math.max(latest.start_ts, latest.end_ts - 5));
+    } else if (latest) {
+      player.seek(latest.start_ts);
+    }
+    el.empty.style.display  = "none";
+    el.video.style.display  = "block";
+  }
+
+  if (st.live && newSegs.length) {
+    const latest = newSegs[0];
+    if (latest) player.seek(latest.end_ts ?? latest.start_ts);
+  }
+}
+
+function filteredSegs() {
+  let s = st.segments;
+  if (st.source !== "all") s = s.filter(x => x.source_id === st.source);
+  return s;
+}
+
+function filteredEvts() {
+  let e = st.events;
+  if (st.source !== "all") e = e.filter(x => x.source_id === st.source);
+  if (st.cls !== "all")    e = e.filter(x => x.class === st.cls);
+  return e;
+}
+
+// ── Clip playlist from events ─────────────────────────
+function playEventPlaylist() {
+  const evts = filteredEvts().sort((a, b) => a.abs_ts - b.abs_ts);
+  if (!evts.length) return;
+  const clips = evts.map(e => [e.abs_ts, e.abs_ts + Math.max(1, e.end_off - e.start_off) + V2_POST_BUFFER]);
+  player.playClips(clips, 0);
+  el.empty.style.display = "none";
+  el.video.style.display = "block";
+}
+
+// ── Class filter ──────────────────────────────────────
+function renderClassCtrl() {
+  el.clsCtrl.innerHTML = "";
+  const entries = [["all","ALL"], ...Object.entries(st.classes).sort((a,b)=>b[1]-a[1])];
+  if (entries.length <= 1) { el.clsField.hidden = true; return; }
+  el.clsField.hidden = false;
+  entries.forEach(([c, count]) => {
+    const btn = document.createElement("button");
+    btn.className = "class-chip" + (st.cls === c ? " active" : "");
+    btn.textContent = c === "all" ? "ALL" : `${c} ×${count}`;
+    btn.addEventListener("click", () => {
+      st.cls = c;
+      renderClassCtrl();
+      timeline.setData(filteredSegs(), filteredEvts());
+      if (c !== "all") playEventPlaylist();
+    });
+    el.clsCtrl.appendChild(btn);
   });
 }
 
-// ── Source selector ───────────────────────────────
-function v2RenderSourceCtrl() {
-  v2el.sourceCtrl.innerHTML = "";
-  const sources = v2.sources.filter(s => s.type === "rtsp");
-  if (!sources.length) { v2el.sourceCtrl.closest(".field").style.display = "none"; return; }
+// ── Source selector ───────────────────────────────────
+function renderSourceCtrl() {
+  el.srcCtrl.innerHTML = "";
+  const sources = st.sources.filter(s => s.type === "rtsp");
+  if (!sources.length) return;
   const pills = document.createElement("div"); pills.className = "source-pills";
   [{ id: "all", name: "ALL" }, ...sources].forEach(s => {
     const btn = document.createElement("button");
-    btn.className = "source-pill" + (v2.source === s.id ? " active" : "");
+    btn.className = "source-pill" + (st.source === s.id ? " active" : "");
     btn.textContent = s.name || s.id;
     btn.addEventListener("click", () => {
-      v2.source = s.id; v2.date = "";
-      v2RenderSourceCtrl(); v2LoadTimeline();
+      st.source = s.id;
+      if (el.hudSrc) el.hudSrc.textContent = (s.name || s.id).toUpperCase();
+      renderSourceCtrl(); load();
     });
     pills.appendChild(btn);
   });
-  v2el.sourceCtrl.appendChild(pills);
+  el.srcCtrl.appendChild(pills);
 }
 
-// ── Load timeline ─────────────────────────────────
-const v2NewBadge = document.getElementById("v2NewBadge");
-if (v2NewBadge) v2NewBadge.addEventListener("click", () => {
-  v2NewBadge.hidden = true;
-  if (v2.segments.length) {
-    const latest = v2.segments[0];
-    v2LoadSegment(latest, Math.max(0, (latest.end_ts||0) - latest.start_ts - 5));
-  }
+// ── Controls ──────────────────────────────────────────
+el.play.addEventListener("click", () => { player.paused ? player.play() : player.pause(); });
+el.prev.addEventListener("click", () => { setLive(false); player.prev(); });
+el.next.addEventListener("click", () => { setLive(false); player.next(); });
+el.rewind.addEventListener("click", () => { player.rewind(10); });
+el.loop.addEventListener("click", () => {
+  st.loop = !st.loop;
+  el.loop.classList.toggle("active", st.loop);
+});
+el.boxes.addEventListener("click", () => {
+  st.showBoxes = !st.showBoxes;
+  localStorage.setItem("v2boxes", st.showBoxes ? "1" : "0");
+  el.boxes.classList.toggle("active", st.showBoxes);
+});
+el.boxes.classList.toggle("active", st.showBoxes);
+
+el.loadMore.addEventListener("click", () => {
+  const newFrom = timeline.extendBack(6);
+  // Load more events for extended window if needed
+  load();
 });
 
-async function v2LoadTimeline(incremental = false) {
-  const prevCount = v2.segments.length;
-  const p = new URLSearchParams();
-  if (v2.source !== "all") p.set("source", v2.source);
-  const r = await fetch(`/api/video2/timeline?${p}`, { cache: "no-store" });
-  if (!r.ok) return;
-  const { segments } = await r.json();
-  const newCount = segments.length - prevCount;
-  v2.segments = segments;
+el.liveBtn.addEventListener("click", () => setLive(!st.live));
 
-  // Show new-frames badge if new segments arrived and user isn't in LIVE mode
-  if (incremental && newCount > 0 && !v2.live && v2NewBadge) {
-    v2NewBadge.textContent = `↓ ${newCount} NEW`;
-    v2NewBadge.hidden = false;
-  }
-
-  // Load events for class filter
-  const ep = new URLSearchParams({ limit: "500" });
-  if (v2.source !== "all") ep.set("source", v2.source);
-  const er = await fetch(`/api/video/events?${ep}`, { cache: "no-store" });
-  if (er.ok) v2.events = (await er.json()).events || [];
-
-  // Class counts
-  const cp = new URLSearchParams();
-  if (v2.source !== "all") cp.set("source", v2.source);
-  const cr = await fetch(`/api/video/classes?${cp}`, { cache: "no-store" });
-  if (cr.ok) v2.classes = (await cr.json()).classes || {};
-
-  v2RenderDateCtrl();
-  v2RenderClassCtrl();
-  v2RenderFilmstrip();
-
-  if (!incremental && v2.segments.length && !v2.curSeg) {
-    // Auto-load most recent segment
-    const latest = v2.segments[0];
-    if (latest?.end_ts) v2LoadSegment(latest, Math.max(0, (latest.end_ts - latest.start_ts) - 5));
-    else if (latest) v2LoadSegment(latest, 0);
-  }
-
-  // LIVE: jump to newest
-  if (v2.live && v2.segments.length) {
-    const latest = v2.segments[0];
-    if (latest && v2.curSeg?.id !== latest.id) v2LoadSegment(latest, 0);
-  }
-
-  if (v2el.jumpLatest) {
-    const isAtLatest = v2.curSeg?.id === v2.segments[0]?.id;
-    v2el.jumpLatest.hidden = isAtLatest || !v2.segments.length;
+function setLive(on) {
+  st.live = on;
+  el.liveBtn.textContent = on ? "● LIVE" : "LIVE";
+  el.liveBtn.classList.toggle("active", on);
+  if (on && st.segments.length) {
+    const latest = st.segments[0];
+    if (latest) player.seek(latest.end_ts ?? latest.start_ts);
+    player.play();
   }
 }
 
-// ── Date selector ─────────────────────────────────
-function v2RenderDateCtrl() {
-  const dates = [...new Set(v2.segments.map(s =>
-    new Date(s.start_ts * 1000).toLocaleDateString("sv")
-  ))].sort().reverse();
-  v2el.dateCtrl.innerHTML = "";
-  if (!dates.length) { v2el.dateCtrl.closest(".field").style.display = "none"; return; }
-  v2el.dateCtrl.closest(".field").style.display = "";
-  const chips = document.createElement("div"); chips.className = "date-chips";
-  const mk = (d, label) => {
-    const b = document.createElement("button");
-    b.className = "date-chip" + (v2.date === d ? " active" : "");
-    b.textContent = label;
-    b.addEventListener("click", () => { v2.date = d; v2RenderDateCtrl(); v2RenderFilmstrip(); });
-    chips.appendChild(b);
-  };
-  mk("", "ALL"); dates.forEach(d => mk(d, v2FmtDate(d)));
-  v2el.dateCtrl.appendChild(chips);
-}
-
-function v2FmtDate(d) {
-  const today = new Date().toLocaleDateString("sv");
-  const yest  = new Date(Date.now()-86400000).toLocaleDateString("sv");
-  if (d === today) return "TODAY";
-  if (d === yest)  return "YESTERDAY";
-  return new Date(d+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"});
-}
-
-// ── Class chips ───────────────────────────────────
-function v2RenderClassCtrl() {
-  v2el.classCtrl.innerHTML = "";
-  const entries = [["all","ALL"], ...Object.entries(v2.classes).sort((a,b)=>b[1]-a[1])];
-  if (entries.length <= 1) { v2el.classField.hidden = true; return; }
-  v2el.classField.hidden = false;
-  entries.forEach(([c, count]) => {
+// Speed pills
+function buildSpeedPills() {
+  el.speeds.innerHTML = "";
+  V2_SPEEDS.forEach((s, i) => {
     const btn = document.createElement("button");
-    btn.className = "class-chip" + (v2.cls === c ? " active" : "");
-    btn.textContent = c === "all" ? "ALL" : `${c} ×${count}`;
-    btn.addEventListener("click", () => { v2.cls = c; v2RenderClassCtrl(); v2RenderFilmstrip(); });
-    v2el.classCtrl.appendChild(btn);
-  });
-}
-
-// ── Filmstrip ─────────────────────────────────────
-function v2FilteredSegments() {
-  let segs = v2.segments;
-  if (v2.date) segs = segs.filter(s => new Date(s.start_ts*1000).toLocaleDateString("sv") === v2.date);
-  if (v2.cls !== "all") segs = segs.filter(s => s.classes?.[v2.cls] > 0);
-  return segs.slice().reverse(); // oldest first
-}
-
-function v2FilteredEvents() {
-  let evts = v2.events;
-  if (v2.source !== "all") evts = evts.filter(e => e.source_id === v2.source);
-  if (v2.date) evts = evts.filter(e => new Date(e.abs_ts*1000).toLocaleDateString("sv") === v2.date);
-  if (v2.cls !== "all") evts = evts.filter(e => e.class === v2.cls);
-  return evts.slice().sort((a, b) => a.abs_ts - b.abs_ts); // chronological
-}
-
-function v2MakeScrollable(framesEl) {
-  let _dx=0,_ds=0,_drag=false;
-  framesEl.addEventListener("mousedown",e=>{if(e.button)return;_drag=true;_dx=e.pageX;_ds=framesEl.scrollLeft;framesEl.classList.add("dragging");e.preventDefault();});
-  document.addEventListener("mousemove",e=>{if(_drag)framesEl.scrollLeft=_ds-(e.pageX-_dx);});
-  document.addEventListener("mouseup",()=>{if(!_drag)return;_drag=false;framesEl.classList.remove("dragging");});
-  framesEl.addEventListener("wheel",e=>{if(Math.abs(e.deltaX)>Math.abs(e.deltaY))return;e.preventDefault();framesEl.scrollLeft+=e.deltaY;},{passive:false});
-}
-
-function v2RenderFilmstrip() {
-  v2el.filmstrip.innerHTML = "";
-  v2FrameMap.clear(); v2ActiveFrameEl = null;
-
-  if (v2.cls !== "all") {
-    v2RenderEventFilmstrip();
-  } else {
-    v2RenderSegmentFilmstrip();
-  }
-  v2HighlightActiveFrame();
-}
-
-function v2RenderEventFilmstrip() {
-  const evts = v2FilteredEvents();
-  v2.eventPlaylist = evts;
-
-  if (!evts.length) return;
-
-  // Group by source
-  const groups = new Map();
-  evts.forEach(e => {
-    if (!groups.has(e.source_id)) groups.set(e.source_id, []);
-    groups.get(e.source_id).push(e);
-  });
-
-  for (const [srcId, srcEvts] of groups) {
-    const src = v2.sources.find(s => s.id === srcId);
-    const stripEl = document.createElement("div"); stripEl.className = "strip";
-    const labelEl = document.createElement("div"); labelEl.className = "strip-label";
-    labelEl.textContent = src?.name || srcId;
-    const framesEl = document.createElement("div"); framesEl.className = "frames";
-    v2MakeScrollable(framesEl);
-
-    let lastHour = null;
-    srcEvts.forEach((evt, evtIdx) => {
-      const evtHour = Math.floor(evt.abs_ts / 3600);
-      if (lastHour !== null && evtHour > lastHour) {
-        const m = document.createElement("div"); m.className = "hour-mark";
-        const ml = document.createElement("span"); ml.className = "hour-mark-label";
-        ml.textContent = new Date(evtHour * 3600000).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
-        m.appendChild(ml); framesEl.appendChild(m);
-      }
-      lastHour = evtHour;
-
-      // Find the segment for this event
-      const seg = v2.segments.find(s => s.id === evt.segment_id);
-      if (!seg) return;
-      const t = Math.max(0, evt.start_off - 1);
-      const frameEl = v2BuildEventFrame(seg, evt, t);
-      framesEl.appendChild(frameEl);
-      v2FrameMap.set(`evt_${evt.id}`, frameEl);
-      v2Observer.observe(frameEl);
+    btn.className = "speed-pill" + (i === st.speed ? " active" : "");
+    btn.textContent = s.label;
+    btn.addEventListener("click", () => {
+      st.speed = i; localStorage.setItem("v2speed", i);
+      player.setRate(s.rate); buildSpeedPills();
     });
-
-    stripEl.appendChild(labelEl); stripEl.appendChild(framesEl);
-    v2el.filmstrip.appendChild(stripEl);
-  }
-}
-
-function v2BuildEventFrame(seg, evt, t) {
-  const frame = document.createElement("div");
-  frame.className = "v2-frame";
-
-  const img = document.createElement("img");
-  img.alt = ""; img.loading = "lazy";
-  img.dataset.src = `/api/thumb?path=${encodeURIComponent(seg.path)}&t=${t.toFixed(1)}`;
-  img.onerror = () => frame.classList.add("v2-loading");
-
-  const ts = document.createElement("div");
-  ts.className = "v2-frame-ts";
-  const dur = Math.round(evt.end_off - evt.start_off);
-  ts.textContent = new Date(evt.abs_ts * 1000).toLocaleTimeString(undefined,
-    {hour:"2-digit",minute:"2-digit",second:"2-digit"}) + (dur > 0 ? ` ${dur}s` : "");
-
-  frame.appendChild(img); frame.appendChild(ts);
-
-  const playlistIdx = v2.eventPlaylist.indexOf(evt);
-  frame.addEventListener("click", () => {
-    v2.curEventIdx = playlistIdx;
-    v2LoadSegment(seg, Math.max(0, evt.start_off - V2_PRE_BUFFER));
+    el.speeds.appendChild(btn);
   });
-  return frame;
 }
 
-function v2RenderSegmentFilmstrip() {
-  v2.eventPlaylist = []; v2.curEventIdx = -1;
-  const segs = v2FilteredSegments();
-  if (!segs.length) return;
-
-  const groups = new Map();
-  segs.forEach(s => {
-    if (!groups.has(s.source_id)) groups.set(s.source_id, []);
-    groups.get(s.source_id).push(s);
-  });
-
-  const interval = V2_DENSITY[v2.density - 1].intervalSec;
-
-  for (const [srcId, srcSegs] of groups) {
-    const src = v2.sources.find(s => s.id === srcId);
-    const stripEl = document.createElement("div"); stripEl.className = "strip";
-    const labelEl = document.createElement("div"); labelEl.className = "strip-label";
-    labelEl.textContent = src?.name || srcId;
-    const framesEl = document.createElement("div"); framesEl.className = "frames";
-    v2MakeScrollable(framesEl);
-
-    let lastHour = null;
-    srcSegs.forEach(seg => {
-      const dur = seg.end_ts ? (seg.end_ts - seg.start_ts) : 0;
-      const segHour = Math.floor(seg.start_ts / 3600);
-      if (lastHour !== null && segHour > lastHour) {
-        for (let h = lastHour + 1; h <= segHour; h++) {
-          const m = document.createElement("div"); m.className = "hour-mark";
-          const ml = document.createElement("span"); ml.className = "hour-mark-label";
-          ml.textContent = new Date(h*3600000).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
-          m.appendChild(ml); framesEl.appendChild(m);
-        }
-      }
-      lastHour = Math.floor((seg.start_ts + dur) / 3600);
-
-      const steps = dur > 0 ? Math.max(1, Math.ceil(dur / interval)) : 1;
-      for (let i = 0; i < steps; i++) {
-        const t = Math.min(i * interval, Math.max(0, dur - 1));
-        if (i > 0 && t >= dur && dur > 0) break;
-        const absTs = seg.start_ts + t;
-        const frameEl = v2BuildFrame(seg, t, absTs);
-        framesEl.appendChild(frameEl);
-        v2FrameMap.set(`${seg.id}_${t}`, frameEl);
-        v2Observer.observe(frameEl);
-      }
-    });
-
-    stripEl.appendChild(labelEl); stripEl.appendChild(framesEl);
-    v2el.filmstrip.appendChild(stripEl);
-  }
-}
-
-function v2BuildFrame(seg, t, absTs) {
-  const frame = document.createElement("div");
-  frame.className = "v2-frame";
-
-  const img = document.createElement("img");
-  img.alt = ""; img.loading = "lazy";
-  img.dataset.src = `/api/thumb?path=${encodeURIComponent(seg.path)}&t=${t.toFixed(1)}`;
-  img.onerror = () => frame.classList.add("v2-loading");
-
-  const ts = document.createElement("div");
-  ts.className = "v2-frame-ts";
-  ts.textContent = new Date(absTs * 1000).toLocaleTimeString(undefined,
-    {hour:"2-digit",minute:"2-digit",second:"2-digit"});
-
-  frame.appendChild(img); frame.appendChild(ts);
-
-  // Detection ticks at this timestamp region
-  const dur = V2_DENSITY[v2.density - 1].intervalSec;
-  const evtsHere = v2.events.filter(e =>
-    e.source_id === seg.source_id && e.abs_ts >= absTs && e.abs_ts < absTs + dur
-  );
-  evtsHere.slice(0, 8).forEach(e => {
-    const tick = document.createElement("div");
-    const cls = V2_MOBILE.has(e.class) ? (V2_ANIMAL.has(e.class) ? "v2-tick-animal" : e.class === "person" ? "v2-tick-person" : "v2-tick-vehicle") : "v2-tick-vehicle";
-    tick.className = `v2-det-tick ${cls}`;
-    tick.style.left = `${((e.abs_ts - absTs) / dur) * 100}%`;
-    frame.appendChild(tick);
-  });
-
-  frame.addEventListener("click", () => { v2LoadSegment(seg, t); });
-  return frame;
-}
-
-// ── Load segment ──────────────────────────────────
-function v2LoadSegment(seg, offset) {
-  v2.curSeg = seg; v2.curOff = offset;
-  const url = `/video/files/${seg.path}`;
-
-  v2el.empty.style.display  = "none";
-  v2el.player.style.display = "block";
-
-  if (v2el.player.dataset.src !== url) {
-    v2el.player.src = url;
-    v2el.player.dataset.src = url;
-    v2el.player.load();
-    v2el.player.addEventListener("loadedmetadata", () => {
-      v2el.player.currentTime = offset;
-      if (v2.playing) v2el.player.play().catch(()=>{});
-    }, { once: true });
-  } else {
-    v2el.player.currentTime = offset;
-    if (v2.playing) v2el.player.play().catch(()=>{});
-  }
-
-  v2el.player.playbackRate = V2_SPEEDS[v2.speed].rate;
-
-  // Load detections for this segment
-  if (!v2.detections[seg.id]) {
-    fetch(`/api/video/detections?segment_id=${seg.id}`, { cache: "no-store" })
-      .then(r => r.json())
-      .then(d => { v2.detections[seg.id] = d.detections || []; })
-      .catch(() => {});
-  }
-
-  const src = v2.sources.find(s => s.id === seg.source_id);
-  if (v2el.hudSource) v2el.hudSource.textContent = (src?.name || seg.source_id).toUpperCase();
-
-  v2HighlightActiveFrame(true); // scroll on explicit load
-}
-
-function v2HighlightActiveFrame(forceScroll = false) {
-  if (v2ActiveFrameEl) v2ActiveFrameEl.classList.remove("v2-active");
-  v2ActiveFrameEl = null;
-  if (!v2.curSeg) return;
-
-  let key;
-  if (v2.cls !== "all" && v2.curEventIdx >= 0) {
-    const evt = v2.eventPlaylist[v2.curEventIdx];
-    key = evt ? `evt_${evt.id}` : null;
-  } else {
-    const interval = V2_DENSITY[v2.density - 1].intervalSec;
-    const nearestT = Math.round(v2.curOff / interval) * interval;
-    key = `${v2.curSeg.id}_${nearestT}`;
-  }
-  const el = key ? v2FrameMap.get(key) : null;
-  if (el) {
-    el.classList.add("v2-active");
-    v2ActiveFrameEl = el;
-    // Only scroll if user explicitly navigated or in LIVE mode
-    if (forceScroll || v2.live) {
-      const framesEl = el.closest(".frames");
-      if (framesEl) framesEl.scrollTo({
-        left: el.offsetLeft - framesEl.clientWidth / 2 + el.offsetWidth / 2,
-        behavior: "smooth"
-      });
-    }
-  }
-}
-
-// ── Player events ─────────────────────────────────
-v2el.player.addEventListener("timeupdate", () => {
-  const t = v2el.player.currentTime;
-  const dur = v2el.player.duration || 1;
-  v2.curOff = t;
-
-  // Time display
-  if (v2el.timeDisp) v2el.timeDisp.textContent = `${v2FmtSecs(t)} / ${v2FmtSecs(dur)}`;
-
-  // HUD time
-  if (v2el.hudTime && v2.curSeg) {
-    const abs = v2.curSeg.start_ts + t;
-    v2el.hudTime.textContent = new Date(abs * 1000).toLocaleTimeString(undefined,
-      {hour:"2-digit",minute:"2-digit",second:"2-digit"});
-  }
-
-  // Timestamp in panel
-  if (v2el.timestamp && v2.curSeg) {
-    const src = v2.sources.find(s => s.id === v2.curSeg.source_id);
-    const abs = v2.curSeg.start_ts + t;
-    v2el.timestamp.textContent = `${src?.name || v2.curSeg.source_id} · ${new Date(abs*1000).toLocaleString(undefined,{dateStyle:"medium",timeStyle:"medium"})}`;
-  }
-
-  // Event mode: auto-advance to next event when current window ends
-  if (v2.cls !== "all" && v2.curEventIdx >= 0 && v2.curSeg) {
-    const evt = v2.eventPlaylist[v2.curEventIdx];
-    if (evt && evt.segment_id === v2.curSeg.id && t > evt.end_off + V2_POST_BUFFER) {
-      v2NextEvent();
-      return;
-    }
-  }
-
-  // Update filmstrip highlight every ~5s
-  if (Math.abs(t - (v2FrameMap._lastHighlightT || -999)) > V2_DENSITY[v2.density-1].intervalSec / 2) {
-    v2FrameMap._lastHighlightT = t;
-    v2HighlightActiveFrame();
-  }
-
-  v2DrawBoxes(t);
+// Keyboard
+document.addEventListener("keydown", e => {
+  if (["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
+  if (e.key === " ")           { e.preventDefault(); player.paused ? player.play() : player.pause(); }
+  else if (e.key === "ArrowLeft")  { player.rewind(5); }
+  else if (e.key === "ArrowRight") { el.video.currentTime += 5; }
+  else if (e.key === "ArrowUp")    { player.prev(); }
+  else if (e.key === "ArrowDown")  { player.next(); }
 });
 
-v2el.player.addEventListener("play",  () => { v2.playing = true;  v2el.playBtn.textContent = "■"; v2el.playBtn.classList.add("playing"); });
-v2el.player.addEventListener("pause", () => { v2.playing = false; v2el.playBtn.textContent = "▶"; v2el.playBtn.classList.remove("playing"); });
-v2el.player.addEventListener("ended", () => {
-  if (v2.cls !== "all" && v2.eventPlaylist.length) {
-    v2NextEvent(); return;
-  }
-  if (v2.curSeg) {
-    const segs = v2FilteredSegments();
-    const idx  = segs.findIndex(s => s.id === v2.curSeg.id);
-    const next = segs[idx + 1];
-    if (next) { v2LoadSegment(next, 0); if (v2.playing) v2el.player.play().catch(()=>{}); }
-    else if (v2.loop && segs.length) { v2LoadSegment(segs[0], 0); if (v2.playing) v2el.player.play().catch(()=>{}); }
-  }
+// Click video to toggle play
+el.video.addEventListener("click", () => { player.paused ? player.play() : player.pause(); });
+el.video.addEventListener("dblclick", () => {
+  const stage = document.querySelector(".v2-stage");
+  document.fullscreenElement ? document.exitFullscreen() : stage.requestFullscreen().catch(()=>{});
 });
 
-// ── Box overlay ───────────────────────────────────
-function v2DrawBoxes(t) {
-  const canvas = v2el.boxCanvas;
-  const video  = v2el.player;
-  if (!canvas || !video.videoWidth || !v2.showBoxes) {
-    if (canvas) { canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
-      canvas.getContext("2d").clearRect(0,0,canvas.width,canvas.height); }
-    return;
-  }
-  canvas.width  = canvas.clientWidth;
-  canvas.height = canvas.clientHeight;
+// ── Box overlay ───────────────────────────────────────
+async function loadDets(segId) {
+  if (st.dets[segId]) return;
+  const r = await fetch(`/api/video/detections?segment_id=${segId}`, { cache: "no-store" });
+  if (r.ok) st.dets[segId] = (await r.json()).detections || [];
+}
+
+function drawBoxes(ts) {
+  const canvas = el.canvas, video = el.video;
+  canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!st.showBoxes || !video.videoWidth) return;
 
-  const dets = v2.curSeg ? (v2.detections[v2.curSeg.id] || []) : [];
-  if (!dets.length) return;
+  const curSeg = player._curSeg();
+  if (!curSeg) return;
+  if (!st.dets[curSeg.id]) { loadDets(curSeg.id); return; }
 
+  const off = ts - curSeg.start_ts;
+  const dets = st.dets[curSeg.id] || [];
   const nearest = dets.reduce((best, d) =>
-    Math.abs(d.ts_offset - t) < Math.abs((best?.ts_offset ?? Infinity) - t) ? d : best, null);
-  if (!nearest || Math.abs(nearest.ts_offset - t) > 1.5) return;
+    Math.abs(d.ts_offset - off) < Math.abs((best?.ts_offset ?? Infinity) - off) ? d : best, null);
+  if (!nearest || Math.abs(nearest.ts_offset - off) > 1.5) return;
+
   const boxes = nearest.boxes || [];
   if (!boxes.length) return;
-
   const cw = canvas.width, ch = canvas.height;
   const iw = video.videoWidth, ih = video.videoHeight;
-  const scale = Math.min(cw/iw, ch/ih);
-  const rw = iw*scale, rh = ih*scale;
-  const ox = (cw-rw)/2, oy = (ch-rh)/2;
-  const evtClass = v2.cls !== "all" ? v2.cls : null;
+  const scale = Math.min(cw / iw, ch / ih);
+  const rw = iw * scale, rh = ih * scale;
+  const ox = (cw - rw) / 2, oy = (ch - rh) / 2;
 
   boxes.forEach(box => {
-    const isPrimary = !evtClass || box.cls === evtClass;
-    const color = V2_BOX_COLORS[box.cls] || "#ccd8e4";
+    const isPrimary = st.cls === "all" || box.cls === st.cls;
+    const color = BOX_COLORS[box.cls] || "#ccd8e4";
     const x = ox + box.x1*rw, y = oy + box.y1*rh;
     const w = (box.x2-box.x1)*rw, h = (box.y2-box.y1)*rh;
     ctx.globalAlpha = isPrimary ? 1.0 : 0.65;
@@ -624,123 +604,48 @@ function v2DrawBoxes(t) {
       const tw = ctx.measureText(label).width + 6;
       const ty = y > 18 ? y-18 : y+h;
       ctx.fillStyle = color; ctx.fillRect(x-1, ty, tw, 16);
-      ctx.globalAlpha = 1.0;
-      ctx.fillStyle = "#050709"; ctx.fillText(label, x+2, ty+11);
+      ctx.globalAlpha = 1; ctx.fillStyle = "#050709";
+      ctx.fillText(label, x+2, ty+11);
     }
   });
-  ctx.globalAlpha = 1.0;
+  ctx.globalAlpha = 1;
 }
 
-// ── Controls ──────────────────────────────────────
-v2el.playBtn.addEventListener("click", () => {
-  v2.playing ? v2el.player.pause() : v2el.player.play().catch(()=>{});
-});
-
-document.getElementById("v2Rewind")?.addEventListener("click", () => {
-  v2el.player.currentTime = Math.max(0, v2el.player.currentTime - 10);
-});
-
-function v2NextEvent() {
-  const next = v2.curEventIdx + 1;
-  if (next < v2.eventPlaylist.length) {
-    v2JumpToEventIdx(next);
-  } else if (v2.loop && v2.eventPlaylist.length) {
-    v2JumpToEventIdx(0);
-  } else {
-    v2el.player.pause();
-  }
+// ── Utils ─────────────────────────────────────────────
+function fmtTs(ts) {
+  return new Date(ts * 1000).toLocaleTimeString(undefined,
+    { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function v2PrevEvent() {
-  const prev = v2.curEventIdx - 1;
-  if (prev >= 0) v2JumpToEventIdx(prev);
+// ── Timeline window ───────────────────────────────────
+function resetWindow() {
+  const now = Date.now() / 1000;
+  timeline.setWindow(now - 6 * 3600, now);
 }
 
-function v2JumpToEventIdx(idx) {
-  const evt = v2.eventPlaylist[idx];
-  if (!evt) return;
-  v2.curEventIdx = idx;
-  const seg = v2.segments.find(s => s.id === evt.segment_id);
-  if (!seg) return;
-  v2LoadSegment(seg, Math.max(0, evt.start_off - V2_PRE_BUFFER));
-  if (v2.playing) v2el.player.play().catch(()=>{});
+// ── Auto-refresh ──────────────────────────────────────
+setInterval(async () => {
+  el.status.textContent = "SYNC";
+  // Extend timeline window to now
+  const now = Date.now() / 1000;
+  timeline._to = now;
+  await load();
+  el.status.textContent = "AUTO";
+  // Redraw timeline with current window
+  timeline.setData(filteredSegs(), filteredEvts());
+}, 15000);
+
+// ── Window resize ─────────────────────────────────────
+window.addEventListener("resize", () => timeline.draw());
+
+// ── Boot ──────────────────────────────────────────────
+async function init() {
+  const r = await fetch("/api/sources", { cache: "no-store" });
+  if (r.ok) st.sources = (await r.json()).sources || [];
+  buildSpeedPills();
+  renderSourceCtrl();
+  resetWindow();
+  await load();
 }
 
-v2el.prev.addEventListener("click", () => {
-  if (v2.cls !== "all" && v2.eventPlaylist.length) { v2PrevEvent(); return; }
-  const evts = v2.events.filter(e => !v2.curSeg || e.source_id === v2.curSeg.source_id);
-  const curAbs = v2.curSeg ? v2.curSeg.start_ts + v2el.player.currentTime : 0;
-  const prev = evts.slice().reverse().find(e => e.abs_ts < curAbs - 2);
-  if (prev) v2SeekToAbs(prev.abs_ts - 3);
-});
-
-v2el.next.addEventListener("click", () => {
-  if (v2.cls !== "all" && v2.eventPlaylist.length) { v2NextEvent(); return; }
-  const evts = v2.events.filter(e => !v2.curSeg || e.source_id === v2.curSeg.source_id);
-  const curAbs = v2.curSeg ? v2.curSeg.start_ts + v2el.player.currentTime : 0;
-  const next = evts.find(e => e.abs_ts > curAbs + 2);
-  if (next) v2SeekToAbs(next.abs_ts - 3);
-});
-
-function v2SeekToAbs(absTs) {
-  const seg = v2.segments.find(s => s.start_ts <= absTs && (s.end_ts || Infinity) > absTs);
-  if (!seg) return;
-  const off = Math.max(0, absTs - seg.start_ts);
-  v2LoadSegment(seg, off);
-}
-
-v2el.loopBtn.addEventListener("click", () => {
-  v2.loop = !v2.loop;
-  v2el.loopBtn.classList.toggle("active", v2.loop);
-});
-
-v2el.boxToggle.addEventListener("click", () => {
-  v2.showBoxes = !v2.showBoxes;
-  localStorage.setItem("v2boxes", v2.showBoxes ? "1" : "0");
-  v2el.boxToggle.classList.toggle("active", v2.showBoxes);
-  v2DrawBoxes(v2el.player.currentTime);
-});
-v2el.boxToggle.classList.toggle("active", v2.showBoxes);
-
-v2el.liveBtn.addEventListener("click", () => {
-  v2.live = !v2.live;
-  v2el.liveBtn.classList.toggle("active", v2.live);
-  v2el.liveBtn.textContent = v2.live ? "● LIVE" : "LIVE";
-  if (v2.live && v2.segments.length) {
-    const latest = v2.segments[0];
-    v2LoadSegment(latest, Math.max(0, (latest.end_ts||0) - latest.start_ts - 3));
-  }
-});
-
-v2el.jumpLatest.addEventListener("click", () => {
-  if (v2.segments.length) {
-    const latest = v2.segments[0];
-    v2LoadSegment(latest, Math.max(0, (latest.end_ts||0) - latest.start_ts - 5));
-  }
-});
-
-// Keyboard
-document.addEventListener("keydown", e => {
-  if (["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
-  if (e.key === " ")           { e.preventDefault(); v2.playing ? v2el.player.pause() : v2el.player.play().catch(()=>{}); }
-  else if (e.key === "ArrowLeft")  { v2el.player.currentTime = Math.max(0, v2el.player.currentTime - 5); }
-  else if (e.key === "ArrowRight") { v2el.player.currentTime = Math.min(v2el.player.duration||999, v2el.player.currentTime + 5); }
-});
-
-// Click image to toggle play
-v2el.player.addEventListener("click", () => {
-  v2.playing ? v2el.player.pause() : v2el.player.play().catch(()=>{});
-});
-v2el.player.addEventListener("dblclick", () => {
-  const stage = document.querySelector(".v2-stage");
-  document.fullscreenElement ? document.exitFullscreen() : stage.requestFullscreen().catch(()=>{});
-});
-
-// ── Utils ─────────────────────────────────────────
-function v2FmtSecs(s) {
-  const m = Math.floor(s/60), sec = Math.floor(s%60);
-  return `${m}:${String(sec).padStart(2,"0")}`;
-}
-
-// ── Boot ──────────────────────────────────────────
-v2Init();
+init();
