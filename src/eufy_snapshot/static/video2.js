@@ -278,14 +278,23 @@ class V2Timeline {
     return 15 * 60;
   }
 
+  _srcAtY(y, H) {
+    const srcIds = [...new Set(this._segs.map(s => s.source_id))];
+    if (!srcIds.length) return null;
+    const LANE_H = Math.floor((H - 20) / srcIds.length);
+    const row = Math.min(srcIds.length - 1, Math.floor(y / LANE_H));
+    return srcIds[row] ?? null;
+  }
+
   _bindEvents() {
     let hoverTimer = null;
     const c = this._c;
 
     c.addEventListener("click", e => {
       const rect = c.getBoundingClientRect();
-      const ts = this._xToTs(e.clientX - rect.left);
-      this.onSeek?.(ts);
+      const ts  = this._xToTs(e.clientX - rect.left);
+      const src = this._srcAtY(e.clientY - rect.top, rect.height);
+      this.onSeek?.(ts, src);
     });
 
     c.addEventListener("mousemove", e => {
@@ -404,10 +413,19 @@ player.onClipEnd = () => {
 };
 
 // ── Timeline callbacks ────────────────────────────────
-timeline.onSeek = (ts) => {
+timeline.onSeek = (ts, srcId) => {
   setLive(false);
+  if (srcId && srcId !== st.source) {
+    st.source = srcId;
+    renderSourceCtrl();
+    // Update HUD source label
+    const src = st.sources.find(s => s.id === srcId);
+    if (el.hudSrc) el.hudSrc.textContent = (src?.name || srcId).toUpperCase();
+  }
   player.seek(ts);
   player.play();
+  el.empty.style.display = "none";
+  el.video.style.display = "block";
 };
 
 // ── Data loading ──────────────────────────────────────
