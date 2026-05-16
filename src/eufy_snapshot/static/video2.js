@@ -173,7 +173,10 @@ class V2Timeline {
   }
 
   _xToTs(x) {
-    return this._from + (x / this._c.width) * (this._to - this._from);
+    const SRC_W = 60;
+    const drawW = this._c.clientWidth - SRC_W;
+    const drawX = Math.max(0, x - SRC_W);
+    return this._from + (drawX / drawW) * (this._to - this._from);
   }
 
   draw() {
