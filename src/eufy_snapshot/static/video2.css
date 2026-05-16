@@ -88,3 +88,11 @@
   color: var(--text-mid); padding: 2px 4px;
   white-space: nowrap; text-align: center;
 }
+
+/* Bigger class chips in video2 */
+.v2-viewer .class-chip {
+  height: 30px;
+  font-size: 0.72rem;
+  padding: 0 10px;
+  letter-spacing: 0.05em;
+}

@@ -350,7 +350,7 @@ const V2_POST_BUFFER = 10;
 const st = {
   sources:  [],
   source:   "all",
-  cls:      "all",
+  cls:      new Set(),   // empty = ALL
   classes:  {},
   segments: [],
   events:   [],
@@ -485,7 +485,7 @@ function filteredSegs() {
 function filteredEvts() {
   let e = st.events;
   if (st.source !== "all") e = e.filter(x => x.source_id === st.source);
-  if (st.cls !== "all")    e = e.filter(x => x.class === st.cls);
+  if (st.cls.size > 0)     e = e.filter(x => st.cls.has(x.class));
   return e;
 }
 
@@ -502,18 +502,32 @@ function playEventPlaylist() {
 // ── Class filter ──────────────────────────────────────
 function renderClassCtrl() {
   el.clsCtrl.innerHTML = "";
-  const entries = [["all","ALL"], ...Object.entries(st.classes).sort((a,b)=>b[1]-a[1])];
-  if (entries.length <= 1) { el.clsField.hidden = true; return; }
+  const entries = Object.entries(st.classes).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) { el.clsField.hidden = true; return; }
   el.clsField.hidden = false;
+
+  // ALL chip — clears selection
+  const allBtn = document.createElement("button");
+  allBtn.className = "class-chip" + (st.cls.size === 0 ? " active" : "");
+  allBtn.textContent = "ALL";
+  allBtn.addEventListener("click", () => {
+    st.cls.clear();
+    renderClassCtrl();
+    timeline.setData(filteredSegs(), filteredEvts());
+  });
+  el.clsCtrl.appendChild(allBtn);
+
   entries.forEach(([c, count]) => {
     const btn = document.createElement("button");
-    btn.className = "class-chip" + (st.cls === c ? " active" : "");
-    btn.textContent = c === "all" ? "ALL" : `${c} ×${count}`;
+    const active = st.cls.has(c);
+    btn.className = "class-chip" + (active ? " active" : "");
+    btn.textContent = `${c} ×${count}`;
     btn.addEventListener("click", () => {
-      st.cls = c;
+      if (st.cls.has(c)) st.cls.delete(c);
+      else               st.cls.add(c);
       renderClassCtrl();
       timeline.setData(filteredSegs(), filteredEvts());
-      if (c !== "all") playEventPlaylist();
+      if (st.cls.size > 0) playEventPlaylist();
     });
     el.clsCtrl.appendChild(btn);
   });
@@ -639,7 +653,7 @@ function drawBoxes(ts) {
   const ox = (cw - rw) / 2, oy = (ch - rh) / 2;
 
   boxes.forEach(box => {
-    const isPrimary = st.cls === "all" || box.cls === st.cls;
+    const isPrimary = st.cls.size === 0 || st.cls.has(box.cls);
     const color = BOX_COLORS[box.cls] || "#ccd8e4";
     const x = ox + box.x1*rw, y = oy + box.y1*rh;
     const w = (box.x2-box.x1)*rw, h = (box.y2-box.y1)*rh;
