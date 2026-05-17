@@ -367,8 +367,10 @@ def make_app(
         cls       = request.query_params.get("class")  or None
         date      = request.query_params.get("date")   or None
         limit     = int(request.query_params.get("limit", 100))
+        since_raw = request.query_params.get("since")
+        since     = float(since_raw) if since_raw else None
         events = await asyncio.to_thread(
-            video_db.list_events, source_id, cls, date, limit
+            video_db.list_events, source_id, cls, date, limit, since
         )
         return JSONResponse({"events": events})
 

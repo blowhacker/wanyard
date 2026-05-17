@@ -453,7 +453,7 @@ async function load() {
 
   const [sr, er, cr] = await Promise.all([
     fetch(`/api/video2/timeline?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
-    fetch(`/api/video/events?limit=2000&${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
+    fetch(`/api/video/events?limit=10000&since=${Math.floor(st.window.from)}&${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
     fetch(`/api/video/classes?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
   ]);
 
