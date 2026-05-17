@@ -58,7 +58,7 @@ class V2Player {
     const base = this.reliableTs;
     if (base == null) return;
     const target = base - secs;
-    const cur = this.#curSeg();
+    const cur = this.currentSeg;
     // If target is before current segment start, look for the previous segment
     if (cur && target < cur.start_ts) {
       const prev = this.#segs
