@@ -7,6 +7,7 @@ class V2Player {
   #abort = null;
   #activeSeg = null;
   #lastSeek = null;
+  #rate = 1;
   #intendedTs = null;  // display target while async seek/load is in flight
   #listeners = { timeupdate: new Set(), play: new Set(), pause: new Set(), ended: new Set() };
 
@@ -61,8 +62,10 @@ class V2Player {
       if (this.#v.dataset.src !== url) {
         this.#v.src         = url;
         this.#v.dataset.src = url;
+        this.#applyRate();
         this.#v.load();
         await this.#waitFor("loadedmetadata", signal);
+        this.#applyRate();
       }
 
       if (signal.aborted) return null;
@@ -87,9 +90,9 @@ class V2Player {
   }
 
   // ── Playback ──────────────────────────────────────────
-  play()         { return this.#v.play().catch(() => {}); }
+  play()         { this.#applyRate(); return this.#v.play().catch(() => {}); }
   pause()        { this.#v.pause(); }
-  setRate(rate)  { this.#v.playbackRate = rate; }
+  setRate(rate)  { this.#rate = rate; this.#applyRate(); }
   get ended()    { return this.#v.ended; }
   // nextSegment: for app to call when 'ended' fires
   nextSegment(srcId) {
@@ -139,6 +142,11 @@ class V2Player {
   on(event, fn)  { this.#listeners[event]?.add(fn); }
   off(event, fn) { this.#listeners[event]?.delete(fn); }
   #emit(event)   { this.#listeners[event]?.forEach(fn => fn()); }
+
+  #applyRate() {
+    this.#v.defaultPlaybackRate = this.#rate;
+    this.#v.playbackRate = this.#rate;
+  }
 
   // ── Private helpers ───────────────────────────────────
   #segFor(ts, srcId) {
