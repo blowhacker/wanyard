@@ -458,6 +458,13 @@ async function load() {
   st.events   = er.events   || [];
   st.classes  = cr.classes  || {};
 
+  // Keep window right-edge at now+10min so ongoing recordings are reachable
+  const nowTs = Date.now() / 1000;
+  if (nowTs > st.window.to - 60) {
+    st.window.to = nowTs + 600; // 10 min headroom
+    timeline.setWindow(st.window.from, st.window.to);
+  }
+
   player.setSegments(st.segments);
 
   const srcNames = {};
@@ -713,8 +720,8 @@ async function init() {
   if (r.ok) st.sources = (await r.json()).sources || [];
   buildSpeedPills();
   player.setRate(V2_SPEEDS[st.speed].rate);
-  st.window.to   = Date.now() / 1000;
-  st.window.from = st.window.to - 6 * 3600;
+  st.window.to   = Date.now() / 1000 + 600; // +10min headroom for ongoing recording
+  st.window.from = st.window.to - 6 * 3600 - 600;
   timeline.setWindow(st.window.from, st.window.to);
   renderSrcCtrl();
   await load();
