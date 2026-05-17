@@ -60,21 +60,29 @@ class V2Player {
         Math.abs(s.start_ts - unix_ts) < Math.abs((best?.start_ts ?? Infinity) - unix_ts) ? s : best,
       null);
     }
-    if (!seg) return false;
+    if (!seg) { dbg("seek: no segment found"); return false; }
 
     const offset = Math.max(0, unix_ts - seg.start_ts);
     const url    = `/video/files/${seg.path}`;
-    const doSeek = () => { this._v.currentTime = offset; };
+    dbg(`seek: seg=${seg.path} offset=${offset.toFixed(1)}s url_match=${this._v.dataset.src === url} readyState=${this._v.readyState}`);
+
+    const doSeek = () => {
+      dbg(`doSeek: setting currentTime=${offset.toFixed(1)}`);
+      this._v.currentTime = offset;
+    };
 
     if (this._v.dataset.src !== url) {
+      dbg("seek: loading new src");
       this._v.src = url;
       this._v.dataset.src = url;
       this._v.load();
     }
 
-    if (this._v.readyState >= 1) {  // HAVE_METADATA
+    if (this._v.readyState >= 1) {
+      dbg("seek: readyState>=1, seeking immediately");
       doSeek();
     } else {
+      dbg("seek: waiting for loadedmetadata");
       this._pendingSeek = () => { doSeek(); this._pendingSeek = null; };
       this._v.addEventListener("loadedmetadata", this._pendingSeek, { once: true });
     }
@@ -313,8 +321,11 @@ class V2Timeline {
 
     c.addEventListener("click", e => {
       const rect = c.getBoundingClientRect();
-      const ts  = this._xToTs(e.clientX - rect.left);
-      const src = this._srcAtY(e.clientY - rect.top, rect.height);
+      const x   = e.clientX - rect.left;
+      const y   = e.clientY - rect.top;
+      const ts  = this._xToTs(x);
+      const src = this._srcAtY(y, rect.height);
+      dbg(`TIMELINE CLICK x=${x.toFixed(0)} y=${y.toFixed(0)} → ts=${new Date(ts*1000).toLocaleTimeString()} src=${src} canvasW=${c.clientWidth}`);
       this.onSeek?.(ts, src);
     });
 
@@ -364,6 +375,8 @@ const V2_SPEEDS = [
   { label: "4×", rate: 4.0 },
 ];
 const V2_POST_BUFFER = 10;
+const V2_DEBUG = true;
+const dbg = (...a) => V2_DEBUG && console.log("[V2]", ...a);
 
 const st = {
   sources:  [],
@@ -435,15 +448,17 @@ player.onClipEnd = () => {
 
 // ── Timeline callbacks ────────────────────────────────
 timeline.onSeek = (ts, srcId) => {
+  dbg(`onSeek ts=${new Date(ts*1000).toLocaleTimeString()} srcId=${srcId}`);
   setLive(false);
   if (srcId && srcId !== st.source) {
+    dbg(`switching source ${st.source} → ${srcId}`);
     st.source = srcId;
     renderSourceCtrl();
-    // Update HUD source label
     const src = st.sources.find(s => s.id === srcId);
     if (el.hudSrc) el.hudSrc.textContent = (src?.name || srcId).toUpperCase();
   }
-  player.seek(ts, srcId);
+  const ok = player.seek(ts, srcId);
+  dbg(`player.seek returned ${ok}; readyState=${el.video.readyState} currentSrc=${el.video.src?.slice(-40)}`);
   player.play();
   el.empty.style.display = "none";
   el.video.style.display = "block";
