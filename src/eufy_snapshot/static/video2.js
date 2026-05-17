@@ -818,6 +818,7 @@ async function init() {
   player.setRate(V2_SPEEDS[st.speed].rate);
 
   const urlTs = readState(); // read source/cls/ts from URL before first load
+  if (urlTs) st.initDone = true; // skip auto-seek to latest; we'll seek to urlTs
   renderSrcCtrl();
 
   const now = Date.now() / 1000;
