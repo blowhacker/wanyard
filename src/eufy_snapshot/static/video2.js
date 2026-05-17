@@ -601,6 +601,7 @@ function filteredEvts() {
 
 // ── Nearby event widget ───────────────────────────────
 const NEAR_EVENT_LIMIT = 10;
+const NEAR_EVENT_REFRESH_MS = 1500;
 
 function nearbyClassSet() {
   if (st.cls.size > 0) return new Set(st.cls);
@@ -746,20 +747,32 @@ function renderNearestEvents() {
   renderNearScope();
   const baseTs = player.displayTs ?? st.events[0]?.abs_ts ?? Date.now() / 1000;
   const evts = nearestEvents(baseTs);
-  el.eventThumbs.innerHTML = "";
+  const scope = nearbyScopeLabel();
+  const sig = `${st.source}|${scope}|${evts.map(e => e.id).join(",") || "empty"}`;
 
   if (!evts.length) {
+    if (_nearListSig === sig) return;
+    _nearListSig = sig;
+    el.eventThumbs.innerHTML = "";
     const empty = document.createElement("div");
     empty.className = "v2-event-thumbs-empty";
-    empty.textContent = `No ${nearbyScopeLabel()} events`;
+    empty.textContent = `No ${scope} events`;
     el.eventThumbs.appendChild(empty);
     return;
   }
 
+  if (_nearListSig === sig) {
+    updateNearestEventNodes(evts, baseTs);
+    return;
+  }
+
+  _nearListSig = sig;
+  el.eventThumbs.innerHTML = "";
   evts.forEach(evt => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "v2-event-thumb" + (isEventActive(evt, baseTs) ? " active" : "");
+    btn.dataset.eventId = String(evt.id);
     btn.title = `${evt.class} ${eventLocalTime(evt.abs_ts)} ${sourceLabel(evt.source_id)}`;
     btn.addEventListener("click", () => {
       const ts = eventSeekTs(evt);
@@ -781,6 +794,7 @@ function renderNearestEvents() {
     const t = document.createElement("span");
     t.textContent = eventLocalTime(evt.abs_ts);
     const d = document.createElement("span");
+    d.dataset.nearDist = "1";
     d.textContent = relEventLabel(evt.abs_ts, baseTs);
     meta.append(t, d);
 
@@ -789,11 +803,24 @@ function renderNearestEvents() {
   });
 }
 
+function updateNearestEventNodes(evts, baseTs) {
+  const nodes = el.eventThumbs.querySelectorAll(".v2-event-thumb");
+  evts.forEach((evt, i) => {
+    const btn = nodes[i];
+    if (!btn || btn.dataset.eventId !== String(evt.id)) return;
+    btn.classList.toggle("active", isEventActive(evt, baseTs));
+    const dist = btn.querySelector("[data-near-dist]");
+    const label = relEventLabel(evt.abs_ts, baseTs);
+    if (dist && dist.textContent !== label) dist.textContent = label;
+  });
+}
+
 let _nearRenderPending = false;
 let _lastNearRender = 0;
+let _nearListSig = "";
 function scheduleNearestEvents(force = false) {
   const now = performance.now();
-  if (!force && now - _lastNearRender < 750) return;
+  if (!force && now - _lastNearRender < NEAR_EVENT_REFRESH_MS) return;
   _lastNearRender = now;
   if (_nearRenderPending) return;
   _nearRenderPending = true;
