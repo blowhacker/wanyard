@@ -133,8 +133,8 @@ class V2Player {
   }
 
   // ── Clip playlist — returns PlaylistHandle ────────────
-  playClips(clips) {
-    const handle = new PlaylistHandle(this, clips);
+  playClips(clips, startIdx = 0) {
+    const handle = new PlaylistHandle(this, clips, startIdx);
     handle._start();
     return handle;
   }
@@ -194,9 +194,10 @@ class PlaylistHandle {
   #check;
   onEnd = null;
 
-  constructor(player, clips) {
+  constructor(player, clips, startIdx = 0) {
     this.#player = player;
     this.#clips  = clips;
+    this.#idx    = Math.max(0, Math.min(clips.length - 1, startIdx));
     this.#check  = () => this.#watchEnd();
   }
 
@@ -290,14 +291,14 @@ class AppMode {
     });
   }
 
-  playEventPlaylist(events, loop = true) {
+  playEventPlaylist(events, loop = true, startIdx = 0) {
     if (!events.length) return;
     this.#cancel();
     this.#mode = "playlist";
     this.onModeChange?.("playlist");
     const POST = 10;
     const clips = events.map(e => [e.abs_ts, e.abs_ts + (e.end_off - e.start_off) + POST]);
-    this.#handle = this.#player.playClips(clips);
+    this.#handle = this.#player.playClips(clips, startIdx);
     this.#handle.onEnd = () => {
       if (loop && this.#mode === "playlist") this.#handle.restart();
       else { this.#mode = "seek"; this.onModeChange?.("seek"); }
@@ -319,6 +320,12 @@ class AppMode {
   stopLive() {
     if (this.#mode !== "live") return;
     this.#op++;
+    this.#mode = "seek";
+    this.onModeChange?.("seek");
+  }
+
+  stop() {
+    this.#cancel();
     this.#mode = "seek";
     this.onModeChange?.("seek");
   }
@@ -570,6 +577,7 @@ const st = {
   showBoxes:localStorage.getItem("v2boxes") !== "0",
   dets:     {},  // segId → [{ts_offset, boxes, classes}]
   initDone: false,
+  classSearchSeq: 0,
 };
 
 // ── Derived views ─────────────────────────────────────
@@ -618,6 +626,89 @@ function nearestEvents(baseTs) {
     .sort((a, b) => a.dist - b.dist || a.event.abs_ts - b.event.abs_ts)
     .slice(0, NEAR_EVENT_LIMIT)
     .map(x => x.event);
+}
+
+function classFilteredEvents(classes = st.cls) {
+  let evts = st.events;
+  if (st.source !== "all") evts = evts.filter(e => e.source_id === st.source);
+  if (classes.size > 0) evts = evts.filter(e => classes.has(e.class));
+  return evts;
+}
+
+function setStatus(text) {
+  if (el.status) el.status.textContent = text;
+}
+
+function centerWindowOn(ts) {
+  const span = st.window.to - st.window.from;
+  st.window.from = ts - span * 0.4;
+  st.window.to   = ts + span * 0.6;
+  timeline.setWindow(st.window.from, st.window.to);
+}
+
+async function fetchNearestEvents(classes, around, limit = 20) {
+  const p = new URLSearchParams();
+  if (st.source !== "all") p.set("source", st.source);
+  if (classes.size > 0) p.set("classes", [...classes].join(","));
+  p.set("around", Math.floor(around));
+  p.set("limit", String(limit));
+  const r = await fetch(`/api/video/events?${p}`, { cache:"no-store" });
+  if (!r.ok) return [];
+  const data = await r.json();
+  return data.events || [];
+}
+
+function mergeEvents(events) {
+  if (!events.length) return;
+  const byId = new Map(st.events.map(e => [e.id, e]));
+  events.forEach(e => byId.set(e.id, e));
+  st.events = [...byId.values()].sort((a, b) => b.abs_ts - a.abs_ts);
+}
+
+async function handleClassSelectionChanged(classes) {
+  const seq = ++st.classSearchSeq;
+  renderClsCtrl();
+  renderNearScope();
+  timeline.setData(allSegsForSrc(), filteredEvts());
+  scheduleNearestEvents(true);
+
+  if (!classes.size) {
+    mode.stop();
+    setStatus("AUTO");
+    return;
+  }
+
+  const baseTs = player.displayTs ?? Date.now() / 1000;
+  let evts = classFilteredEvents(classes);
+  if (!evts.length) {
+    setStatus("SEARCH");
+    evts = await fetchNearestEvents(classes, baseTs, 20);
+    if (seq !== st.classSearchSeq) return;
+    mergeEvents(evts);
+  }
+
+  if (!evts.length) {
+    setStatus("NONE");
+    setTimeout(() => { if (seq === st.classSearchSeq) setStatus("AUTO"); }, 1800);
+    timeline.setData(allSegsForSrc(), filteredEvts());
+    scheduleNearestEvents(true);
+    return;
+  }
+
+  evts = [...evts].sort((a, b) =>
+    Math.abs(a.abs_ts - baseTs) - Math.abs(b.abs_ts - baseTs) || a.abs_ts - b.abs_ts
+  );
+  const target = evts[0];
+  centerWindowOn(target.abs_ts);
+  await load();
+  if (seq !== st.classSearchSeq) return;
+
+  const playlist = classFilteredEvents(classes).sort((a, b) => a.abs_ts - b.abs_ts);
+  const startIdx = Math.max(0, playlist.findIndex(e => e.id === target.id));
+  if (playlist.length) mode.playEventPlaylist(playlist, st.loop, startIdx);
+  scrollTimelineToTs(target.abs_ts);
+  scheduleNearestEvents(true);
+  setStatus("AUTO");
 }
 
 function relEventLabel(ts, baseTs) {
@@ -794,9 +885,8 @@ function renderClsCtrl() {
   allBtn.className = "class-chip" + (st.cls.size === 0 ? " active" : "");
   allBtn.textContent = "ALL";
   allBtn.addEventListener("click", () => {
-    st.cls.clear(); mode.stopLive();
-    renderClsCtrl(); timeline.setData(filteredSegs(), filteredEvts());
-    renderNearScope(); scheduleNearestEvents(true);
+    st.cls.clear();
+    handleClassSelectionChanged(new Set());
   });
   el.clsCtrl.appendChild(allBtn);
 
@@ -807,14 +897,7 @@ function renderClsCtrl() {
     b.addEventListener("click", () => {
       st.cls.has(c) ? st.cls.delete(c) : st.cls.add(c);
       pushState();
-      renderClsCtrl();
-      renderNearScope();
-      timeline.setData(allSegsForSrc(), filteredEvts());
-      scheduleNearestEvents(true);
-      if (st.cls.size > 0) {
-        const evts = filteredEvts().sort((a,b) => a.abs_ts - b.abs_ts);
-        mode.playEventPlaylist(evts, st.loop);
-      }
+      handleClassSelectionChanged(new Set(st.cls));
     });
     el.clsCtrl.appendChild(b);
   });

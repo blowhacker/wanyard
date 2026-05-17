@@ -516,8 +516,20 @@ def make_app(
             return JSONResponse({"events": []})
         source_id = request.query_params.get("source") or None
         cls       = request.query_params.get("class")  or None
+        classes_raw = request.query_params.get("classes") or None
         date      = request.query_params.get("date")   or None
         limit     = int(request.query_params.get("limit", 100))
+        around_raw = request.query_params.get("around")
+        if around_raw:
+            classes = None
+            if classes_raw:
+                classes = [c for c in classes_raw.split(",") if c and c != "all"]
+            elif cls and cls != "all":
+                classes = [cls]
+            events = await asyncio.to_thread(
+                video_db.nearest_events, float(around_raw), source_id, classes, limit
+            )
+            return JSONResponse({"events": events})
         since_raw = request.query_params.get("since")
         since     = float(since_raw) if since_raw else None
         events = await asyncio.to_thread(

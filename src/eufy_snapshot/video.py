@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS video_events (
 );
 CREATE INDEX IF NOT EXISTS vevt_source_ts ON video_events(source_id, abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_class     ON video_events(class, abs_ts);
+CREATE INDEX IF NOT EXISTS vevt_source_class_ts ON video_events(source_id, class, abs_ts);
 """
 
 _MOBILE_CLASSES     = {"person", "bicycle", "motorcycle", "truck", "bus",
@@ -195,6 +196,36 @@ class VideoSegmentDB:
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+    def nearest_events(self, around: float, source_id: str | None = None,
+                       classes: list[str] | None = None,
+                       limit: int = 20) -> list[dict]:
+        where, params = ["1"], []
+        if source_id and source_id != "all":
+            where.append("e.source_id=?"); params.append(source_id)
+        if classes:
+            placeholders = ",".join("?" for _ in classes)
+            where.append(f"e.class IN ({placeholders})")
+            params.extend(classes)
+        base = " AND ".join(where)
+        select = (
+            "SELECT e.*, s.path as seg_path, s.spritesheet,"
+            " s.start_ts as seg_start_ts"
+            " FROM video_events e JOIN segments s ON s.id=e.segment_id"
+            f" WHERE {base}"
+        )
+        with self._connect() as conn:
+            before = conn.execute(
+                f"{select} AND e.abs_ts<=? ORDER BY e.abs_ts DESC LIMIT ?",
+                (*params, around, limit),
+            ).fetchall()
+            after = conn.execute(
+                f"{select} AND e.abs_ts>? ORDER BY e.abs_ts ASC LIMIT ?",
+                (*params, around, limit),
+            ).fetchall()
+        rows = [dict(r) for r in before] + [dict(r) for r in after]
+        rows.sort(key=lambda r: (abs(r["abs_ts"] - around), r["abs_ts"]))
+        return rows[:limit]
 
     def get_event_with_segment(self, event_id: int) -> dict | None:
         with self._connect() as conn:
