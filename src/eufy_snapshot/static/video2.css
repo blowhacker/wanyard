@@ -127,12 +127,20 @@
   gap: 8px;
 }
 
-.v2-near-select {
-  width: 118px;
-  height: 28px;
+.v2-near-scope {
+  max-width: 150px;
+  min-height: 22px;
   flex-shrink: 0;
-  font-size: 0.62rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 0.56rem;
+  line-height: 1.15;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-mid);
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .v2-event-thumbs {

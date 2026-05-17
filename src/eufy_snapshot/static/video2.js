@@ -536,7 +536,7 @@ const el = {
   srcCtrl: $("v2SourceCtrl"),
   clsField:$("v2ClassField"),
   clsCtrl: $("v2ClassCtrl"),
-  nearClass:$("v2NearClass"),
+  nearScope:$("v2NearScope"),
   eventThumbs:$("v2EventThumbs"),
   play:    $("v2Play"),
   prev:    $("v2Prev"),
@@ -568,8 +568,6 @@ const st = {
   speed:    parseInt(localStorage.getItem("v2speed") || "1"),
   loop:     true,
   showBoxes:localStorage.getItem("v2boxes") !== "0",
-  nearClass:"",
-  nearClassManual:false,
   dets:     {},  // segId → [{ts_offset, boxes, classes}]
   initDone: false,
 };
@@ -596,49 +594,25 @@ function filteredEvts() {
 // ── Nearby event widget ───────────────────────────────
 const NEAR_EVENT_LIMIT = 10;
 
-function nearClassOptions() {
-  const names = new Set(Object.keys(st.classes));
-  st.events.forEach(e => { if (e.class) names.add(e.class); });
-  st.cls.forEach(c => names.add(c));
-  return ["all", ...[...names].sort((a, b) =>
-    (st.classes[b] || 0) - (st.classes[a] || 0) || a.localeCompare(b)
-  )];
+function nearbyClassSet() {
+  if (st.cls.size > 0) return new Set(st.cls);
+  return new Set(["person"]);
 }
 
-function syncNearClass() {
-  const options = nearClassOptions();
-  if (!st.nearClassManual) {
-    const selected = [...st.cls].find(c => options.includes(c));
-    if (selected) st.nearClass = selected;
-    else if (!st.nearClass) st.nearClass = "all";
-  }
-  if (!options.includes(st.nearClass)) {
-    st.nearClass = "all";
-    st.nearClassManual = false;
-  }
+function nearbyScopeLabel() {
+  const classes = [...nearbyClassSet()];
+  return classes.join(", ");
 }
 
-function renderNearClassCtrl() {
-  if (!el.nearClass) return;
-  syncNearClass();
-  const options = nearClassOptions();
-  el.nearClass.innerHTML = "";
-  options.forEach(c => {
-    const opt = document.createElement("option");
-    opt.value = c;
-    opt.textContent = c === "all" ? "ALL" : `${c} ×${st.classes[c] || 0}`;
-    el.nearClass.appendChild(opt);
-  });
-  el.nearClass.value = st.nearClass;
-  el.nearClass.disabled = options.length <= 1;
+function renderNearScope() {
+  if (el.nearScope) el.nearScope.textContent = nearbyScopeLabel();
 }
 
 function nearestEvents(baseTs) {
   let evts = st.events;
   if (st.source !== "all") evts = evts.filter(e => e.source_id === st.source);
-  if (st.nearClass && st.nearClass !== "all") {
-    evts = evts.filter(e => e.class === st.nearClass);
-  }
+  const classes = nearbyClassSet();
+  evts = evts.filter(e => classes.has(e.class));
   return evts
     .map(e => ({ event: e, dist: Math.abs(e.abs_ts - baseTs) }))
     .sort((a, b) => a.dist - b.dist || a.event.abs_ts - b.event.abs_ts)
@@ -678,7 +652,7 @@ function isEventActive(evt, ts) {
 
 function renderNearestEvents() {
   if (!el.eventThumbs) return;
-  syncNearClass();
+  renderNearScope();
   const baseTs = player.displayTs ?? st.events[0]?.abs_ts ?? Date.now() / 1000;
   const evts = nearestEvents(baseTs);
   el.eventThumbs.innerHTML = "";
@@ -686,7 +660,7 @@ function renderNearestEvents() {
   if (!evts.length) {
     const empty = document.createElement("div");
     empty.className = "v2-event-thumbs-empty";
-    empty.textContent = `No ${st.nearClass === "all" ? "" : st.nearClass + " "}events`;
+    empty.textContent = `No ${nearbyScopeLabel()} events`;
     el.eventThumbs.appendChild(empty);
     return;
   }
@@ -775,7 +749,7 @@ async function load() {
 
   renderSrcCtrl();
   renderClsCtrl();
-  renderNearClassCtrl();
+  renderNearScope();
   scheduleNearestEvents(true);
 
   if (!st.initDone && st.segments.length) {
@@ -821,9 +795,8 @@ function renderClsCtrl() {
   allBtn.textContent = "ALL";
   allBtn.addEventListener("click", () => {
     st.cls.clear(); mode.stopLive();
-    if (!st.nearClassManual) st.nearClass = "all";
     renderClsCtrl(); timeline.setData(filteredSegs(), filteredEvts());
-    renderNearClassCtrl(); scheduleNearestEvents(true);
+    renderNearScope(); scheduleNearestEvents(true);
   });
   el.clsCtrl.appendChild(allBtn);
 
@@ -833,10 +806,9 @@ function renderClsCtrl() {
     b.textContent = `${c} ×${n}`;
     b.addEventListener("click", () => {
       st.cls.has(c) ? st.cls.delete(c) : st.cls.add(c);
-      if (!st.nearClassManual) st.nearClass = st.cls.size > 0 ? [...st.cls][0] : "all";
       pushState();
       renderClsCtrl();
-      renderNearClassCtrl();
+      renderNearScope();
       timeline.setData(allSegsForSrc(), filteredEvts());
       scheduleNearestEvents(true);
       if (st.cls.size > 0) {
@@ -861,12 +833,6 @@ el.tlCanvas.addEventListener("click", e => {
   }
   el.empty.style.display = "none";
   el.video.style.display = "block";
-});
-
-el.nearClass?.addEventListener("change", () => {
-  st.nearClass = el.nearClass.value;
-  st.nearClassManual = true;
-  renderNearestEvents();
 });
 
 // Timeline scroll — shift window, clamp to data bounds
