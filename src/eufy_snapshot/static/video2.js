@@ -46,8 +46,11 @@ class V2Player {
 
     if (!signal.aborted) {
       this.#v.currentTime = offset;
-      // Once seeked fires, currentTs is reliable; clear intendedTs
-      this.#v.addEventListener("seeked", () => { this.#intendedTs = null; }, { once: true });
+      // Clear intendedTs only if it still belongs to THIS seek (not a newer one)
+      const myTs = unix_ts;
+      this.#v.addEventListener("seeked", () => {
+        if (this.#intendedTs === myTs) this.#intendedTs = null;
+      }, { once: true });
     }
     return !signal.aborted;
   }
