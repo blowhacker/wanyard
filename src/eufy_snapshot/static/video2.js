@@ -5,7 +5,9 @@ class V2Player {
   #v;
   #segs = [];
   #abort = null;
-  #intendedTs = null;  // reliable even during async seek
+  #activeSeg = null;
+  #lastSeek = null;
+  #intendedTs = null;  // display target while async seek/load is in flight
   #listeners = { timeupdate: new Set(), play: new Set(), pause: new Set(), ended: new Set() };
 
   constructor(videoEl) {
@@ -18,6 +20,9 @@ class V2Player {
 
   setSegments(segs) {
     this.#segs = [...segs].sort((a, b) => a.start_ts - b.start_ts);
+    if (this.#activeSeg) {
+      this.#activeSeg = this.#segs.find(s => s.id === this.#activeSeg.id) ?? this.#activeSeg;
+    }
   }
 
   // ── Seek ──────────────────────────────────────────────
@@ -27,40 +32,65 @@ class V2Player {
     this.#abort = new AbortController();
     const { signal } = this.#abort;
 
-    this.#intendedTs = unix_ts;
     const segDirect = this.#segFor(unix_ts, srcId);
     const seg = segDirect ?? this.#resolve(unix_ts, srcId, direction);
-    console.log(`[SK] ts=${new Date(unix_ts*1000).toISOString()} dir=${direction} segDirect=${segDirect?.path?.slice(-20)} resolved=${seg?.path?.slice(-20)}`);
-    if (!seg) return false;
+    if (!seg) {
+      if (this.#abort?.signal === signal) this.#intendedTs = null;
+      return null;
+    }
 
     // Clamp offset to within segment duration — prevents snapping past end
-    const maxOff = seg.end_ts ? (seg.end_ts - seg.start_ts - 0.5) : Infinity;
+    const maxOff = seg.end_ts ? Math.max(0, seg.end_ts - seg.start_ts - 0.5) : Infinity;
     const offset = Math.max(0, Math.min(unix_ts - seg.start_ts, maxOff));
     const url    = `/video/files/${seg.path}`;
+    const actualTs = seg.start_ts + offset;
+    const landing = {
+      requestedTs: unix_ts,
+      actualTs,
+      offsetSecs: offset,
+      remainingSecs: seg.end_ts == null ? Infinity : Math.max(0, seg.end_ts - actualTs),
+      reason: segDirect ? "direct" : (direction ? `gap-${direction}` : "gap-nearest"),
+      sourceId: seg.source_id,
+      segmentId: seg.id,
+      segment: seg,
+    };
 
-    if (this.#v.dataset.src !== url) {
-      this.#v.src         = url;
-      this.#v.dataset.src = url;
-      this.#v.load();
-      try { await this.#waitFor("loadedmetadata", signal); }
-      catch { return false; }
+    this.#intendedTs = actualTs;
+
+    try {
+      if (this.#v.dataset.src !== url) {
+        this.#v.src         = url;
+        this.#v.dataset.src = url;
+        this.#v.load();
+        await this.#waitFor("loadedmetadata", signal);
+      }
+
+      if (signal.aborted) return null;
+
+      this.#activeSeg = seg;
+      if (Math.abs((this.#v.currentTime || 0) - offset) > 0.05) {
+        const seeked = this.#waitFor("seeked", signal);
+        this.#v.currentTime = offset;
+        await seeked;
+      } else {
+        this.#v.currentTime = offset;
+      }
+    } catch {
+      if (this.#abort?.signal === signal && this.#intendedTs === actualTs) this.#intendedTs = null;
+      return null;
     }
 
-    if (!signal.aborted) {
-      this.#v.currentTime = offset;
-      // Clear intendedTs only if it still belongs to THIS seek (not a newer one)
-      const myTs = unix_ts;
-      this.#v.addEventListener("seeked", () => {
-        if (this.#intendedTs === myTs) this.#intendedTs = null;
-      }, { once: true });
-    }
-    return !signal.aborted;
+    if (signal.aborted) return null;
+    if (this.#intendedTs === actualTs) this.#intendedTs = null;
+    this.#lastSeek = landing;
+    return landing;
   }
 
   // ── Playback ──────────────────────────────────────────
   play()         { return this.#v.play().catch(() => {}); }
   pause()        { this.#v.pause(); }
   setRate(rate)  { this.#v.playbackRate = rate; }
+  get ended()    { return this.#v.ended; }
   // nextSegment: for app to call when 'ended' fires
   nextSegment(srcId) {
     const cur = this.currentSeg;
@@ -72,18 +102,30 @@ class V2Player {
   }
   get paused()      { return this.#v.paused; }
   get intendedTs()  { return this.#intendedTs; }
-  /** Best available position — intendedTs while seeking, currentTs when settled */
-  get reliableTs()  { return this.#intendedTs ?? this.currentTs; }
+  get displayTs()   { return this.#intendedTs ?? this.currentTs; }
+  /** Backwards-compatible alias for the UI's display clock. */
+  get reliableTs()  { return this.displayTs; }
+  get mediaTs()     { return this.currentTs; }
+  get lastSeek()    { return this.#lastSeek; }
   get duration() { return this.#v.duration || 0; }
+  get remainingSecs() {
+    if (this.#v.ended) return 0;
+    const seg = this.currentSeg, ts = this.currentTs;
+    if (!seg || seg.end_ts == null || ts == null) return null;
+    return Math.max(0, seg.end_ts - ts);
+  }
+  get nearSegmentEnd() {
+    const rem = this.remainingSecs;
+    return this.#v.ended || (rem != null && rem <= 1.25);
+  }
 
   // ── Current timestamp ─────────────────────────────────
   get currentTs() {
-    const seg = this.#segs.find(s => `/video/files/${s.path}` === this.#v.dataset.src);
-    return seg ? seg.start_ts + this.#v.currentTime : null;
+    return this.#activeSeg ? this.#activeSeg.start_ts + this.#v.currentTime : null;
   }
 
   get currentSeg() {
-    return this.#segs.find(s => `/video/files/${s.path}` === this.#v.dataset.src) ?? null;
+    return this.#activeSeg;
   }
 
   // ── Clip playlist — returns PlaylistHandle ────────────
@@ -150,6 +192,8 @@ class PlaylistHandle {
   }
 
   _start() {
+    if (this.#active) return;
+    if (this.#idx >= this.#clips.length) this.#idx = 0;
     this.#active = true;
     this.#player.on("timeupdate", this.#check);
     this.#player.on("ended",      this.#check); // catch segment file end
@@ -159,16 +203,27 @@ class PlaylistHandle {
   async #seekCurrent() {
     if (!this.#active || this.#idx >= this.#clips.length) return;
     const [start] = this.#clips[this.#idx];
-    await this.#player.seek(start);
+    const landing = await this.#player.seek(start);
     if (!this.#active) return;  // cancelled during seek
+    if (!landing) return;
     this.#player.play();
   }
 
   #watchEnd() {
     if (!this.#active) return;
-    const [, end] = this.#clips[this.#idx] ?? [];
+    const [start, end] = this.#clips[this.#idx] ?? [];
     const ts = this.#player.currentTs;
-    if (end != null && ts != null && ts >= end) this.#advance();
+    if (end != null && ts != null && ts >= end) { this.#advance(); return; }
+
+    if (this.#player.ended && end != null) {
+      const next = this.#player.nextSegment();
+      if (next && next.start_ts < end) {
+        this.#player.seek(Math.max(next.start_ts, start), next.source_id, "forward")
+          .then(landing => { if (this.#active && landing) this.#player.play(); });
+      } else {
+        this.#advance();
+      }
+    }
   }
 
   #advance() {
@@ -186,6 +241,12 @@ class PlaylistHandle {
   get clipIdx()   { return this.#idx; }
   get clipCount() { return this.#clips.length; }
 
+  restart() {
+    this.cancel();
+    this.#idx = 0;
+    this._start();
+  }
+
   cancel() {
     this.#active = false;
     this.#player.off("timeupdate", this.#check);
@@ -200,17 +261,24 @@ class AppMode {
   #player;
   #handle = null;
   #mode = "seek";   // "seek" | "playlist" | "live"
+  #op = 0;
   onModeChange = null;
 
   constructor(player) { this.#player = player; }
 
   get current() { return this.#mode; }
 
-  seekTo(unix_ts, srcId = null, direction = null) {
+  seekTo(unix_ts, srcId = null, direction = null, options = {}) {
     this.#cancel();
     this.#mode = "seek";
     this.onModeChange?.("seek");
-    this.#player.seek(unix_ts, srcId, direction).then(() => this.#player.play());
+    const op = ++this.#op;
+    const autoplay = options.autoplay !== false;
+    this.#player.seek(unix_ts, srcId, direction).then(landing => {
+      if (op !== this.#op || !landing) return;
+      const shortBackwardGap = landing.reason === "gap-backward" && landing.remainingSecs <= 1.25;
+      if (autoplay && !shortBackwardGap) this.#player.play();
+    });
   }
 
   playEventPlaylist(events, loop = true) {
@@ -222,7 +290,7 @@ class AppMode {
     const clips = events.map(e => [e.abs_ts, e.abs_ts + (e.end_off - e.start_off) + POST]);
     this.#handle = this.#player.playClips(clips);
     this.#handle.onEnd = () => {
-      if (loop) this.#handle._start?.() ?? this.playEventPlaylist(events, loop);
+      if (loop && this.#mode === "playlist") this.#handle.restart();
       else { this.#mode = "seek"; this.onModeChange?.("seek"); }
     };
     return this.#handle;
@@ -232,19 +300,50 @@ class AppMode {
     this.#cancel();
     this.#mode = "live";
     this.onModeChange?.("live");
+    const op = ++this.#op;
     const latest = [...segments].sort((a, b) => b.start_ts - a.start_ts)
-      .find(s => s.source_id === srcId || !srcId);
-    if (latest) this.#player.seek(latest.end_ts ?? latest.start_ts + 1, srcId)
-      .then(() => this.#player.play());
+      .find(s => (s.source_id === srcId || !srcId) && s.end_ts != null);
+    if (latest) this.#player.seek(Math.max(latest.start_ts, latest.end_ts - 1), latest.source_id, "backward")
+      .then(landing => { if (op === this.#op && landing) this.#player.play(); });
   }
 
   stopLive() {
     if (this.#mode !== "live") return;
+    this.#op++;
     this.#mode = "seek";
     this.onModeChange?.("seek");
   }
 
+  playFromCurrent(srcId = null) {
+    if (this.#mode === "playlist") {
+      this.#player.play();
+      return;
+    }
+    const seg = this.#player.currentSeg;
+    if (seg && this.#player.nearSegmentEnd) {
+      const next = this.#player.nextSegment(srcId ?? seg.source_id);
+      if (next) {
+        this.seekTo(next.start_ts, next.source_id, "forward");
+        return;
+      }
+      if (this.#player.ended) {
+        const dur = (seg.end_ts ?? (seg.start_ts + this.#player.duration)) - seg.start_ts;
+        this.seekTo(seg.start_ts + Math.max(0, dur - 30), seg.source_id);
+        return;
+      }
+    }
+    this.#player.play();
+  }
+
+  handleEnded(srcId = null) {
+    if (this.#mode === "playlist") return;
+    const seg = this.#player.currentSeg;
+    const next = this.#player.nextSegment(srcId ?? seg?.source_id ?? null);
+    if (next) this.seekTo(next.start_ts, next.source_id, "forward");
+  }
+
   #cancel() {
+    this.#op++;
     this.#handle?.cancel();
     this.#handle = null;
   }
@@ -521,11 +620,11 @@ async function load() {
 
   if (!st.initDone && st.segments.length) {
     st.initDone = true;
-    const latest = st.segments[0];
+    const latest = st.segments.find(s => s.end_ts != null);
     if (latest) {
       el.empty.style.display = "none";
       el.video.style.display = "block";
-      mode.seekTo(latest.end_ts ?? latest.start_ts + 1, latest.source_id);
+      mode.seekTo(Math.max(latest.start_ts, latest.end_ts - 1), latest.source_id, "backward");
     }
   }
   _loadEnd();
@@ -687,28 +786,19 @@ function navNext() {
 }
 
 // ── Player controls ───────────────────────────────────
-el.play.addEventListener("click", () => {
+function togglePlayback() {
   if (!player.paused) { player.pause(); return; }
-  const v = el.video;
-  // If video has ended, restart from a sensible position (30s from segment end)
-  if (v.ended && player.currentSeg) {
-    const seg = player.currentSeg;
-    const dur = (seg.end_ts ?? 0) - seg.start_ts;
-    const restartOff = Math.max(0, dur - 30);
-    player.seek(seg.start_ts + restartOff, seg.source_id).then(() => player.play());
-  } else {
-    player.play();
-  }
-});
+  mode.playFromCurrent(st.source !== "all" ? st.source : null);
+}
+
+el.play.addEventListener("click", togglePlayback);
 el.prev.addEventListener("click", navPrev);
 el.next.addEventListener("click", navNext);
 el.rewind.addEventListener("click", () => {
   const ts  = player.reliableTs;
   const src = player.currentSeg?.source_id ?? null;
-  console.log(`[RW] reliableTs=${ts && new Date(ts*1000).toISOString()} intendedTs=${player.intendedTs && new Date(player.intendedTs*1000).toISOString()} currentTs=${player.currentTs && new Date(player.currentTs*1000).toISOString()} src=${src}`);
   if (ts != null) {
     const target = ts - 10;
-    console.log(`[RW] seeking to ${new Date(target*1000).toISOString()} direction=backward`);
     mode.seekTo(target, src, "backward");
   }
 });
@@ -740,11 +830,11 @@ function buildSpeedPills() {
 // Keyboard
 document.addEventListener("keydown", e => {
   if (["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
-  if (e.key === " ")           { e.preventDefault(); player.paused ? player.play() : player.pause(); }
+  if (e.key === " ")           { e.preventDefault(); togglePlayback(); }
   if (e.key === "ArrowLeft")  { e.preventDefault(); navPrev(); }
   if (e.key === "ArrowRight") { e.preventDefault(); navNext(); }
 });
-el.video.addEventListener("click",    () => { player.paused ? player.play() : player.pause(); });
+el.video.addEventListener("click",    togglePlayback);
 el.video.addEventListener("dblclick", () => {
   const s = document.querySelector(".v2-stage");
   document.fullscreenElement ? document.exitFullscreen() : s.requestFullscreen().catch(()=>{});
@@ -753,9 +843,7 @@ el.video.addEventListener("dblclick", () => {
 // ── Player events → UI ────────────────────────────────
 player.on("play",  () => { el.play.textContent = "■"; el.play.classList.add("playing"); });
 player.on("pause", () => { el.play.textContent = "▶"; el.play.classList.remove("playing"); });
-// When a segment ends: playlist handles its own advancement via _watchEnd
-// Manual seek mode: just pause — user navigates explicitly with > or <
-player.on("ended", () => { /* PlaylistHandle._check fires via ended listener */ });
+player.on("ended", () => { mode.handleEnded(st.source !== "all" ? st.source : null); });
 
 let _pushTimer = null;
 player.on("timeupdate", () => {
