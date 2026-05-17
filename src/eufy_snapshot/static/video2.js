@@ -556,6 +556,20 @@ el.tlCanvas.addEventListener("click", e => {
   el.video.style.display = "block";
 });
 
+// Timeline scroll — shift window in time
+el.tlCanvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const rect  = el.tlCanvas.getBoundingClientRect();
+  const span  = st.window.to - st.window.from;
+  const pxPerSec = rect.width / span;
+  // Use deltaX for horizontal touchpad swipe, deltaY for mouse wheel
+  const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  const shift = delta / pxPerSec;
+  st.window.from += shift;
+  st.window.to   += shift;
+  timeline.setWindow(st.window.from, st.window.to);
+}, { passive: false });
+
 // Hover → thumbnail preview
 let hoverTimer = null;
 el.tlCanvas.addEventListener("mousemove", e => {
@@ -574,7 +588,8 @@ el.tlCanvas.addEventListener("mousemove", e => {
     img.src  = `/api/thumb?path=${encodeURIComponent(seg.path)}&t=${off.toFixed(1)}`;
     ts.textContent = new Date(hit.ts * 1000).toLocaleTimeString(undefined,
       { hour:"2-digit", minute:"2-digit", second:"2-digit" });
-    const L = Math.max(0, e.clientX - rect.left - 80);
+    const THUMB_W = 164;
+    const L = Math.max(0, Math.min(rect.width - THUMB_W, e.clientX - rect.left - THUMB_W / 2));
     el.thumb.style.left = `${L}px`;
     el.thumb.hidden = false;
   }, 80);
