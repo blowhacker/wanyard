@@ -200,6 +200,15 @@ class VideoSegmentDB:
     def nearest_events(self, around: float, source_id: str | None = None,
                        classes: list[str] | None = None,
                        limit: int = 20) -> list[dict]:
+        if classes and len(classes) > 1:
+            rows: list[dict] = []
+            for cls in classes:
+                rows.extend(self.nearest_events(around, source_id, [cls], limit))
+            by_id = {r["id"]: r for r in rows}
+            rows = list(by_id.values())
+            rows.sort(key=lambda r: (abs(r["abs_ts"] - around), r["abs_ts"]))
+            return rows[:limit]
+
         where, params = ["1"], []
         if source_id and source_id != "all":
             where.append("e.source_id=?"); params.append(source_id)
