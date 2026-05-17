@@ -42,7 +42,11 @@ class V2Player {
       catch { return false; }
     }
 
-    if (!signal.aborted) this.#v.currentTime = offset;
+    if (!signal.aborted) {
+      this.#v.currentTime = offset;
+      // Once seeked fires, currentTs is reliable; clear intendedTs
+      this.#v.addEventListener("seeked", () => { this.#intendedTs = null; }, { once: true });
+    }
     return !signal.aborted;
   }
 
@@ -56,8 +60,8 @@ class V2Player {
   }
   get paused()      { return this.#v.paused; }
   get intendedTs()  { return this.#intendedTs; }
-  /** Best available position — intendedTs when mid-seek, currentTs when settled */
-  get reliableTs()  { return this.currentTs ?? this.#intendedTs; }
+  /** Best available position — intendedTs while seeking, currentTs when settled */
+  get reliableTs()  { return this.#intendedTs ?? this.currentTs; }
   get duration() { return this.#v.duration || 0; }
 
   // ── Current timestamp ─────────────────────────────────
