@@ -606,20 +606,32 @@ function scrollTimelineToTs(ts) {
   }
 }
 
+let _navTs = null; // last known position, survives mid-seek nulls
+
+function _curTs() {
+  const ts = player.currentTs;
+  if (ts != null) _navTs = ts;
+  return _navTs;
+}
+
 function navPrev() {
-  const ts   = player.currentTs ?? st.window.to;
+  const ts = _curTs();
+  if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts);
   const evt  = evts[0];
   if (!evt) return;
+  _navTs = evt.abs_ts;
   mode.seekTo(evt.abs_ts, evt.source_id);
   scrollTimelineToTs(evt.abs_ts);
 }
 
 function navNext() {
-  const ts   = player.currentTs ?? st.window.from;
+  const ts = _curTs();
+  if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts);
   const evt  = evts[0];
   if (!evt) return;
+  _navTs = evt.abs_ts;
   mode.seekTo(evt.abs_ts, evt.source_id);
   scrollTimelineToTs(evt.abs_ts);
 }
