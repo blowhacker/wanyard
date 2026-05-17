@@ -769,7 +769,10 @@ function drawBoxes(ts) {
 }
 
 function fmtTs(ts) {
-  return new Date(ts*1000).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  const d = new Date(ts * 1000);
+  const day = d.toLocaleDateString(undefined, { day:"numeric", month:"short" });
+  const t   = d.toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+  return `${day} ${t}`;
 }
 
 // ── Auto-refresh ──────────────────────────────────────
