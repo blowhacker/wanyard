@@ -741,12 +741,9 @@ el.video.addEventListener("dblclick", () => {
 // ── Player events → UI ────────────────────────────────
 player.on("play",  () => { el.play.textContent = "■"; el.play.classList.add("playing"); });
 player.on("pause", () => { el.play.textContent = "▶"; el.play.classList.remove("playing"); });
-// Auto-advance to next segment when current file ends (no playlist active)
-player.on("ended", () => {
-  if (mode.handle) return; // playlist handles its own advancement
-  const next = player.nextSegment();
-  if (next) player.seek(next.start_ts, next.source_id, "forward").then(() => player.play());
-});
+// When a segment ends: playlist handles its own advancement via _watchEnd
+// Manual seek mode: just pause — user navigates explicitly with > or <
+player.on("ended", () => { /* PlaylistHandle._check fires via ended listener */ });
 
 let _pushTimer = null;
 player.on("timeupdate", () => {
