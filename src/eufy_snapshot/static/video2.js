@@ -31,7 +31,9 @@ class V2Player {
     const seg = this.#segFor(unix_ts, srcId) ?? this.#resolve(unix_ts, srcId, direction);
     if (!seg) return false;
 
-    const offset = Math.max(0, unix_ts - seg.start_ts);
+    // Clamp offset to within segment duration — prevents snapping past end
+    const maxOff = seg.end_ts ? (seg.end_ts - seg.start_ts - 0.5) : Infinity;
+    const offset = Math.max(0, Math.min(unix_ts - seg.start_ts, maxOff));
     const url    = `/video/files/${seg.path}`;
 
     if (this.#v.dataset.src !== url) {
