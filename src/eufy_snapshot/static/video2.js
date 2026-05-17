@@ -425,6 +425,11 @@ const st = {
 };
 
 // ── Derived views ─────────────────────────────────────
+// All segments for source — used for timeline bands (always show coverage)
+function allSegsForSrc() {
+  return st.source === "all" ? st.segments : st.segments.filter(s => s.source_id === st.source);
+}
+
 function filteredSegs() {
   let s = st.segments;
   if (st.source !== "all") s = s.filter(x => x.source_id === st.source);
@@ -458,7 +463,7 @@ async function load() {
   const srcNames = {};
   st.sources.forEach(s => srcNames[s.id] = s.name || s.id);
   timeline.setSrcNames(srcNames);
-  timeline.setData(filteredSegs(), filteredEvts());
+  timeline.setData(allSegsForSrc(), filteredEvts());
 
   renderSrcCtrl();
   renderClsCtrl();
@@ -516,7 +521,7 @@ function renderClsCtrl() {
     b.addEventListener("click", () => {
       st.cls.has(c) ? st.cls.delete(c) : st.cls.add(c);
       renderClsCtrl();
-      timeline.setData(filteredSegs(), filteredEvts());
+      timeline.setData(allSegsForSrc(), filteredEvts());
       if (st.cls.size > 0) {
         const evts = filteredEvts().sort((a,b) => a.abs_ts - b.abs_ts);
         mode.playEventPlaylist(evts, st.loop);
