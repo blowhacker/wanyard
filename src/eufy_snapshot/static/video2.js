@@ -6,7 +6,7 @@ class V2Player {
   #segs = [];
   #abort = null;
   #intendedTs = null;  // reliable even during async seek
-  #listeners = { timeupdate: new Set(), play: new Set(), pause: new Set() };
+  #listeners = { timeupdate: new Set(), play: new Set(), pause: new Set(), ended: new Set() };
 
   constructor(videoEl) {
     this.#v = videoEl;
@@ -21,14 +21,14 @@ class V2Player {
   }
 
   // ── Seek ──────────────────────────────────────────────
-  async seek(unix_ts, srcId = null) {
-    // Cancel any in-flight seek
+  // direction: "backward" | "forward" | null — hints gap resolution
+  async seek(unix_ts, srcId = null, direction = null) {
     this.#abort?.abort();
     this.#abort = new AbortController();
     const { signal } = this.#abort;
 
-    this.#intendedTs = unix_ts;  // set immediately, before any await
-    const seg = this.#segFor(unix_ts, srcId) ?? this.#nearest(unix_ts, srcId);
+    this.#intendedTs = unix_ts;
+    const seg = this.#segFor(unix_ts, srcId) ?? this.#resolve(unix_ts, srcId, direction);
     if (!seg) return false;
 
     const offset = Math.max(0, unix_ts - seg.start_ts);
@@ -54,20 +54,14 @@ class V2Player {
   play()         { return this.#v.play().catch(() => {}); }
   pause()        { this.#v.pause(); }
   setRate(rate)  { this.#v.playbackRate = rate; }
-  rewind(secs) {
-    const base = this.reliableTs;
-    if (base == null) return;
-    const target = base - secs;
+  // nextSegment: for app to call when 'ended' fires
+  nextSegment(srcId) {
     const cur = this.currentSeg;
-    // If target is before current segment start, look for the previous segment
-    if (cur && target < cur.start_ts) {
-      const prev = this.#segs
-        .filter(s => s.end_ts != null && s.source_id === cur.source_id && s.end_ts <= cur.start_ts)
-        .sort((a, b) => b.end_ts - a.end_ts)[0];
-      this.seek(prev ? Math.max(prev.start_ts, target) : cur.start_ts);
-    } else {
-      this.seek(Math.max(0, target));
-    }
+    if (!cur) return null;
+    const src = srcId ?? cur.source_id;
+    return this.#segs
+      .filter(s => s.end_ts != null && s.source_id === src && s.start_ts >= (cur.end_ts ?? cur.start_ts))
+      .sort((a, b) => a.start_ts - b.start_ts)[0] ?? null;
   }
   get paused()      { return this.#v.paused; }
   get intendedTs()  { return this.#intendedTs; }
@@ -105,10 +99,17 @@ class V2Player {
     return pool.find(s => s.start_ts <= ts && s.end_ts > ts) ?? null;
   }
 
-  #nearest(ts, srcId) {
+  #resolve(ts, srcId, direction) {
     const pool = (srcId ? this.#segs.filter(s => s.source_id === srcId) : this.#segs)
       .filter(s => s.end_ts != null);
-    // Distance = how far ts is from the nearest edge of the segment (0 if inside)
+    if (!pool.length) return null;
+    if (direction === "backward")
+      // Latest segment ending at or before ts
+      return pool.filter(s => s.end_ts <= ts).sort((a, b) => b.end_ts - a.end_ts)[0] ?? null;
+    if (direction === "forward")
+      // Earliest segment starting at or after ts
+      return pool.filter(s => s.start_ts >= ts).sort((a, b) => a.start_ts - b.start_ts)[0] ?? null;
+    // No direction hint: nearest edge
     const dist = s => Math.max(0, s.start_ts - ts, ts - s.end_ts);
     return pool.reduce((best, s) => !best || dist(s) < dist(best) ? s : best, null);
   }
@@ -144,6 +145,7 @@ class PlaylistHandle {
   _start() {
     this.#active = true;
     this.#player.on("timeupdate", this.#check);
+    this.#player.on("ended",      this.#check); // catch segment file end
     this.#seekCurrent();
   }
 
@@ -180,6 +182,7 @@ class PlaylistHandle {
   cancel() {
     this.#active = false;
     this.#player.off("timeupdate", this.#check);
+    this.#player.off("ended",      this.#check);
   }
 }
 
@@ -196,11 +199,11 @@ class AppMode {
 
   get current() { return this.#mode; }
 
-  seekTo(unix_ts, srcId = null) {
+  seekTo(unix_ts, srcId = null, direction = null) {
     this.#cancel();
     this.#mode = "seek";
     this.onModeChange?.("seek");
-    this.#player.seek(unix_ts, srcId).then(() => this.#player.play());
+    this.#player.seek(unix_ts, srcId, direction).then(() => this.#player.play());
   }
 
   playEventPlaylist(events, loop = true) {
@@ -680,7 +683,11 @@ function navNext() {
 el.play.addEventListener("click", () => { player.paused ? player.play() : player.pause(); });
 el.prev.addEventListener("click", navPrev);
 el.next.addEventListener("click", navNext);
-el.rewind.addEventListener("click", () => player.rewind(10));
+el.rewind.addEventListener("click", () => {
+  const ts  = player.reliableTs;
+  const src = player.currentSeg?.source_id ?? null;
+  if (ts != null) mode.seekTo(ts - 10, src, "backward");
+});
 el.loop.addEventListener("click",   () => { st.loop = !st.loop; el.loop.classList.toggle("active", st.loop); });
 el.boxes.addEventListener("click",  () => {
   st.showBoxes = !st.showBoxes;
@@ -722,6 +729,13 @@ el.video.addEventListener("dblclick", () => {
 // ── Player events → UI ────────────────────────────────
 player.on("play",  () => { el.play.textContent = "■"; el.play.classList.add("playing"); });
 player.on("pause", () => { el.play.textContent = "▶"; el.play.classList.remove("playing"); });
+// Auto-advance to next segment when current file ends (no playlist active)
+player.on("ended", () => {
+  if (mode.handle) return; // playlist handles its own advancement
+  const next = player.nextSegment();
+  if (next) player.seek(next.start_ts, next.source_id, "forward").then(() => player.play());
+});
+
 let _pushTimer = null;
 player.on("timeupdate", () => {
   const ts = player.currentTs;
