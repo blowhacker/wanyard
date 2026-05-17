@@ -687,7 +687,19 @@ function navNext() {
 }
 
 // ── Player controls ───────────────────────────────────
-el.play.addEventListener("click", () => { player.paused ? player.play() : player.pause(); });
+el.play.addEventListener("click", () => {
+  if (!player.paused) { player.pause(); return; }
+  const v = el.video;
+  // If video has ended, restart from a sensible position (30s from segment end)
+  if (v.ended && player.currentSeg) {
+    const seg = player.currentSeg;
+    const dur = (seg.end_ts ?? 0) - seg.start_ts;
+    const restartOff = Math.max(0, dur - 30);
+    player.seek(seg.start_ts + restartOff, seg.source_id).then(() => player.play());
+  } else {
+    player.play();
+  }
+});
 el.prev.addEventListener("click", navPrev);
 el.next.addEventListener("click", navNext);
 el.rewind.addEventListener("click", () => {
