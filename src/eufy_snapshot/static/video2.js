@@ -47,26 +47,36 @@ class V2Player {
 
   // ── Core seek ────────────────────────────────────────
   seek(unix_ts, srcId = null) {
+    // Cancel any stacked pending seek
+    if (this._pendingSeek) {
+      this._v.removeEventListener("loadedmetadata", this._pendingSeek);
+      this._pendingSeek = null;
+    }
+
     let seg = this.segmentFor(unix_ts, srcId);
     if (!seg) {
-      // Gap — nearest segment for this source
       const pool = srcId ? this._segs.filter(s => s.source_id === srcId) : this._segs;
       seg = pool.reduce((best, s) =>
         Math.abs(s.start_ts - unix_ts) < Math.abs((best?.start_ts ?? Infinity) - unix_ts) ? s : best,
       null);
     }
     if (!seg) return false;
+
     const offset = Math.max(0, unix_ts - seg.start_ts);
-    const url = `/video/files/${seg.path}`;
+    const url    = `/video/files/${seg.path}`;
+    const doSeek = () => { this._v.currentTime = offset; };
+
     if (this._v.dataset.src !== url) {
       this._v.src = url;
       this._v.dataset.src = url;
       this._v.load();
-      this._v.addEventListener("loadedmetadata", () => {
-        this._v.currentTime = offset;
-      }, { once: true });
+    }
+
+    if (this._v.readyState >= 1) {  // HAVE_METADATA
+      doSeek();
     } else {
-      this._v.currentTime = offset;
+      this._pendingSeek = () => { doSeek(); this._pendingSeek = null; };
+      this._v.addEventListener("loadedmetadata", this._pendingSeek, { once: true });
     }
     return true;
   }
