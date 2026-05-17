@@ -29,8 +29,9 @@ class V2Player {
   }
 
   // Find segment containing unix_ts
-  segmentFor(ts) {
-    return this._segs.find(s => s.start_ts <= ts && (s.end_ts ?? Infinity) > ts);
+  segmentFor(ts, srcId = null) {
+    const pool = srcId ? this._segs.filter(s => s.source_id === srcId) : this._segs;
+    return pool.find(s => s.start_ts <= ts && (s.end_ts ?? Infinity) > ts);
   }
 
   get currentTs() {
@@ -45,8 +46,15 @@ class V2Player {
   }
 
   // ── Core seek ────────────────────────────────────────
-  seek(unix_ts) {
-    const seg = this.segmentFor(unix_ts);
+  seek(unix_ts, srcId = null) {
+    let seg = this.segmentFor(unix_ts, srcId);
+    if (!seg) {
+      // Gap — nearest segment for this source
+      const pool = srcId ? this._segs.filter(s => s.source_id === srcId) : this._segs;
+      seg = pool.reduce((best, s) =>
+        Math.abs(s.start_ts - unix_ts) < Math.abs((best?.start_ts ?? Infinity) - unix_ts) ? s : best,
+      null);
+    }
     if (!seg) return false;
     const offset = Math.max(0, unix_ts - seg.start_ts);
     const url = `/video/files/${seg.path}`;
@@ -425,7 +433,7 @@ timeline.onSeek = (ts, srcId) => {
     const src = st.sources.find(s => s.id === srcId);
     if (el.hudSrc) el.hudSrc.textContent = (src?.name || srcId).toUpperCase();
   }
-  player.seek(ts);
+  player.seek(ts, srcId);
   player.play();
   el.empty.style.display = "none";
   el.video.style.display = "block";

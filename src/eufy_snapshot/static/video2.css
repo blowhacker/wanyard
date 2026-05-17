@@ -91,8 +91,8 @@
 
 /* Bigger class chips in video2 */
 .v2-viewer .class-chip {
-  height: 30px;
-  font-size: 0.72rem;
-  padding: 0 10px;
-  letter-spacing: 0.05em;
+  height: 32px;
+  font-size: 0.82rem;
+  padding: 0 12px;
+  letter-spacing: 0.04em;
 }
