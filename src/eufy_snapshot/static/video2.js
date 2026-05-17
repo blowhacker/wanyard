@@ -28,7 +28,9 @@ class V2Player {
     const { signal } = this.#abort;
 
     this.#intendedTs = unix_ts;
-    const seg = this.#segFor(unix_ts, srcId) ?? this.#resolve(unix_ts, srcId, direction);
+    const segDirect = this.#segFor(unix_ts, srcId);
+    const seg = segDirect ?? this.#resolve(unix_ts, srcId, direction);
+    console.log(`[SK] ts=${new Date(unix_ts*1000).toISOString()} dir=${direction} segDirect=${segDirect?.path?.slice(-20)} resolved=${seg?.path?.slice(-20)}`);
     if (!seg) return false;
 
     // Clamp offset to within segment duration — prevents snapping past end
@@ -691,7 +693,12 @@ el.next.addEventListener("click", navNext);
 el.rewind.addEventListener("click", () => {
   const ts  = player.reliableTs;
   const src = player.currentSeg?.source_id ?? null;
-  if (ts != null) mode.seekTo(ts - 10, src, "backward");
+  console.log(`[RW] reliableTs=${ts && new Date(ts*1000).toISOString()} intendedTs=${player.intendedTs && new Date(player.intendedTs*1000).toISOString()} currentTs=${player.currentTs && new Date(player.currentTs*1000).toISOString()} src=${src}`);
+  if (ts != null) {
+    const target = ts - 10;
+    console.log(`[RW] seeking to ${new Date(target*1000).toISOString()} direction=backward`);
+    mode.seekTo(target, src, "backward");
+  }
 });
 el.loop.addEventListener("click",   () => { st.loop = !st.loop; el.loop.classList.toggle("active", st.loop); });
 el.boxes.addEventListener("click",  () => {
