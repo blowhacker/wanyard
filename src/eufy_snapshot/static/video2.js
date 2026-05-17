@@ -51,11 +51,13 @@ class V2Player {
   pause()        { this.#v.pause(); }
   setRate(rate)  { this.#v.playbackRate = rate; }
   rewind(secs)   {
-    const base = this.#intendedTs ?? (this.#curSeg()?.start_ts + this.#v.currentTime);
+    const base = this.reliableTs;
     if (base != null) this.seek(Math.max(0, base - secs));
   }
   get paused()      { return this.#v.paused; }
   get intendedTs()  { return this.#intendedTs; }
+  /** Best available position — intendedTs when mid-seek, currentTs when settled */
+  get reliableTs()  { return this.currentTs ?? this.#intendedTs; }
   get duration() { return this.#v.duration || 0; }
 
   // ── Current timestamp ─────────────────────────────────
@@ -638,7 +640,7 @@ function scrollTimelineToTs(ts) {
 }
 
 function navPrev() {
-  const ts = player.intendedTs ?? player.currentTs;
+  const ts = player.reliableTs;
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts);
   const evt  = evts[0];
@@ -648,7 +650,7 @@ function navPrev() {
 }
 
 function navNext() {
-  const ts = player.intendedTs ?? player.currentTs;
+  const ts = player.reliableTs;
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts);
   const evt  = evts[0];
