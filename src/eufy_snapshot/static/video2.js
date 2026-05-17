@@ -2,9 +2,10 @@
 // V2Player — transparent, segment-aware, async seek
 // ═══════════════════════════════════════════════════════
 class V2Player {
-  #v;            // HTMLVideoElement
-  #segs = [];    // sorted [{path, start_ts, end_ts, source_id}]
-  #abort = null; // AbortController for pending seek
+  #v;
+  #segs = [];
+  #abort = null;
+  #intendedTs = null;  // reliable even during async seek
   #listeners = { timeupdate: new Set(), play: new Set(), pause: new Set() };
 
   constructor(videoEl) {
@@ -26,6 +27,7 @@ class V2Player {
     this.#abort = new AbortController();
     const { signal } = this.#abort;
 
+    this.#intendedTs = unix_ts;  // set immediately, before any await
     const seg = this.#segFor(unix_ts, srcId) ?? this.#nearest(unix_ts, srcId);
     if (!seg) return false;
 
@@ -49,7 +51,8 @@ class V2Player {
   pause()        { this.#v.pause(); }
   setRate(rate)  { this.#v.playbackRate = rate; }
   rewind(secs)   { this.#v.currentTime = Math.max(0, this.#v.currentTime - secs); }
-  get paused()   { return this.#v.paused; }
+  get paused()      { return this.#v.paused; }
+  get intendedTs()  { return this.#intendedTs; }
   get duration() { return this.#v.duration || 0; }
 
   // ── Current timestamp ─────────────────────────────────
@@ -127,7 +130,8 @@ class PlaylistHandle {
     if (!this.#active || this.#idx >= this.#clips.length) return;
     const [start] = this.#clips[this.#idx];
     await this.#player.seek(start);
-    if (this.#active) this.#player.play();
+    if (!this.#active) return;  // cancelled during seek
+    this.#player.play();
   }
 
   #watchEnd() {
@@ -447,7 +451,13 @@ function filteredEvts() {
 }
 
 // ── Data loading ──────────────────────────────────────
+const _loadBar = document.getElementById("v2LoadBar");
+let _loadCount = 0;
+function _loadStart() { _loadCount++; _loadBar?.classList.add("loading"); }
+function _loadEnd()   { if (--_loadCount <= 0) { _loadCount = 0; _loadBar?.classList.remove("loading"); } }
+
 async function load() {
+  _loadStart();
   const p = new URLSearchParams();
   if (st.source !== "all") p.set("source", st.source);
 
@@ -487,6 +497,7 @@ async function load() {
       mode.seekTo(latest.end_ts ?? latest.start_ts + 1, latest.source_id);
     }
   }
+  _loadEnd();
 }
 
 // ── Source control ────────────────────────────────────
@@ -556,18 +567,35 @@ el.tlCanvas.addEventListener("click", e => {
   el.video.style.display = "block";
 });
 
-// Timeline scroll — shift window in time
+// Timeline scroll — shift window, clamp to data bounds
+let _fetchDebounce = null;
 el.tlCanvas.addEventListener("wheel", e => {
   e.preventDefault();
-  const rect  = el.tlCanvas.getBoundingClientRect();
-  const span  = st.window.to - st.window.from;
-  const pxPerSec = rect.width / span;
-  // Use deltaX for horizontal touchpad swipe, deltaY for mouse wheel
-  const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-  const shift = delta / pxPerSec;
-  st.window.from += shift;
-  st.window.to   += shift;
+  const rect     = el.tlCanvas.getBoundingClientRect();
+  const span     = st.window.to - st.window.from;
+  const pxPerSec = (rect.width - 64) / span;
+  const delta    = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  const shift    = delta / pxPerSec;
+
+  // Clamp: keep at least some data visible
+  const oldest = st.segments.length
+    ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
+    : st.window.from;
+  const newest = Date.now() / 1000 + 600;
+
+  let newFrom = st.window.from + shift;
+  let newTo   = st.window.to   + shift;
+  if (newFrom < oldest)           { newFrom = oldest; newTo = oldest + span; }
+  if (newTo   > newest)           { newTo = newest;   newFrom = newest - span; }
+  if (newFrom < oldest)             newFrom = oldest;  // clamp both after adj
+
+  st.window.from = newFrom;
+  st.window.to   = newTo;
   timeline.setWindow(st.window.from, st.window.to);
+
+  // Fetch events for newly-visible area after scroll settles
+  clearTimeout(_fetchDebounce);
+  _fetchDebounce = setTimeout(() => load(), 400);
 }, { passive: false });
 
 // Hover → thumbnail preview
@@ -606,32 +634,22 @@ function scrollTimelineToTs(ts) {
   }
 }
 
-let _navTs = null; // last known position, survives mid-seek nulls
-
-function _curTs() {
-  const ts = player.currentTs;
-  if (ts != null) _navTs = ts;
-  return _navTs;
-}
-
 function navPrev() {
-  const ts = _curTs();
+  const ts = player.intendedTs ?? player.currentTs;
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts);
   const evt  = evts[0];
   if (!evt) return;
-  _navTs = evt.abs_ts;
   mode.seekTo(evt.abs_ts, evt.source_id);
   scrollTimelineToTs(evt.abs_ts);
 }
 
 function navNext() {
-  const ts = _curTs();
+  const ts = player.intendedTs ?? player.currentTs;
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts);
   const evt  = evts[0];
   if (!evt) return;
-  _navTs = evt.abs_ts;
   mode.seekTo(evt.abs_ts, evt.source_id);
   scrollTimelineToTs(evt.abs_ts);
 }
