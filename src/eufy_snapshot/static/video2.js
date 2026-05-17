@@ -76,12 +76,15 @@ class V2Player {
 
   // ── Private helpers ───────────────────────────────────
   #segFor(ts, srcId) {
-    const pool = srcId ? this.#segs.filter(s => s.source_id === srcId) : this.#segs;
-    return pool.find(s => s.start_ts <= ts && (s.end_ts ?? Infinity) > ts) ?? null;
+    // Only closed segments (end_ts set) are playable; open files lack moov atom
+    const pool = (srcId ? this.#segs.filter(s => s.source_id === srcId) : this.#segs)
+      .filter(s => s.end_ts != null);
+    return pool.find(s => s.start_ts <= ts && s.end_ts > ts) ?? null;
   }
 
   #nearest(ts, srcId) {
-    const pool = srcId ? this.#segs.filter(s => s.source_id === srcId) : this.#segs;
+    const pool = (srcId ? this.#segs.filter(s => s.source_id === srcId) : this.#segs)
+      .filter(s => s.end_ts != null);
     return pool.reduce((best, s) =>
       !best || Math.abs(s.start_ts - ts) < Math.abs(best.start_ts - ts) ? s : best, null);
   }
@@ -561,8 +564,9 @@ el.tlCanvas.addEventListener("mousemove", e => {
   clearTimeout(hoverTimer);
   if (!hit) { el.thumb.hidden = true; return; }
   hoverTimer = setTimeout(() => {
+    // Only closed segments are playable
     const seg = filteredSegs().find(s => s.source_id === hit.srcId &&
-      s.start_ts <= hit.ts && (s.end_ts ?? Infinity) > hit.ts);
+      s.end_ts != null && s.start_ts <= hit.ts && s.end_ts > hit.ts);
     if (!seg) { el.thumb.hidden = true; return; }
     const off = Math.max(0, hit.ts - seg.start_ts);
     const img = el.thumb.querySelector("img");
