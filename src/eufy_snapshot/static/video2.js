@@ -50,7 +50,10 @@ class V2Player {
   play()         { return this.#v.play().catch(() => {}); }
   pause()        { this.#v.pause(); }
   setRate(rate)  { this.#v.playbackRate = rate; }
-  rewind(secs)   { this.#v.currentTime = Math.max(0, this.#v.currentTime - secs); }
+  rewind(secs)   {
+    const base = this.#intendedTs ?? (this.#curSeg()?.start_ts + this.#v.currentTime);
+    if (base != null) this.seek(Math.max(0, base - secs));
+  }
   get paused()      { return this.#v.paused; }
   get intendedTs()  { return this.#intendedTs; }
   get duration() { return this.#v.duration || 0; }
