@@ -54,9 +54,20 @@ class V2Player {
   play()         { return this.#v.play().catch(() => {}); }
   pause()        { this.#v.pause(); }
   setRate(rate)  { this.#v.playbackRate = rate; }
-  rewind(secs)   {
+  rewind(secs) {
     const base = this.reliableTs;
-    if (base != null) this.seek(Math.max(0, base - secs));
+    if (base == null) return;
+    const target = base - secs;
+    const cur = this.#curSeg();
+    // If target is before current segment start, look for the previous segment
+    if (cur && target < cur.start_ts) {
+      const prev = this.#segs
+        .filter(s => s.end_ts != null && s.source_id === cur.source_id && s.end_ts <= cur.start_ts)
+        .sort((a, b) => b.end_ts - a.end_ts)[0];
+      this.seek(prev ? Math.max(prev.start_ts, target) : cur.start_ts);
+    } else {
+      this.seek(Math.max(0, target));
+    }
   }
   get paused()      { return this.#v.paused; }
   get intendedTs()  { return this.#intendedTs; }
@@ -97,8 +108,9 @@ class V2Player {
   #nearest(ts, srcId) {
     const pool = (srcId ? this.#segs.filter(s => s.source_id === srcId) : this.#segs)
       .filter(s => s.end_ts != null);
-    return pool.reduce((best, s) =>
-      !best || Math.abs(s.start_ts - ts) < Math.abs(best.start_ts - ts) ? s : best, null);
+    // Distance = how far ts is from the nearest edge of the segment (0 if inside)
+    const dist = s => Math.max(0, s.start_ts - ts, ts - s.end_ts);
+    return pool.reduce((best, s) => !best || dist(s) < dist(best) ? s : best, null);
   }
 
   #waitFor(event, signal) {
