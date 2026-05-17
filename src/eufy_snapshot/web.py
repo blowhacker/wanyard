@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import subprocess
@@ -36,6 +37,124 @@ def _generate_thumb(src: Path, dest: Path) -> bool:
         return r.returncode == 0 and dest.exists()
     except (subprocess.TimeoutExpired, OSError):
         return False
+
+
+def _probe_video_size(path: Path) -> tuple[int, int] | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        r = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x",
+             str(path)],
+            capture_output=True, timeout=5, check=False, text=True,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    raw = r.stdout.strip().splitlines()[0] if r.stdout.strip() else ""
+    try:
+        w, h = (int(x) for x in raw.split("x", 1))
+    except ValueError:
+        return None
+    return (w, h) if w > 0 and h > 0 else None
+
+
+def _select_event_box(boxes: list, cls: str) -> dict | None:
+    candidates = [b for b in boxes if isinstance(b, dict)]
+    if not candidates:
+        return None
+    matching = [b for b in candidates if b.get("cls") == cls] or candidates
+
+    def score(box: dict) -> tuple[float, float]:
+        try:
+            area = max(0.0, float(box["x2"]) - float(box["x1"])) * \
+                   max(0.0, float(box["y2"]) - float(box["y1"]))
+        except (KeyError, TypeError, ValueError):
+            area = 0.0
+        try:
+            conf = float(box.get("conf", 0.0))
+        except (TypeError, ValueError):
+            conf = 0.0
+        return conf, area
+
+    return max(matching, key=score)
+
+
+def _crop_from_box(box: dict, frame_w: int, frame_h: int,
+                   aspect: float = 4 / 3) -> tuple[int, int, int, int] | None:
+    try:
+        x1 = max(0.0, min(1.0, float(box["x1"]))) * frame_w
+        y1 = max(0.0, min(1.0, float(box["y1"]))) * frame_h
+        x2 = max(0.0, min(1.0, float(box["x2"]))) * frame_w
+        y2 = max(0.0, min(1.0, float(box["y2"]))) * frame_h
+    except (KeyError, TypeError, ValueError):
+        return None
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    bw, bh = x2 - x1, y2 - y1
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    pad = max(24.0, max(bw, bh) * 0.45)
+    cw, ch = bw + pad * 2, bh + pad * 2
+    if cw / ch < aspect:
+        cw = ch * aspect
+    else:
+        ch = cw / aspect
+    cw = min(float(frame_w), max(96.0, cw))
+    ch = min(float(frame_h), max(72.0, ch))
+    if cw / ch < aspect:
+        cw = min(float(frame_w), ch * aspect)
+    else:
+        ch = min(float(frame_h), cw / aspect)
+
+    rw = min(frame_w, max(2, round(cw)))
+    rh = min(frame_h, max(2, round(ch)))
+    x = max(0.0, min(float(frame_w - rw), cx - rw / 2))
+    y = max(0.0, min(float(frame_h - rh), cy - rh / 2))
+    return round(x), round(y), rw, rh
+
+
+def _extract_video_thumb(seg_path: Path, cache_file: Path, t: float,
+                         crop_box: dict | None = None) -> bool:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+
+    vf = None
+    if crop_box:
+        size = _probe_video_size(seg_path)
+        crop = _crop_from_box(crop_box, *size) if size else None
+        if crop:
+            x, y, w, h = crop
+            vf = (
+                f"crop={w}:{h}:{x}:{y},"
+                "scale=176:132:force_original_aspect_ratio=increase,"
+                "crop=176:132"
+            )
+
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    for attempt_t in [t, max(0, t - 1), max(0, t - 2), max(0, t - 5)]:
+        cmd = [
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+            "-ss", str(attempt_t), "-i", str(seg_path),
+        ]
+        if vf:
+            cmd += ["-vf", vf]
+        cmd += ["-frames:v", "1", "-q:v", "5", str(cache_file)]
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=10, check=False)
+        except (subprocess.TimeoutExpired, OSError):
+            r = None
+        if r and r.returncode == 0 and cache_file.exists() and cache_file.stat().st_size > 0:
+            return True
+    try:
+        cache_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return False
 
 
 def make_app(
@@ -311,6 +430,9 @@ def make_app(
         """Extract a single frame from a video file at timestamp t."""
         if not video_dir:
             return Response(status_code=404)
+        event_id = request.query_params.get("event_id")
+        if event_id:
+            return await _serve_event_thumb(event_id)
         rel = request.query_params.get("path", "")
         t   = float(request.query_params.get("t", 0))
         if ".." in rel or not rel:
@@ -324,22 +446,51 @@ def make_app(
         cache_file = cache_dir / f"{seg_path.stem}_{t:.1f}.jpg"
 
         if not cache_file.exists():
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            ffmpeg = shutil.which("ffmpeg")
-            # Try requested time, fall back to slightly earlier if at/beyond end
-            for attempt_t in [t, max(0, t - 2), max(0, t - 5)]:
-                r = await asyncio.to_thread(subprocess.run, [
-                    ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-                    "-ss", str(attempt_t), "-i", str(seg_path),
-                    "-frames:v", "1", "-q:v", "5", str(cache_file),
-                ], capture_output=True, timeout=10, check=False)
-                if r.returncode == 0 and cache_file.exists():
-                    break
-            if not cache_file.exists():
+            ok = await asyncio.to_thread(_extract_video_thumb, seg_path, cache_file, t)
+            if not ok:
                 return Response(status_code=404)
 
         return FileResponse(cache_file, media_type="image/jpeg",
                             headers={"Cache-Control": "public, max-age=604800, immutable"})
+
+    async def _serve_event_thumb(event_id_raw: str) -> Response:
+        if not video_dir or not video_db:
+            return Response(status_code=404)
+        try:
+            event_id = int(event_id_raw)
+        except ValueError:
+            return Response(status_code=400)
+        evt = await asyncio.to_thread(video_db.get_event_with_segment, event_id)
+        if not evt:
+            return Response(status_code=404)
+
+        seg_path = (video_dir / evt["seg_path"]).resolve()
+        try:
+            seg_path.relative_to(video_dir.resolve())
+        except ValueError:
+            return Response(status_code=403)
+        if not seg_path.is_file():
+            return Response(status_code=404)
+
+        t = max(0.0, float(evt["abs_ts"]) - float(evt["seg_start_ts"]))
+        try:
+            boxes = json.loads(evt["boxes_json"]) if evt.get("boxes_json") else []
+        except (TypeError, json.JSONDecodeError):
+            boxes = []
+        box = _select_event_box(boxes, evt.get("class", ""))
+
+        cache_dir = seg_path.parent / ".thumbcache"
+        cache_file = cache_dir / f"event_{event_id}_crop_v1.jpg"
+        if not cache_file.exists():
+            ok = await asyncio.to_thread(_extract_video_thumb, seg_path, cache_file, t, box)
+            if not ok:
+                return Response(status_code=404)
+
+        return FileResponse(cache_file, media_type="image/jpeg",
+                            headers={"Cache-Control": "public, max-age=604800, immutable"})
+
+    async def api_video_event_thumb(request: Request) -> Response:
+        return await _serve_event_thumb(request.path_params["event_id"])
 
     async def api_video2_timeline(request: Request) -> JSONResponse:
         """Segments list for the video2 filmstrip."""
@@ -416,6 +567,7 @@ def make_app(
     routes = [
         Route("/api/health",                api_health),
         Route("/api/thumb",                 api_thumb),
+        Route("/api/video/event-thumb/{event_id}", api_video_event_thumb),
         Route("/api/video2/timeline",       api_video2_timeline),
         Route("/video2",                    lambda r: FileResponse(static_dir / "video2.html")),
         Route("/api/video/events",          api_video_events),

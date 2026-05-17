@@ -86,6 +86,7 @@ class V2Player {
     if (signal.aborted) return null;
     if (this.#intendedTs === actualTs) this.#intendedTs = null;
     this.#lastSeek = landing;
+    this.#emit("timeupdate");
     return landing;
   }
 
@@ -535,6 +536,8 @@ const el = {
   srcCtrl: $("v2SourceCtrl"),
   clsField:$("v2ClassField"),
   clsCtrl: $("v2ClassCtrl"),
+  nearClass:$("v2NearClass"),
+  eventThumbs:$("v2EventThumbs"),
   play:    $("v2Play"),
   prev:    $("v2Prev"),
   next:    $("v2Next"),
@@ -565,6 +568,8 @@ const st = {
   speed:    parseInt(localStorage.getItem("v2speed") || "1"),
   loop:     true,
   showBoxes:localStorage.getItem("v2boxes") !== "0",
+  nearClass:"",
+  nearClassManual:false,
   dets:     {},  // segId → [{ts_offset, boxes, classes}]
   initDone: false,
 };
@@ -586,6 +591,151 @@ function filteredEvts() {
   if (st.source !== "all") e = e.filter(x => x.source_id === st.source);
   if (st.cls.size > 0)     e = e.filter(x => st.cls.has(x.class));
   return e;
+}
+
+// ── Nearby event widget ───────────────────────────────
+const NEAR_EVENT_LIMIT = 10;
+
+function nearClassOptions() {
+  const names = new Set(Object.keys(st.classes));
+  st.events.forEach(e => { if (e.class) names.add(e.class); });
+  st.cls.forEach(c => names.add(c));
+  return ["all", ...[...names].sort((a, b) =>
+    (st.classes[b] || 0) - (st.classes[a] || 0) || a.localeCompare(b)
+  )];
+}
+
+function syncNearClass() {
+  const options = nearClassOptions();
+  if (!st.nearClassManual) {
+    const selected = [...st.cls].find(c => options.includes(c));
+    if (selected) st.nearClass = selected;
+    else if (!st.nearClass) st.nearClass = "all";
+  }
+  if (!options.includes(st.nearClass)) {
+    st.nearClass = "all";
+    st.nearClassManual = false;
+  }
+}
+
+function renderNearClassCtrl() {
+  if (!el.nearClass) return;
+  syncNearClass();
+  const options = nearClassOptions();
+  el.nearClass.innerHTML = "";
+  options.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c === "all" ? "ALL" : `${c} ×${st.classes[c] || 0}`;
+    el.nearClass.appendChild(opt);
+  });
+  el.nearClass.value = st.nearClass;
+  el.nearClass.disabled = options.length <= 1;
+}
+
+function nearestEvents(baseTs) {
+  let evts = st.events;
+  if (st.source !== "all") evts = evts.filter(e => e.source_id === st.source);
+  if (st.nearClass && st.nearClass !== "all") {
+    evts = evts.filter(e => e.class === st.nearClass);
+  }
+  return evts
+    .map(e => ({ event: e, dist: Math.abs(e.abs_ts - baseTs) }))
+    .sort((a, b) => a.dist - b.dist || a.event.abs_ts - b.event.abs_ts)
+    .slice(0, NEAR_EVENT_LIMIT)
+    .map(x => x.event);
+}
+
+function relEventLabel(ts, baseTs) {
+  const delta = Math.round(ts - baseTs);
+  const sign = delta >= 0 ? "+" : "-";
+  const abs = Math.abs(delta);
+  if (abs < 60) return `${sign}${abs}s`;
+  if (abs < 3600) return `${sign}${Math.round(abs / 60)}m`;
+  return `${sign}${Math.round(abs / 3600)}h`;
+}
+
+function eventLocalTime(ts) {
+  return new Date(ts * 1000).toLocaleTimeString(undefined,
+    { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+}
+
+function sourceLabel(srcId) {
+  return st.sources.find(s => s.id === srcId)?.name || srcId;
+}
+
+function eventSeekTs(evt) {
+  const seg = st.segments.find(s => s.id === evt.segment_id);
+  const start = seg?.start_ts ?? evt.seg_start_ts ?? evt.abs_ts;
+  return Math.max(start, evt.abs_ts - 1);
+}
+
+function isEventActive(evt, ts) {
+  if (ts == null || player.currentSeg?.id !== evt.segment_id) return false;
+  const dur = Math.max(1, (evt.end_off ?? 0) - (evt.start_off ?? 0));
+  return ts >= evt.abs_ts - 1 && ts <= evt.abs_ts + dur + 1;
+}
+
+function renderNearestEvents() {
+  if (!el.eventThumbs) return;
+  syncNearClass();
+  const baseTs = player.displayTs ?? st.events[0]?.abs_ts ?? Date.now() / 1000;
+  const evts = nearestEvents(baseTs);
+  el.eventThumbs.innerHTML = "";
+
+  if (!evts.length) {
+    const empty = document.createElement("div");
+    empty.className = "v2-event-thumbs-empty";
+    empty.textContent = `No ${st.nearClass === "all" ? "" : st.nearClass + " "}events`;
+    el.eventThumbs.appendChild(empty);
+    return;
+  }
+
+  evts.forEach(evt => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "v2-event-thumb" + (isEventActive(evt, baseTs) ? " active" : "");
+    btn.title = `${evt.class} ${eventLocalTime(evt.abs_ts)} ${sourceLabel(evt.source_id)}`;
+    btn.addEventListener("click", () => {
+      const ts = eventSeekTs(evt);
+      mode.seekTo(ts, evt.source_id);
+      scrollTimelineToTs(evt.abs_ts);
+    });
+
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.alt = "";
+    img.src = `/api/video/event-thumb/${evt.id}`;
+
+    const klass = document.createElement("div");
+    klass.className = "v2-event-thumb-class";
+    klass.textContent = evt.class;
+
+    const meta = document.createElement("div");
+    meta.className = "v2-event-thumb-meta";
+    const t = document.createElement("span");
+    t.textContent = eventLocalTime(evt.abs_ts);
+    const d = document.createElement("span");
+    d.textContent = relEventLabel(evt.abs_ts, baseTs);
+    meta.append(t, d);
+
+    btn.append(img, klass, meta);
+    el.eventThumbs.appendChild(btn);
+  });
+}
+
+let _nearRenderPending = false;
+let _lastNearRender = 0;
+function scheduleNearestEvents(force = false) {
+  const now = performance.now();
+  if (!force && now - _lastNearRender < 750) return;
+  _lastNearRender = now;
+  if (_nearRenderPending) return;
+  _nearRenderPending = true;
+  requestAnimationFrame(() => {
+    _nearRenderPending = false;
+    renderNearestEvents();
+  });
 }
 
 // ── Data loading ──────────────────────────────────────
@@ -625,6 +775,8 @@ async function load() {
 
   renderSrcCtrl();
   renderClsCtrl();
+  renderNearClassCtrl();
+  scheduleNearestEvents(true);
 
   if (!st.initDone && st.segments.length) {
     st.initDone = true;
@@ -669,7 +821,9 @@ function renderClsCtrl() {
   allBtn.textContent = "ALL";
   allBtn.addEventListener("click", () => {
     st.cls.clear(); mode.stopLive();
+    if (!st.nearClassManual) st.nearClass = "all";
     renderClsCtrl(); timeline.setData(filteredSegs(), filteredEvts());
+    renderNearClassCtrl(); scheduleNearestEvents(true);
   });
   el.clsCtrl.appendChild(allBtn);
 
@@ -679,9 +833,12 @@ function renderClsCtrl() {
     b.textContent = `${c} ×${n}`;
     b.addEventListener("click", () => {
       st.cls.has(c) ? st.cls.delete(c) : st.cls.add(c);
+      if (!st.nearClassManual) st.nearClass = st.cls.size > 0 ? [...st.cls][0] : "all";
       pushState();
       renderClsCtrl();
+      renderNearClassCtrl();
       timeline.setData(allSegsForSrc(), filteredEvts());
+      scheduleNearestEvents(true);
       if (st.cls.size > 0) {
         const evts = filteredEvts().sort((a,b) => a.abs_ts - b.abs_ts);
         mode.playEventPlaylist(evts, st.loop);
@@ -704,6 +861,12 @@ el.tlCanvas.addEventListener("click", e => {
   }
   el.empty.style.display = "none";
   el.video.style.display = "block";
+});
+
+el.nearClass?.addEventListener("change", () => {
+  st.nearClass = el.nearClass.value;
+  st.nearClassManual = true;
+  renderNearestEvents();
 });
 
 // Timeline scroll — shift window, clamp to data bounds
@@ -868,6 +1031,7 @@ player.on("timeupdate", () => {
       {dateStyle:"short",timeStyle:"medium"})}`;
   }
   drawBoxes(ts);
+  scheduleNearestEvents();
 });
 
 // ── Box overlay ───────────────────────────────────────

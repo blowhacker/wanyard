@@ -196,6 +196,17 @@ class VideoSegmentDB:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
+    def get_event_with_segment(self, event_id: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT e.*, s.path as seg_path, s.start_ts as seg_start_ts,"
+                " s.end_ts as seg_end_ts"
+                " FROM video_events e JOIN segments s ON s.id=e.segment_id"
+                " WHERE e.id=?",
+                (event_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def class_counts(self, source_id: str | None = None) -> dict[str, int]:
         with self._connect() as conn:
             if source_id and source_id != "all":
