@@ -596,16 +596,38 @@ el.tlCanvas.addEventListener("mousemove", e => {
 });
 el.tlCanvas.addEventListener("mouseleave", () => { clearTimeout(hoverTimer); el.thumb.hidden = true; });
 
+// ── Event navigation ──────────────────────────────────
+function scrollTimelineToTs(ts) {
+  const span = st.window.to - st.window.from;
+  if (ts < st.window.from + span * 0.1 || ts > st.window.to - span * 0.1) {
+    st.window.from = ts - span * 0.4;
+    st.window.to   = ts + span * 0.6;
+    timeline.setWindow(st.window.from, st.window.to);
+  }
+}
+
+function navPrev() {
+  const ts   = player.currentTs ?? st.window.to;
+  const evts = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts);
+  const evt  = evts[0];
+  if (!evt) return;
+  mode.seekTo(evt.abs_ts, evt.source_id);
+  scrollTimelineToTs(evt.abs_ts);
+}
+
+function navNext() {
+  const ts   = player.currentTs ?? st.window.from;
+  const evts = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts);
+  const evt  = evts[0];
+  if (!evt) return;
+  mode.seekTo(evt.abs_ts, evt.source_id);
+  scrollTimelineToTs(evt.abs_ts);
+}
+
 // ── Player controls ───────────────────────────────────
 el.play.addEventListener("click", () => { player.paused ? player.play() : player.pause(); });
-el.prev.addEventListener("click", () => {
-  const h = mode.handle;
-  if (h) h.prev(); else player.seek(Math.max(0, (player.currentTs ?? 0) - 30));
-});
-el.next.addEventListener("click", () => {
-  const h = mode.handle;
-  if (h) h.next(); else player.seek((player.currentTs ?? 0) + 30);
-});
+el.prev.addEventListener("click", navPrev);
+el.next.addEventListener("click", navNext);
 el.rewind.addEventListener("click", () => player.rewind(10));
 el.loop.addEventListener("click",   () => { st.loop = !st.loop; el.loop.classList.toggle("active", st.loop); });
 el.boxes.addEventListener("click",  () => {
@@ -635,11 +657,9 @@ function buildSpeedPills() {
 // Keyboard
 document.addEventListener("keydown", e => {
   if (["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
-  if (e.key === " ")  { e.preventDefault(); player.paused ? player.play() : player.pause(); }
-  if (e.key === "ArrowLeft")  player.rewind(5);
-  if (e.key === "ArrowRight") player.seek((player.currentTs ?? 0) + 5);
-  if (e.key === "ArrowUp")    mode.handle?.prev();
-  if (e.key === "ArrowDown")  mode.handle?.next();
+  if (e.key === " ")           { e.preventDefault(); player.paused ? player.play() : player.pause(); }
+  if (e.key === "ArrowLeft")  { e.preventDefault(); navPrev(); }
+  if (e.key === "ArrowRight") { e.preventDefault(); navNext(); }
 });
 el.video.addEventListener("click",    () => { player.paused ? player.play() : player.pause(); });
 el.video.addEventListener("dblclick", () => {
