@@ -517,7 +517,7 @@ function renderSrcCtrl() {
     b.textContent = s.name || s.id;
     b.addEventListener("click", () => {
       st.source = s.id; st.initDone = false;
-      renderSrcCtrl(); load();
+      renderSrcCtrl(); load().then(pushState);
     });
     pills.appendChild(b);
   });
@@ -546,6 +546,7 @@ function renderClsCtrl() {
     b.textContent = `${c} ×${n}`;
     b.addEventListener("click", () => {
       st.cls.has(c) ? st.cls.delete(c) : st.cls.add(c);
+      pushState();
       renderClsCtrl();
       timeline.setData(allSegsForSrc(), filteredEvts());
       if (st.cls.size > 0) {
@@ -705,10 +706,12 @@ el.video.addEventListener("dblclick", () => {
 // ── Player events → UI ────────────────────────────────
 player.on("play",  () => { el.play.textContent = "■"; el.play.classList.add("playing"); });
 player.on("pause", () => { el.play.textContent = "▶"; el.play.classList.remove("playing"); });
+let _pushTimer = null;
 player.on("timeupdate", () => {
   const ts = player.currentTs;
   if (ts == null) return;
   timeline.setPlayhead(ts);
+  clearTimeout(_pushTimer); _pushTimer = setTimeout(pushState, 5000);
   el.timeDisp.textContent = fmtTs(ts);
   if (el.hudTs) el.hudTs.textContent = new Date(ts*1000).toLocaleTimeString(undefined,
     { hour:"2-digit", minute:"2-digit", second:"2-digit" });
@@ -791,17 +794,48 @@ setInterval(async () => {
 
 window.addEventListener("resize", () => timeline.draw());
 
+// ── Deep links ────────────────────────────────────────
+function pushState() {
+  const p = new URLSearchParams();
+  if (st.source !== "all")    p.set("source", st.source);
+  if (player.reliableTs)      p.set("ts",     Math.floor(player.reliableTs));
+  if (st.cls.size > 0)        p.set("cls",    [...st.cls].join(","));
+  history.replaceState(null, "", `${location.pathname}${p.size ? "?" + p : ""}`);
+}
+
+function readState() {
+  const p = new URLSearchParams(location.search);
+  if (p.has("source")) st.source = p.get("source");
+  if (p.has("cls"))    p.get("cls").split(",").filter(Boolean).forEach(c => st.cls.add(c));
+  return p.has("ts") ? parseFloat(p.get("ts")) : null;
+}
+
 // ── Boot ──────────────────────────────────────────────
 async function init() {
   const r = await fetch("/api/sources", { cache:"no-store" });
   if (r.ok) st.sources = (await r.json()).sources || [];
   buildSpeedPills();
   player.setRate(V2_SPEEDS[st.speed].rate);
-  st.window.to   = Date.now() / 1000 + 600; // +10min headroom for ongoing recording
-  st.window.from = st.window.to - 6 * 3600 - 600;
-  timeline.setWindow(st.window.from, st.window.to);
+
+  const urlTs = readState(); // read source/cls/ts from URL before first load
   renderSrcCtrl();
+
+  const now = Date.now() / 1000;
+  // Center window around URL ts if provided, else show last 6h
+  const anchor = urlTs ?? now;
+  st.window.from = anchor - 3 * 3600;
+  st.window.to   = anchor + 3 * 3600 + 600;
+  timeline.setWindow(st.window.from, st.window.to);
+
   await load();
+
+  // Restore URL timestamp after data loaded
+  if (urlTs) {
+    el.empty.style.display = "none";
+    el.video.style.display = "block";
+    mode.seekTo(urlTs, st.source !== "all" ? st.source : null);
+    st.initDone = true;
+  }
 }
 
 init();
