@@ -92,6 +92,16 @@ class V2Player {
   play()  { this._v.play().catch(() => {}); }
   pause() { this._v.pause(); }
 
+  clearPlaylist() {
+    this._clips   = [];
+    this._clipIdx = -1;
+    if (this._watchFn) {
+      this._v.removeEventListener("timeupdate", this._watchFn);
+      this._watchFn = null;
+    }
+    dbg("playlist cleared");
+  }
+
   setRate(rate) { this._v.playbackRate = rate; }
 
   rewind(secs = 10) {
@@ -449,6 +459,7 @@ player.onClipEnd = () => {
 // ── Timeline callbacks ────────────────────────────────
 timeline.onSeek = (ts, srcId) => {
   dbg(`onSeek ts=${new Date(ts*1000).toLocaleTimeString()} srcId=${srcId}`);
+  player.clearPlaylist(); // cancel any active event playlist
   setLive(false);
   if (srcId && srcId !== st.source) {
     dbg(`switching source ${st.source} → ${srcId}`);
