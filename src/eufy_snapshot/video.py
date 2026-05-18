@@ -558,7 +558,7 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
             ts_off = ts_ms / 1000.0
             try:
                 results = model.predict(frame, classes=CCTV_CLASS_IDS,
-                                        conf=_CONF_THRESHOLD, verbose=False)
+                                        conf=_CONF_THRESHOLD, imgsz=800, verbose=False)
                 has_human, conf, boxes = _parse_results(results)
                 classes = list({b["cls"] for b in boxes}) if boxes else []
                 detections.append({
@@ -609,35 +609,52 @@ def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) ->
 
 
 def _events_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
+    """Per-class independent event grouping.
+
+    Each class seen in stable box detections gets its own event timeline,
+    grouped by gap. No class priority or dominant-class logic — a cat event
+    and a car event from the same frame are independent.
+    """
     if not detections:
         return []
 
     seg_start = segment["start_ts"]
-    events: list[dict] = []
-    current: dict | None = None
 
+    # Collect per-class observations: (ts_offset, box_conf, frame_boxes)
+    class_obs: dict[str, list[tuple[float, float, list]]] = {}
     for det in detections:
-        classes = det.get("classes") or []
-        if not classes:
-            continue
-        dom = _dominant_class(classes)
         off = det["ts_offset"]
+        frame_boxes = det.get("boxes") or []
+        for box in frame_boxes:
+            cls = box.get("cls") or box.get("raw_cls", "")
+            if not cls:
+                continue
+            class_obs.setdefault(cls, []).append((off, box.get("conf", 0.0), frame_boxes))
 
-        if current is None:
-            current = {"cls": dom, "start": off, "end": off,
-                       "conf": det["confidence"], "boxes": det.get("boxes")}
-        elif dom == current["cls"] and (off - current["end"]) <= _EVENT_GAP_SECONDS:
-            current["end"] = off
-            if det["confidence"] > current["conf"]:
-                current["conf"] = det["confidence"]
-                current["boxes"] = det.get("boxes")
-        else:
-            events.append(current)
-            current = {"cls": dom, "start": off, "end": off,
-                       "conf": det["confidence"], "boxes": det.get("boxes")}
+    events: list[dict] = []
+    for cls, obs in class_obs.items():
+        obs.sort(key=lambda x: x[0])
+        start_off  = obs[0][0]
+        end_off    = obs[0][0]
+        best_conf  = obs[0][1]
+        best_boxes = obs[0][2]
 
-    if current:
-        events.append(current)
+        for off, conf, frame_boxes in obs[1:]:
+            if off - end_off <= _EVENT_GAP_SECONDS:
+                end_off = off
+                if conf > best_conf:
+                    best_conf  = conf
+                    best_boxes = frame_boxes
+            else:
+                events.append({"cls": cls, "start": start_off, "end": end_off,
+                                "conf": best_conf, "boxes": best_boxes})
+                start_off  = off
+                end_off    = off
+                best_conf  = conf
+                best_boxes = frame_boxes
+
+        events.append({"cls": cls, "start": start_off, "end": end_off,
+                        "conf": best_conf, "boxes": best_boxes})
 
     return [{
         "segment_id": segment["id"],

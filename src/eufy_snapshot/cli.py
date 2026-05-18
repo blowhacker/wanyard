@@ -66,7 +66,7 @@ def cmd_web(config: AppConfig) -> int:
     image_index = ImageIndex(
         config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
     )
-    det_store = DetectionStore(config.output_dir / ".detections.db")
+    det_store = DetectionStore(config.output_dir / "detections.db")
     det_worker = DetectionWorker(det_store, image_index)
     app = make_app(
         config, image_index, source_db=source_db,
@@ -82,13 +82,13 @@ def cmd_serve(config: AppConfig) -> int:
     image_index = ImageIndex(
         config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
     )
-    det_store = DetectionStore(config.output_dir / ".detections.db")
+    det_store = DetectionStore(config.output_dir / "detections.db")
     det_worker = DetectionWorker(det_store, image_index)
     detection_model = _load_yolo_model()
 
     # Video recording — must be before CaptureWorker so workers can be passed in
     video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
-    video_db  = VideoSegmentDB(video_dir / ".video.db")
+    video_db  = VideoSegmentDB(video_dir / "video.db")
     video_workers = {
         s.id: VideoWorker(s, video_dir, video_db, model=detection_model)
         for s in all_sources if s.type == "rtsp" and s.enabled
