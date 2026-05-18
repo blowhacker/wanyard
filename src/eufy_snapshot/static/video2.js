@@ -816,78 +816,108 @@ function renderNearestEvents() {
   }
 
   if (_nearListSig === sig) {
-    updateNearestEventNodes(evts, baseTs);
-    return;
-  }
-
-  // Don't rebuild DOM while user is hovering — items must not move under cursor
-  if (el.eventThumbs.querySelector(":hover")) {
-    updateNearestEventNodes(evts, baseTs);
+    _updateThumbNodes(evts, baseTs);
     return;
   }
 
   _nearListSig = sig;
-  el.eventThumbs.innerHTML = "";
-  evts.forEach(evt => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "v2-event-thumb"
-      + (evt.provisional ? " provisional" : "")
-      + (isEventActive(evt, baseTs) ? " active" : "");
-    btn.dataset.eventId = String(evt.id);
-    btn.title = `${evt.class} ${eventLocalTime(evt.abs_ts)} ${sourceLabel(evt.source_id)}`;
-    btn.addEventListener("click", () => {
-      if (evt.provisional) {
-        startLiveTail(evt.source_id);
-        scrollTimelineToTs(evt.abs_ts);
-        return;
-      }
-      const ts = eventSeekTs(evt);
-      stopLiveTail();
-      mode.seekTo(ts, evt.source_id);
-      scrollTimelineToTs(evt.abs_ts);
-    });
-
-    let media;
-    if (evt.provisional) {
-      media = document.createElement("div");
-      media.className = "v2-event-thumb-live";
-      media.textContent = "LIVE";
-    } else {
-      media = document.createElement("img");
-      media.loading = "lazy";
-      media.alt = "";
-      media.src = `/api/video/event-thumb/${evt.id}`;
-    }
-
-    const klass = document.createElement("div");
-    klass.className = "v2-event-thumb-class";
-    klass.textContent = evt.class;
-
-    const meta = document.createElement("div");
-    meta.className = "v2-event-thumb-meta";
-    const t = document.createElement("span");
-    t.textContent = eventLocalTime(evt.abs_ts);
-    const d = document.createElement("span");
-    d.dataset.nearDist = "1";
-    d.textContent = relEventLabel(evt.abs_ts, baseTs);
-    meta.append(t, d);
-
-    btn.append(media, klass, meta);
-    el.eventThumbs.appendChild(btn);
-  });
+  _reconcileThumbNodes(evts, baseTs);
 }
 
-function updateNearestEventNodes(evts, baseTs) {
+function _makeThumbNode(evt, baseTs) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "v2-event-thumb"
+    + (evt.provisional ? " provisional" : "")
+    + (isEventActive(evt, baseTs) ? " active" : "");
+  btn.dataset.eventId = String(evt.id);
+  btn.title = `${evt.class} ${eventLocalTime(evt.abs_ts)} ${sourceLabel(evt.source_id)}`;
+  btn.addEventListener("click", () => {
+    if (evt.provisional) {
+      startLiveTail(evt.source_id);
+      scrollTimelineToTs(evt.abs_ts);
+      return;
+    }
+    stopLiveTail();
+    mode.seekTo(eventSeekTs(evt), evt.source_id);
+    scrollTimelineToTs(evt.abs_ts);
+  });
+
+  let media;
+  if (evt.provisional) {
+    media = document.createElement("div");
+    media.className = "v2-event-thumb-live";
+    media.textContent = "LIVE";
+  } else {
+    media = document.createElement("img");
+    media.loading = "lazy";
+    media.alt = "";
+    media.src = `/api/video/event-thumb/${evt.id}`;
+  }
+
+  const klass = document.createElement("div");
+  klass.className = "v2-event-thumb-class";
+  klass.textContent = evt.class;
+
+  const meta = document.createElement("div");
+  meta.className = "v2-event-thumb-meta";
+  const t = document.createElement("span");
+  t.textContent = eventLocalTime(evt.abs_ts);
+  const d = document.createElement("span");
+  d.dataset.nearDist = "1";
+  d.textContent = relEventLabel(evt.abs_ts, baseTs);
+  meta.append(t, d);
+
+  btn.append(media, klass, meta);
+  return btn;
+}
+
+function _updateThumbNode(btn, evt, baseTs) {
+  btn.classList.toggle("active", isEventActive(evt, baseTs));
+  const dist = btn.querySelector("[data-near-dist]");
+  const label = relEventLabel(evt.abs_ts, baseTs);
+  if (dist && dist.textContent !== label) dist.textContent = label;
+}
+
+function _updateThumbNodes(evts, baseTs) {
   const nodes = el.eventThumbs.querySelectorAll(".v2-event-thumb");
   evts.forEach((evt, i) => {
     const btn = nodes[i];
     if (!btn || btn.dataset.eventId !== String(evt.id)) return;
-    btn.classList.toggle("active", isEventActive(evt, baseTs));
-    const dist = btn.querySelector("[data-near-dist]");
-    const label = relEventLabel(evt.abs_ts, baseTs);
-    if (dist && dist.textContent !== label) dist.textContent = label;
+    _updateThumbNode(btn, evt, baseTs);
   });
+}
+
+function _reconcileThumbNodes(evts, baseTs) {
+  // Keyed reconciliation: reuse existing nodes, freeze hovered node in place
+  const existing = new Map(
+    [...el.eventThumbs.querySelectorAll(".v2-event-thumb")]
+      .map(n => [n.dataset.eventId, n])
+  );
+  const hoveredId = el.eventThumbs.querySelector(".v2-event-thumb:hover")?.dataset.eventId;
+  const newIds = new Set(evts.map(e => String(e.id)));
+
+  // Remove stale nodes — except the hovered one
+  for (const [id, node] of existing) {
+    if (!newIds.has(id) && id !== hoveredId) node.remove();
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const evt of evts) {
+    const key = String(evt.id);
+    if (key === hoveredId) {
+      // Hovered: update labels only, leave it where it is in the DOM
+      const node = existing.get(key);
+      if (node) _updateThumbNode(node, evt, baseTs);
+      continue;
+    }
+    let btn = existing.get(key);
+    if (btn) _updateThumbNode(btn, evt, baseTs);
+    else btn = _makeThumbNode(evt, baseTs);
+    fragment.appendChild(btn);
+  }
+
+  el.eventThumbs.appendChild(fragment);
 }
 
 let _nearRenderPending = false;
