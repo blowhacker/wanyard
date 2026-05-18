@@ -189,6 +189,17 @@ class VideoSegmentDB:
                 events,
             )
 
+    def replace_events(self, segment_id: int, events: list[dict]) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM video_events WHERE segment_id=?", (segment_id,))
+            if events:
+                conn.executemany(
+                    "INSERT INTO video_events"
+                    "(segment_id, source_id, abs_ts, class, start_off, end_off, confidence, boxes_json)"
+                    " VALUES(:segment_id,:source_id,:abs_ts,:class,:start_off,:end_off,:confidence,:boxes_json)",
+                    events,
+                )
+
     def list_events(self, source_id: str | None = None, cls: str | None = None,
                     date: str | None = None, limit: int = 100,
                     since: float | None = None) -> list[dict]:
@@ -573,10 +584,9 @@ def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
 
 
 def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) -> int:
-    """Group detections into events and store them."""
+    """Group detections into events and store them, replacing any existing."""
     rows = _events_from_detections(segment, detections)
-    if rows:
-        db.insert_events(rows)
+    db.replace_events(segment["id"], rows)
     return len(rows)
 
 
