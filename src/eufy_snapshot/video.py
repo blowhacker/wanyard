@@ -558,9 +558,13 @@ def _two_stage_predict(model, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD):
     return has_human, conf, boxes_320
 
 
+_TAG_FPS = 3   # sample rate for post-hoc tagging — 3fps catches fast-moving animals
+               # while keeping decode overhead manageable
+
+
 def _yolo_tag_video(model, seg_path: Path, seg_id: int,
                     db: VideoSegmentDB) -> int:
-    """Two-stage tagging: 320 on every frame, 1280 on non-vehicle triggers."""
+    """Two-stage tagging at _TAG_FPS: 320 on every sample, 1280 on non-vehicle triggers."""
     import cv2
     from .detect import CCTV_CLASS_IDS, _CONF_THRESHOLD
 
@@ -568,28 +572,34 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
     if not cap.isOpened():
         return 0
 
+    native_fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
+    step       = max(1, int(round(native_fps / _TAG_FPS)))
+    frame_num  = 0
     detections: list[dict] = []
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        ts_off = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
-        try:
-            has_human, conf, boxes = _two_stage_predict(
-                model, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD)
-            if not boxes:
-                continue  # nothing detected — skip frame
-            classes = list({b["cls"] for b in boxes})
-            detections.append({
-                "ts_offset": ts_off,
-                "has_human": has_human,
-                "confidence": conf,
-                "boxes": boxes,
-                "classes": classes,
-            })
-        except Exception:
-            LOG.exception("yolo tag failed at %.1fs in %s", ts_off, seg_path.name)
+        if frame_num % step == 0:
+            ts_off = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            try:
+                has_human, conf, boxes = _two_stage_predict(
+                    model, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD)
+                if not boxes:
+                    frame_num += 1
+                    continue
+                classes = list({b["cls"] for b in boxes})
+                detections.append({
+                    "ts_offset": ts_off,
+                    "has_human": has_human,
+                    "confidence": conf,
+                    "boxes": boxes,
+                    "classes": classes,
+                })
+            except Exception:
+                LOG.exception("yolo tag failed at %.1fs in %s", ts_off, seg_path.name)
+        frame_num += 1
 
     cap.release()
     detections = _apply_tracks(detections)
