@@ -642,7 +642,8 @@ function nearestEvents(baseTs) {
     .map(e => ({ event: e, dist: Math.abs(e.abs_ts - baseTs) }))
     .sort((a, b) => a.dist - b.dist || a.event.abs_ts - b.event.abs_ts)
     .slice(0, NEAR_EVENT_LIMIT)
-    .map(x => x.event);
+    .map(x => x.event)
+    .sort((a, b) => a.abs_ts - b.abs_ts);  // stable display order — prevents sig churn
 }
 
 function classFilteredEvents(classes = st.cls) {
@@ -815,6 +816,12 @@ function renderNearestEvents() {
   }
 
   if (_nearListSig === sig) {
+    updateNearestEventNodes(evts, baseTs);
+    return;
+  }
+
+  // Don't rebuild DOM while user is hovering — items must not move under cursor
+  if (el.eventThumbs.querySelector(":hover")) {
     updateNearestEventNodes(evts, baseTs);
     return;
   }
