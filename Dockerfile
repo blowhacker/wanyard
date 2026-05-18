@@ -12,7 +12,7 @@ COPY pyproject.toml requirements.txt README.md ./
 COPY src ./src
 RUN pip install --no-cache-dir \
       torch torchvision \
-      --index-url https://download.pytorch.org/whl/cpu \
+      --index-url https://download.pytorch.org/whl/cu121 \
   && pip install --no-cache-dir .
 
 COPY config.yaml ./config.yaml
