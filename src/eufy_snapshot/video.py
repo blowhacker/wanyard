@@ -68,9 +68,8 @@ CREATE INDEX IF NOT EXISTS vevt_class     ON video_events(class, abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_source_class_ts ON video_events(source_id, class, abs_ts);
 """
 
-_MOBILE_CLASSES     = {"person", "bicycle", "motorcycle", "truck", "bus",
-                        "bird", "cat", "dog"}
-_STATIONARY_CLASSES = {"car", "backpack", "suitcase"}
+_MOBILE_CLASSES     = {"person", "bicycle", "motorcycle", "bird", "cat", "dog"}
+_STATIONARY_CLASSES = {"car", "truck", "bus", "backpack", "suitcase"}
 
 
 def _dominant_class(classes: list[str]) -> str:
@@ -638,11 +637,15 @@ class VideoWorker:
         self._last_det:  float       = 0.0
         self._recording: bool        = False
         self._prev_counts: dict      = {}
+        self._warmup_left: int       = 3  # silent frames to establish baseline
 
     def on_detection(self, ts: float, has_human: bool, confidence: float,
                      boxes: list | None, classes: list | None) -> None:
         triggered, new_counts = _is_new_activity(boxes, self._prev_counts)
         self._prev_counts = new_counts
+        if self._warmup_left > 0:
+            self._warmup_left -= 1
+            return  # establish baseline before enabling triggers
         with self._lock:
             if self._recording and (ts - self._seg_start) >= _MAX_SEGMENT_SECONDS:
                 self._stop_segment(ts)
