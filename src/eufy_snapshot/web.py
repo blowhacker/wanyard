@@ -507,6 +507,10 @@ def make_app(
         summary: dict[int, dict] = {}
         for r in rows:
             summary.setdefault(r["segment_id"], {})[r["class"]] = r["n"]
+        for evt in await asyncio.to_thread(video_db.provisional_events, source_id):
+            summary.setdefault(evt["segment_id"], {})[evt["class"]] = (
+                summary.setdefault(evt["segment_id"], {}).get(evt["class"], 0) + 1
+            )
         for s in segs:
             s["classes"] = summary.get(s["id"], {})
         return JSONResponse({"segments": segs})
@@ -529,12 +533,26 @@ def make_app(
             events = await asyncio.to_thread(
                 video_db.nearest_events, float(around_raw), source_id, classes, limit
             )
+            provisional = await asyncio.to_thread(video_db.provisional_events, source_id)
+            if classes:
+                wanted = set(classes)
+                provisional = [e for e in provisional if e["class"] in wanted]
+            events = events + provisional
+            around = float(around_raw)
+            events.sort(key=lambda e: (abs(e["abs_ts"] - around), e["abs_ts"]))
+            events = events[:limit]
             return JSONResponse({"events": events})
         since_raw = request.query_params.get("since")
         since     = float(since_raw) if since_raw else None
         events = await asyncio.to_thread(
             video_db.list_events, source_id, cls, date, limit, since
         )
+        provisional = await asyncio.to_thread(video_db.provisional_events, source_id, since)
+        if cls and cls != "all":
+            provisional = [e for e in provisional if e["class"] == cls]
+        events = provisional + events
+        events.sort(key=lambda e: e["abs_ts"], reverse=True)
+        events = events[:limit]
         return JSONResponse({"events": events})
 
     async def api_video_class_counts(request: Request) -> JSONResponse:
@@ -559,6 +577,13 @@ def make_app(
             return JSONResponse({"error": "segment_id required"}, status_code=400)
         dets = await asyncio.to_thread(video_db.detections_for_segment, int(seg_id))
         return JSONResponse({"detections": dets})
+
+    async def api_video_live_status(request: Request) -> JSONResponse:
+        if not video_db:
+            return JSONResponse({"segments": [], "events": [], "detections": []})
+        source_id = request.query_params.get("source") or None
+        status = await asyncio.to_thread(video_db.live_status, source_id)
+        return JSONResponse(status)
 
     async def serve_video_file(request: Request) -> Response:
         if not video_dir:
@@ -586,6 +611,7 @@ def make_app(
         Route("/api/video/classes",         api_video_class_counts),
         Route("/api/video/segments",        api_video_segments),
         Route("/api/video/detections",      api_video_detections),
+        Route("/api/video/live",            api_video_live_status),
         Route("/video/files/{path:path}",   serve_video_file),
         Route("/video",                     lambda r: FileResponse(static_dir / "video.html")),
         Route("/api/live",                  api_live),

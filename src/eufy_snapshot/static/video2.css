@@ -24,6 +24,10 @@
   width: 100%; height: 100%; object-fit: contain;
   display: none; position: relative; z-index: 3; cursor: pointer;
 }
+.v2-live-video {
+  width: 100%; height: 100%; object-fit: contain;
+  display: none; position: relative; z-index: 3; cursor: pointer;
+}
 #v2BoxCanvas {
   position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
@@ -172,11 +176,29 @@
   border-color: var(--amber);
 }
 
+.v2-event-thumb.provisional {
+  border-style: dashed;
+}
+
 .v2-event-thumb img {
   width: 100%;
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.v2-event-thumb-live {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(135deg, rgba(42,172,106,0.14), rgba(32,192,176,0.08)),
+    var(--bg-stage);
+  color: var(--text-mid);
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
 }
 
 .v2-event-thumb-meta {
@@ -209,6 +231,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.v2-event-thumb.provisional .v2-event-thumb-class::after {
+  content: " LIVE";
+  color: var(--green);
 }
 
 .v2-event-thumbs-empty {

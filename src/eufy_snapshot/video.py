@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS segments (
     webvtt      TEXT
 );
 CREATE INDEX IF NOT EXISTS seg_source_ts ON segments(source_id, start_ts);
+CREATE INDEX IF NOT EXISTS seg_source_end_ts ON segments(source_id, end_ts, start_ts);
 
 CREATE TABLE IF NOT EXISTS video_detections (
     id          INTEGER PRIMARY KEY,
@@ -133,6 +134,26 @@ class VideoSegmentDB:
                 (segment_id, ts_offset, int(has_human), confidence,
                  json.dumps(boxes) if boxes else None,
                  json.dumps(classes) if classes else None),
+            )
+
+    def replace_detections(self, segment_id: int, detections: list[dict]) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM video_detections WHERE segment_id=?", (segment_id,))
+            conn.executemany(
+                "INSERT INTO video_detections"
+                "(segment_id, ts_offset, has_human, confidence, boxes_json, classes_json)"
+                " VALUES(?,?,?,?,?,?)",
+                [
+                    (
+                        segment_id,
+                        d["ts_offset"],
+                        int(d["has_human"]),
+                        d["confidence"],
+                        json.dumps(d["boxes"]) if d.get("boxes") else None,
+                        json.dumps(d["classes"]) if d.get("classes") else None,
+                    )
+                    for d in detections
+                ],
             )
 
     def get_segment(self, segment_id: int) -> dict | None:
@@ -247,7 +268,8 @@ class VideoSegmentDB:
             ).fetchone()
         return dict(row) if row else None
 
-    def class_counts(self, source_id: str | None = None) -> dict[str, int]:
+    def class_counts(self, source_id: str | None = None,
+                     include_provisional: bool = True) -> dict[str, int]:
         with self._connect() as conn:
             if source_id and source_id != "all":
                 rows = conn.execute(
@@ -258,7 +280,11 @@ class VideoSegmentDB:
                 rows = conn.execute(
                     "SELECT class, COUNT(*) as n FROM video_events GROUP BY class"
                 ).fetchall()
-        return {r["class"]: r["n"] for r in rows}
+        counts = {r["class"]: r["n"] for r in rows}
+        if include_provisional:
+            for evt in self.provisional_events(source_id):
+                counts[evt["class"]] = counts.get(evt["class"], 0) + 1
+        return counts
 
     def list_segments(self, source_id: str | None = None) -> list[dict]:
         where, params = [], []
@@ -272,6 +298,78 @@ class VideoSegmentDB:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
+    def provisional_events(self, source_id: str | None = None,
+                           since: float | None = None) -> list[dict]:
+        where, params = [
+            "(s.end_ts IS NULL OR NOT EXISTS "
+            "(SELECT 1 FROM video_events e WHERE e.segment_id=s.id))"
+        ], []
+        if source_id and source_id != "all":
+            where.append("s.source_id=?"); params.append(source_id)
+        if since is not None:
+            where.append("s.start_ts>=?"); params.append(since - _MAX_SEGMENT_SECONDS)
+        sql = (
+            "SELECT s.* FROM segments s"
+            f" WHERE {' AND '.join(where)}"
+            " ORDER BY s.start_ts DESC"
+        )
+        with self._connect() as conn:
+            segs = [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+        events: list[dict] = []
+        for seg in segs:
+            rows = _events_from_detections(seg, self.detections_for_segment(seg["id"]))
+            for row in rows:
+                if since is not None and row["abs_ts"] < since:
+                    continue
+                row["id"] = f"p:{row['segment_id']}:{row['class']}:{row['start_off']:.1f}"
+                row["provisional"] = True
+                row["seg_path"] = seg["path"]
+                row["spritesheet"] = seg.get("spritesheet")
+                row["seg_start_ts"] = seg["start_ts"]
+                events.append(row)
+        events.sort(key=lambda r: r["abs_ts"], reverse=True)
+        return events
+
+    def live_status(self, source_id: str | None = None) -> dict:
+        with self._connect() as conn:
+            where, params = ["s.end_ts IS NULL"], []
+            if source_id and source_id != "all":
+                where.append("s.source_id=?"); params.append(source_id)
+            segs = [dict(r) for r in conn.execute(
+                "SELECT s.* FROM segments s"
+                f" WHERE {' AND '.join(where)}"
+                " ORDER BY s.start_ts DESC",
+                params,
+            ).fetchall()]
+            latest_rows = conn.execute(
+                "SELECT s.source_id, s.start_ts, d.*"
+                " FROM segments s JOIN video_detections d ON d.segment_id=s.id"
+                f" WHERE {' AND '.join(where)}"
+                " ORDER BY (s.start_ts + d.ts_offset) DESC",
+                params,
+            ).fetchall()
+
+        latest: dict[str, dict] = {}
+        for r in latest_rows:
+            if r["source_id"] in latest:
+                continue
+            latest[r["source_id"]] = {
+                "segment_id": r["segment_id"],
+                "source_id": r["source_id"],
+                "abs_ts": r["start_ts"] + r["ts_offset"],
+                "ts_offset": r["ts_offset"],
+                "has_human": bool(r["has_human"]),
+                "confidence": r["confidence"],
+                "boxes": json.loads(r["boxes_json"]) if r["boxes_json"] else [],
+                "classes": json.loads(r["classes_json"]) if r["classes_json"] else [],
+            }
+        return {
+            "segments": segs,
+            "events": self.provisional_events(source_id),
+            "detections": list(latest.values()),
+        }
+
 
 def _yolo_tag_video(model, seg_path: Path, seg_id: int,
                     db: VideoSegmentDB) -> int:
@@ -283,14 +381,10 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
     if not cap.isOpened():
         return 0
 
-    # Clear any existing detections for this segment (replacing live-stream data)
-    with db._connect() as conn:
-        conn.execute("DELETE FROM video_detections WHERE segment_id=?", (seg_id,))
-
     fps        = cap.get(cv2.CAP_PROP_FPS) or 25.0
     step       = max(1, int(round(fps)))  # read every Nth frame = 1fps
     frame_num  = 0
-    count      = 0
+    detections: list[dict] = []
 
     while True:
         ret, frame = cap.read()
@@ -304,14 +398,20 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
                                         conf=_CONF_THRESHOLD, verbose=False)
                 has_human, conf, boxes = _parse_results(results)
                 classes = list({b["cls"] for b in boxes}) if boxes else []
-                db.add_detection(seg_id, ts_off, has_human, conf, boxes, classes)
-                count += 1
+                detections.append({
+                    "ts_offset": ts_off,
+                    "has_human": has_human,
+                    "confidence": conf,
+                    "boxes": boxes,
+                    "classes": classes,
+                })
             except Exception:
                 LOG.exception("yolo tag failed at %.1fs in %s", ts_off, seg_path.name)
         frame_num += 1
 
     cap.release()
-    return count
+    db.replace_detections(seg_id, detections)
+    return len(detections)
 
 
 def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
@@ -338,8 +438,15 @@ def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
 
 def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) -> int:
     """Group detections into events and store them."""
+    rows = _events_from_detections(segment, detections)
+    if rows:
+        db.insert_events(rows)
+    return len(rows)
+
+
+def _events_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
     if not detections:
-        return 0
+        return []
 
     seg_start = segment["start_ts"]
     events: list[dict] = []
@@ -368,7 +475,7 @@ def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) ->
     if current:
         events.append(current)
 
-    rows = [{
+    return [{
         "segment_id": segment["id"],
         "source_id":  segment["source_id"],
         "abs_ts":     seg_start + e["start"],
@@ -378,10 +485,6 @@ def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) ->
         "confidence": e["conf"],
         "boxes_json": json.dumps(e["boxes"]) if e["boxes"] else None,
     } for e in events]
-
-    if rows:
-        db.insert_events(rows)
-    return len(rows)
 
 
 class VideoWorker:
@@ -418,7 +521,15 @@ class VideoWorker:
                 if ts - self._last_det >= _POST_EVENT_SECONDS:
                     self._stop_segment(ts)
 
-            # Detection storage now done post-hoc from video file (accurate sync)
+            if self._recording and self._seg_id:
+                self.db.add_detection(
+                    self._seg_id,
+                    max(0.0, ts - self._seg_start),
+                    has_human,
+                    confidence,
+                    boxes,
+                    classes,
+                )
 
     def stop(self) -> None:
         with self._lock:

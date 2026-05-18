@@ -317,6 +317,12 @@ class AppMode {
       .then(landing => { if (op === this.#op && landing) this.#player.play(); });
   }
 
+  enterLive() {
+    this.#cancel();
+    this.#mode = "live";
+    this.onModeChange?.("live");
+  }
+
   stopLive() {
     if (this.#mode !== "live") return;
     this.#op++;
@@ -533,6 +539,7 @@ const POST_BUFFER  = 10;
 const $ = id => document.getElementById(id);
 const el = {
   video:   $("v2Video"),
+  liveVideo:$("v2LiveVideo"),
   canvas:  $("v2BoxCanvas"),
   tlCanvas:$("v2Timeline"),
   thumb:   $("v2ThumbPreview"),
@@ -578,6 +585,15 @@ const st = {
   dets:     {},  // segId → [{ts_offset, boxes, classes}]
   initDone: false,
   classSearchSeq: 0,
+};
+
+const liveTail = {
+  pc: null,
+  active: false,
+  srcId: null,
+  pollTimer: null,
+  clockTimer: null,
+  latestDet: null,
 };
 
 // ── Derived views ─────────────────────────────────────
@@ -666,6 +682,29 @@ function mergeEvents(events) {
   st.events = [...byId.values()].sort((a, b) => b.abs_ts - a.abs_ts);
 }
 
+function replaceProvisionalEvents(events, srcId = null) {
+  st.events = st.events.filter(e =>
+    !e.provisional || (srcId && e.source_id !== srcId)
+  );
+  mergeEvents(events);
+}
+
+function mergeSegments(segments) {
+  if (!segments?.length) return;
+  const byId = new Map(st.segments.map(s => [s.id, s]));
+  segments.forEach(s => byId.set(s.id, { ...(byId.get(s.id) || {}), ...s }));
+  st.segments = [...byId.values()].sort((a, b) => b.start_ts - a.start_ts);
+  player.setSegments(st.segments);
+}
+
+function mergeClassCounts(events) {
+  const counts = {};
+  events.forEach(e => { counts[e.class] = (counts[e.class] || 0) + 1; });
+  Object.entries(counts).forEach(([cls, n]) => {
+    st.classes[cls] = Math.max(st.classes[cls] || 0, n);
+  });
+}
+
 async function handleClassSelectionChanged(classes) {
   const seq = ++st.classSearchSeq;
   renderClsCtrl();
@@ -674,8 +713,8 @@ async function handleClassSelectionChanged(classes) {
   scheduleNearestEvents(true);
 
   if (!classes.size) {
-    mode.stop();
-    setStatus("AUTO");
+    if (!liveTail.active) mode.stop();
+    setStatus(liveTail.active ? "LIVE" : "AUTO");
     return;
   }
 
@@ -700,6 +739,16 @@ async function handleClassSelectionChanged(classes) {
     Math.abs(a.abs_ts - baseTs) - Math.abs(b.abs_ts - baseTs) || a.abs_ts - b.abs_ts
   );
   const target = evts[0];
+  if (target.provisional) {
+    centerWindowOn(target.abs_ts);
+    timeline.setData(allSegsForSrc(), filteredEvts());
+    scrollTimelineToTs(target.abs_ts);
+    startLiveTail(target.source_id);
+    setStatus("LIVE");
+    return;
+  }
+
+  stopLiveTail(false);
   centerWindowOn(target.abs_ts);
   await load();
   if (seq !== st.classSearchSeq) return;
@@ -737,7 +786,11 @@ function eventSeekTs(evt) {
 }
 
 function isEventActive(evt, ts) {
-  if (ts == null || player.currentSeg?.id !== evt.segment_id) return false;
+  if (ts == null) return false;
+  if (evt.provisional) {
+    return liveTail.active && liveTail.srcId === evt.source_id && Math.abs(ts - evt.abs_ts) <= 3;
+  }
+  if (player.currentSeg?.id !== evt.segment_id) return false;
   const dur = Math.max(1, (evt.end_off ?? 0) - (evt.start_off ?? 0));
   return ts >= evt.abs_ts - 1 && ts <= evt.abs_ts + dur + 1;
 }
@@ -771,19 +824,34 @@ function renderNearestEvents() {
   evts.forEach(evt => {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "v2-event-thumb" + (isEventActive(evt, baseTs) ? " active" : "");
+    btn.className = "v2-event-thumb"
+      + (evt.provisional ? " provisional" : "")
+      + (isEventActive(evt, baseTs) ? " active" : "");
     btn.dataset.eventId = String(evt.id);
     btn.title = `${evt.class} ${eventLocalTime(evt.abs_ts)} ${sourceLabel(evt.source_id)}`;
     btn.addEventListener("click", () => {
+      if (evt.provisional) {
+        startLiveTail(evt.source_id);
+        scrollTimelineToTs(evt.abs_ts);
+        return;
+      }
       const ts = eventSeekTs(evt);
+      stopLiveTail();
       mode.seekTo(ts, evt.source_id);
       scrollTimelineToTs(evt.abs_ts);
     });
 
-    const img = document.createElement("img");
-    img.loading = "lazy";
-    img.alt = "";
-    img.src = `/api/video/event-thumb/${evt.id}`;
+    let media;
+    if (evt.provisional) {
+      media = document.createElement("div");
+      media.className = "v2-event-thumb-live";
+      media.textContent = "LIVE";
+    } else {
+      media = document.createElement("img");
+      media.loading = "lazy";
+      media.alt = "";
+      media.src = `/api/video/event-thumb/${evt.id}`;
+    }
 
     const klass = document.createElement("div");
     klass.className = "v2-event-thumb-class";
@@ -798,7 +866,7 @@ function renderNearestEvents() {
     d.textContent = relEventLabel(evt.abs_ts, baseTs);
     meta.append(t, d);
 
-    btn.append(img, klass, meta);
+    btn.append(media, klass, meta);
     el.eventThumbs.appendChild(btn);
   });
 }
@@ -870,7 +938,7 @@ async function load() {
   renderNearScope();
   scheduleNearestEvents(true);
 
-  if (!st.initDone && st.segments.length) {
+  if (!liveTail.active && !st.initDone && st.segments.length) {
     st.initDone = true;
     const latest = st.segments.find(s => s.end_ts != null);
     if (latest) {
@@ -893,6 +961,7 @@ function renderSrcCtrl() {
     b.className = "source-pill" + (st.source === s.id ? " active" : "");
     b.textContent = s.name || s.id;
     b.addEventListener("click", () => {
+      stopLiveTail();
       st.source = s.id; st.initDone = false;
       renderSrcCtrl(); load().then(pushState);
     });
@@ -936,9 +1005,16 @@ el.tlCanvas.addEventListener("click", e => {
   const hit  = timeline.decode(e.clientX - rect.left, e.clientY - rect.top);
   if (!hit) return;
   if (hit.snapEvent) {
+    if (hit.snapEvent.provisional) {
+      startLiveTail(hit.snapEvent.source_id);
+      scrollTimelineToTs(hit.snapEvent.abs_ts);
+      return;
+    }
     // Snap to exact event timestamp
+    stopLiveTail(false);
     mode.seekTo(hit.snapEvent.abs_ts, hit.snapEvent.source_id);
   } else {
+    stopLiveTail(false);
     mode.seekTo(hit.ts, hit.srcId);
   }
   el.empty.style.display = "none";
@@ -1013,27 +1089,164 @@ function scrollTimelineToTs(ts) {
 }
 
 function navPrev() {
-  const ts = player.reliableTs;
+  const ts = liveTail.active ? (liveTail.latestDet?.abs_ts ?? Date.now() / 1000) : player.reliableTs;
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts);
   const evt  = evts[0];
   if (!evt) return;
+  if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
+  stopLiveTail(false);
   mode.seekTo(evt.abs_ts, evt.source_id);
   scrollTimelineToTs(evt.abs_ts);
 }
 
 function navNext() {
-  const ts = player.reliableTs;
+  const ts = liveTail.active ? (liveTail.latestDet?.abs_ts ?? Date.now() / 1000) : player.reliableTs;
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts);
   const evt  = evts[0];
   if (!evt) return;
+  if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
+  stopLiveTail(false);
   mode.seekTo(evt.abs_ts, evt.source_id);
   scrollTimelineToTs(evt.abs_ts);
 }
 
+// ── Live tail ──────────────────────────────────────────
+function latestOpenSegment(srcId = null) {
+  return [...st.segments]
+    .filter(s => s.end_ts == null && (!srcId || s.source_id === srcId))
+    .sort((a, b) => b.start_ts - a.start_ts)[0] ?? null;
+}
+
+function chooseLiveSource(srcId = null) {
+  if (srcId && srcId !== "all") return srcId;
+  const selected = st.source !== "all" ? st.source : null;
+  return latestOpenSegment(selected)?.source_id
+    ?? selected
+    ?? player.currentSeg?.source_id
+    ?? latestOpenSegment()?.source_id
+    ?? st.segments[0]?.source_id
+    ?? null;
+}
+
+async function startLiveTail(srcId = null) {
+  const chosen = chooseLiveSource(srcId);
+  if (!chosen) return;
+  if (liveTail.active && liveTail.srcId === chosen) return;
+  stopLiveTail(false);
+
+  liveTail.active = true;
+  liveTail.srcId = chosen;
+  liveTail.latestDet = null;
+  mode.enterLive();
+  player.pause();
+
+  el.video.style.display = "none";
+  el.empty.style.display = "none";
+  el.liveVideo.style.display = "block";
+  el.liveBtn.textContent = "● LIVE";
+  el.liveBtn.classList.add("active");
+  el.play.textContent = "■";
+  el.play.classList.add("playing");
+  setStatus("LIVE");
+
+  liveTail.pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  });
+  liveTail.pc.ontrack = e => {
+    if (e.streams[0]) el.liveVideo.srcObject = e.streams[0];
+  };
+  liveTail.pc.addTransceiver("video", { direction: "recvonly" });
+  liveTail.pc.addTransceiver("audio", { direction: "recvonly" });
+
+  try {
+    const offer = await liveTail.pc.createOffer();
+    await liveTail.pc.setLocalDescription(offer);
+    const resp = await fetch(`http://${location.hostname}:1984/api/webrtc?src=${encodeURIComponent(chosen)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/sdp" },
+      body: offer.sdp,
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const answerSdp = await resp.text();
+    await liveTail.pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+    await el.liveVideo.play().catch(() => {});
+    await pollLiveTail();
+    liveTail.pollTimer = setInterval(pollLiveTail, 1500);
+    liveTail.clockTimer = setInterval(updateLiveTailClock, 500);
+  } catch (err) {
+    console.error("go2rtc:", err);
+    stopLiveTail();
+    setStatus("LIVE ERR");
+  }
+}
+
+function stopLiveTail(updateMode = true) {
+  clearInterval(liveTail.pollTimer);
+  clearInterval(liveTail.clockTimer);
+  liveTail.pollTimer = null;
+  liveTail.clockTimer = null;
+  if (liveTail.pc) { liveTail.pc.close(); liveTail.pc = null; }
+  if (el.liveVideo?.srcObject) {
+    el.liveVideo.srcObject.getTracks().forEach(t => t.stop());
+    el.liveVideo.srcObject = null;
+  }
+  if (el.liveVideo) el.liveVideo.style.display = "none";
+  liveTail.active = false;
+  liveTail.srcId = null;
+  liveTail.latestDet = null;
+  el.liveBtn.textContent = "LIVE";
+  el.liveBtn.classList.remove("active");
+  el.play.textContent = player.paused ? "▶" : "■";
+  el.play.classList.toggle("playing", !player.paused);
+  drawBoxList(el.video, []);
+  if (updateMode) mode.stopLive();
+  if (el.video.dataset.src) el.video.style.display = "block";
+  else el.empty.style.display = "block";
+  setStatus("AUTO");
+}
+
+async function pollLiveTail() {
+  if (!liveTail.active || !liveTail.srcId) return;
+  const p = new URLSearchParams({ source: liveTail.srcId });
+  const r = await fetch(`/api/video/live?${p}`, { cache:"no-store" }).catch(() => null);
+  if (!r?.ok) return;
+  const data = await r.json();
+  mergeSegments(data.segments || []);
+  replaceProvisionalEvents(data.events || [], liveTail.srcId);
+  mergeClassCounts(data.events || []);
+  liveTail.latestDet = (data.detections || []).find(d => d.source_id === liveTail.srcId) ?? liveTail.latestDet;
+  renderClsCtrl();
+  timeline.setData(allSegsForSrc(), filteredEvts());
+  scheduleNearestEvents(true);
+  updateLiveTailClock();
+}
+
+function updateLiveTailClock() {
+  if (!liveTail.active) return;
+  const ts = liveTail.latestDet?.abs_ts ?? Date.now() / 1000;
+  timeline.setPlayhead(ts);
+  el.timeDisp.textContent = fmtTs(ts);
+  if (el.hudTs) el.hudTs.textContent = new Date(ts * 1000).toLocaleTimeString(undefined,
+    { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+  if (el.tsDisp) {
+    const src = st.sources.find(s => s.id === liveTail.srcId);
+    el.tsDisp.textContent = `${src?.name || liveTail.srcId} · LIVE · ${new Date(ts * 1000).toLocaleString(undefined,
+      { dateStyle:"short", timeStyle:"medium" })}`;
+  }
+  drawLiveBoxes();
+}
+
 // ── Player controls ───────────────────────────────────
 function togglePlayback() {
+  if (liveTail.active) {
+    if (el.liveVideo.paused) el.liveVideo.play().catch(() => {});
+    else el.liveVideo.pause();
+    el.play.textContent = el.liveVideo.paused ? "▶" : "■";
+    el.play.classList.toggle("playing", !el.liveVideo.paused);
+    return;
+  }
   if (!player.paused) { player.pause(); return; }
   mode.playFromCurrent(st.source !== "all" ? st.source : null);
 }
@@ -1042,8 +1255,10 @@ el.play.addEventListener("click", togglePlayback);
 el.prev.addEventListener("click", navPrev);
 el.next.addEventListener("click", navNext);
 el.rewind.addEventListener("click", () => {
-  const ts  = player.reliableTs;
-  const src = player.currentSeg?.source_id ?? null;
+  const wasLive = liveTail.active;
+  const ts  = wasLive ? (liveTail.latestDet?.abs_ts ?? Date.now() / 1000) : player.reliableTs;
+  const src = wasLive ? liveTail.srcId : (player.currentSeg?.source_id ?? null);
+  if (wasLive) stopLiveTail(false);
   if (ts != null) {
     const target = ts - 10;
     mode.seekTo(target, src, "backward");
@@ -1058,8 +1273,8 @@ el.boxes.addEventListener("click",  () => {
 el.boxes.classList.toggle("active", st.showBoxes);
 el.loadMore.addEventListener("click", () => { timeline.extendBack(6); load(); });
 el.liveBtn.addEventListener("click", () => {
-  if (mode.current === "live") { mode.stopLive(); el.liveBtn.textContent = "LIVE"; el.liveBtn.classList.remove("active"); }
-  else { mode.goLive(st.source !== "all" ? st.source : null, st.segments); el.liveBtn.textContent = "● LIVE"; el.liveBtn.classList.add("active"); }
+  if (liveTail.active) stopLiveTail();
+  else startLiveTail(st.source !== "all" ? st.source : null);
 });
 
 // Speed pills
@@ -1082,14 +1297,19 @@ document.addEventListener("keydown", e => {
   if (e.key === "ArrowRight") { e.preventDefault(); navNext(); }
 });
 el.video.addEventListener("click",    togglePlayback);
+el.liveVideo.addEventListener("click", togglePlayback);
 el.video.addEventListener("dblclick", () => {
+  const s = document.querySelector(".v2-stage");
+  document.fullscreenElement ? document.exitFullscreen() : s.requestFullscreen().catch(()=>{});
+});
+el.liveVideo.addEventListener("dblclick", () => {
   const s = document.querySelector(".v2-stage");
   document.fullscreenElement ? document.exitFullscreen() : s.requestFullscreen().catch(()=>{});
 });
 
 // ── Player events → UI ────────────────────────────────
-player.on("play",  () => { el.play.textContent = "■"; el.play.classList.add("playing"); });
-player.on("pause", () => { el.play.textContent = "▶"; el.play.classList.remove("playing"); });
+player.on("play",  () => { if (!liveTail.active) { el.play.textContent = "■"; el.play.classList.add("playing"); } });
+player.on("pause", () => { if (!liveTail.active) { el.play.textContent = "▶"; el.play.classList.remove("playing"); } });
 player.on("ended", () => { mode.handleEnded(st.source !== "all" ? st.source : null); });
 
 let _pushTimer = null;
@@ -1119,22 +1339,30 @@ async function loadDets(segId) {
 }
 
 function drawBoxes(ts) {
-  const c = el.canvas, v = el.video;
-  c.width = c.clientWidth; c.height = c.clientHeight;
-  const ctx = c.getContext("2d");
-  ctx.clearRect(0, 0, c.width, c.height);
-  if (!st.showBoxes || !v.videoWidth) return;
-
+  if (liveTail.active) return;
+  const v = el.video;
   const seg = player.currentSeg;
-  if (!seg) return;
-  if (!st.dets[seg.id]) { loadDets(seg.id); return; }
+  if (!seg) { drawBoxList(v, []); return; }
+  if (!st.dets[seg.id]) { loadDets(seg.id); drawBoxList(v, []); return; }
 
   const off = ts - seg.start_ts;
   const nearest = (st.dets[seg.id] || []).reduce((best, d) =>
     Math.abs(d.ts_offset - off) < Math.abs((best?.ts_offset ?? Infinity) - off) ? d : best, null);
-  if (!nearest || Math.abs(nearest.ts_offset - off) > 1.5) return;
+  if (!nearest || Math.abs(nearest.ts_offset - off) > 1.5) { drawBoxList(v, []); return; }
 
-  const boxes = nearest.boxes || [];
+  drawBoxList(v, nearest.boxes || []);
+}
+
+function drawLiveBoxes() {
+  drawBoxList(el.liveVideo, liveTail.latestDet?.boxes || []);
+}
+
+function drawBoxList(v, boxes) {
+  const c = el.canvas;
+  c.width = c.clientWidth; c.height = c.clientHeight;
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (!st.showBoxes || !v.videoWidth) return;
   if (!boxes.length) return;
   const cw = c.width, ch = c.height;
   const iw = v.videoWidth, ih = v.videoHeight;
@@ -1172,11 +1400,11 @@ function fmtTs(ts) {
 
 // ── Auto-refresh ──────────────────────────────────────
 setInterval(async () => {
-  el.status.textContent = "SYNC";
+  el.status.textContent = liveTail.active ? "LIVE" : "SYNC";
   st.window.to = Date.now() / 1000;
   timeline.setWindow(st.window.from, st.window.to);
   await load();
-  el.status.textContent = "AUTO";
+  el.status.textContent = liveTail.active ? "LIVE" : "AUTO";
 }, 15000);
 
 window.addEventListener("resize", () => timeline.draw());
@@ -1185,7 +1413,8 @@ window.addEventListener("resize", () => timeline.draw());
 function pushState() {
   const p = new URLSearchParams();
   if (st.source !== "all")    p.set("source", st.source);
-  if (player.reliableTs)      p.set("ts",     Math.floor(player.reliableTs));
+  const ts = liveTail.active ? liveTail.latestDet?.abs_ts : player.reliableTs;
+  if (ts)                     p.set("ts",     Math.floor(ts));
   if (st.cls.size > 0)        p.set("cls",    [...st.cls].join(","));
   history.replaceState(null, "", `${location.pathname}${p.size ? "?" + p : ""}`);
 }
