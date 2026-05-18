@@ -1156,7 +1156,10 @@ async function startLiveTail(srcId = null) {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   });
   liveTail.pc.ontrack = e => {
-    if (e.streams[0]) el.liveVideo.srcObject = e.streams[0];
+    if (e.streams[0]) {
+      el.liveVideo.srcObject = e.streams[0];
+      el.liveVideo.play().catch(() => {});
+    }
   };
   liveTail.pc.addTransceiver("video", { direction: "recvonly" });
   liveTail.pc.addTransceiver("audio", { direction: "recvonly" });
@@ -1172,7 +1175,6 @@ async function startLiveTail(srcId = null) {
     if (!resp.ok) throw new Error(await resp.text());
     const answerSdp = await resp.text();
     await liveTail.pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
-    await el.liveVideo.play().catch(() => {});
     await pollLiveTail();
     liveTail.pollTimer = setInterval(pollLiveTail, 1500);
     liveTail.clockTimer = setInterval(updateLiveTailClock, 500);
