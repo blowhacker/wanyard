@@ -534,6 +534,7 @@ class V2Timeline {
 // ═══════════════════════════════════════════════════════
 const V2_SPEEDS    = [{label:"½×",rate:.5},{label:"1×",rate:1},{label:"2×",rate:2},{label:"4×",rate:4}];
 const POST_BUFFER  = 10;
+const LIVE_OPEN_MAX_AGE = 3600;
 
 // ── DOM ───────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -1114,8 +1115,9 @@ function navNext() {
 
 // ── Live tail ──────────────────────────────────────────
 function latestOpenSegment(srcId = null) {
+  const cutoff = Date.now() / 1000 - LIVE_OPEN_MAX_AGE;
   return [...st.segments]
-    .filter(s => s.end_ts == null && (!srcId || s.source_id === srcId))
+    .filter(s => s.end_ts == null && s.start_ts >= cutoff && (!srcId || s.source_id === srcId))
     .sort((a, b) => b.start_ts - a.start_ts)[0] ?? null;
 }
 

@@ -21,6 +21,7 @@ _SPRITE_W            = 160
 _SPRITE_COLS         = 10
 _SPRITE_ROWS         = 6
 _EVENT_GAP_SECONDS   = 2.0    # detections within this gap = same event
+_PROVISIONAL_GRACE_SECONDS = 3600.0
 _CLASS_PRIORITY      = ["person", "bird", "cat", "dog",
                          "bus", "truck", "motorcycle", "bicycle", "car",
                          "backpack", "suitcase"]
@@ -300,10 +301,12 @@ class VideoSegmentDB:
 
     def provisional_events(self, source_id: str | None = None,
                            since: float | None = None) -> list[dict]:
+        cutoff = time.time() - _PROVISIONAL_GRACE_SECONDS
         where, params = [
-            "(s.end_ts IS NULL OR NOT EXISTS "
-            "(SELECT 1 FROM video_events e WHERE e.segment_id=s.id))"
-        ], []
+            "((s.end_ts IS NULL AND s.start_ts>=?)"
+            " OR (s.end_ts IS NOT NULL AND s.end_ts>=?"
+            " AND NOT EXISTS (SELECT 1 FROM video_events e WHERE e.segment_id=s.id)))"
+        ], [cutoff, cutoff]
         if source_id and source_id != "all":
             where.append("s.source_id=?"); params.append(source_id)
         if since is not None:
@@ -333,7 +336,10 @@ class VideoSegmentDB:
 
     def live_status(self, source_id: str | None = None) -> dict:
         with self._connect() as conn:
-            where, params = ["s.end_ts IS NULL"], []
+            where, params = [
+                "s.end_ts IS NULL",
+                "s.start_ts>=?",
+            ], [time.time() - _PROVISIONAL_GRACE_SECONDS]
             if source_id and source_id != "all":
                 where.append("s.source_id=?"); params.append(source_id)
             segs = [dict(r) for r in conn.execute(
