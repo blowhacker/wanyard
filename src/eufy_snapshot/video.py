@@ -406,6 +406,8 @@ class _Track:
     history:     deque = field(default_factory=lambda: deque(maxlen=_TRACK_HISTORY_LEN))
 
 
+_TRACK_CENTROID_MAX = 0.20   # max centroid distance (fraction of frame) to still associate
+
 def _box_iou(a: dict, b: dict) -> float:
     xi1 = max(a["x1"], b["x1"]); yi1 = max(a["y1"], b["y1"])
     xi2 = min(a["x2"], b["x2"]); yi2 = min(a["y2"], b["y2"])
@@ -416,6 +418,22 @@ def _box_iou(a: dict, b: dict) -> float:
     area_b = (b["x2"] - b["x1"]) * (b["y2"] - b["y1"])
     union  = area_a + area_b - inter
     return inter / union if union > 0 else 0.0
+
+def _box_proximity(a: dict, b: dict) -> float:
+    """Centroid distance as fraction of frame diagonal — lower is closer."""
+    cx_a = (a["x1"] + a["x2"]) / 2; cy_a = (a["y1"] + a["y2"]) / 2
+    cx_b = (b["x1"] + b["x2"]) / 2; cy_b = (b["y1"] + b["y2"]) / 2
+    return ((cx_a - cx_b) ** 2 + (cy_a - cy_b) ** 2) ** 0.5
+
+def _box_match(a: dict, b: dict) -> float:
+    """Match score: IoU if overlapping, else proximity-based fallback for fast movers."""
+    iou = _box_iou(a, b)
+    if iou >= _TRACK_IOU_MIN:
+        return iou
+    # Fallback: centroid within threshold → same object moving fast between frames
+    if _box_proximity(a, b) <= _TRACK_CENTROID_MAX:
+        return _TRACK_IOU_MIN  # floor score, still beats unmatched
+    return 0.0
 
 
 def _resolve_stable(track: _Track) -> tuple[str, float]:
@@ -474,9 +492,9 @@ def _apply_tracks(detections: list[dict]) -> list[dict]:
             for t in tracks:
                 if id(t) in used_tracks:
                     continue
-                iou = _box_iou(box, t.bbox)
-                if iou > best_iou:
-                    best_iou, best_track = iou, t
+                score = _box_match(box, t.bbox)
+                if score > best_iou:
+                    best_iou, best_track = score, t
 
             if best_track is None:
                 best_track = _Track(bbox=box, ts=ts,
