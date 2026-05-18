@@ -551,11 +551,12 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
 
 def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
                     model=None) -> None:
-    """YOLO-tag and extract events for closed segments missing detections."""
+    """YOLO-tag and extract events for closed segments missing detections or events."""
     with db._connect() as conn:
         segs = conn.execute(
             "SELECT s.* FROM segments s WHERE s.end_ts IS NOT NULL"
-            " AND NOT EXISTS (SELECT 1 FROM video_detections WHERE segment_id=s.id)"
+            " AND (NOT EXISTS (SELECT 1 FROM video_detections WHERE segment_id=s.id)"
+            "   OR NOT EXISTS (SELECT 1 FROM video_events WHERE segment_id=s.id))"
         ).fetchall()
     for row in segs:
         seg = dict(row)
