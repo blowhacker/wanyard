@@ -9,6 +9,8 @@ import sqlite3
 import subprocess
 import threading
 import time
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -377,6 +379,133 @@ class VideoSegmentDB:
         }
 
 
+# ── Per-frame box tracker / class smoother ────────────────────────────────────
+_TRACK_IOU_MIN       = 0.25   # min IoU to associate a box with an existing track
+_TRACK_MAX_AGE       = 3.0    # seconds; track dies if unseen this long (3 frames @ 1fps)
+_TRACK_HISTORY_LEN   = 10     # rolling window of (cls, conf) observations per track
+_TRACK_SWITCH_N      = 2      # new class must appear ≥N times in window to be eligible
+_TRACK_SWITCH_MARGIN = 0.15   # new class weighted-conf must exceed current by this fraction
+
+
+@dataclass
+class _Track:
+    bbox:        dict
+    ts:          float
+    stable_cls:  str
+    stable_conf: float
+    history:     deque = field(default_factory=lambda: deque(maxlen=_TRACK_HISTORY_LEN))
+
+
+def _box_iou(a: dict, b: dict) -> float:
+    xi1 = max(a["x1"], b["x1"]); yi1 = max(a["y1"], b["y1"])
+    xi2 = min(a["x2"], b["x2"]); yi2 = min(a["y2"], b["y2"])
+    inter = max(0.0, xi2 - xi1) * max(0.0, yi2 - yi1)
+    if inter == 0.0:
+        return 0.0
+    area_a = (a["x2"] - a["x1"]) * (a["y2"] - a["y1"])
+    area_b = (b["x2"] - b["x1"]) * (b["y2"] - b["y1"])
+    union  = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _resolve_stable(track: _Track) -> tuple[str, float]:
+    """Confidence-weighted majority class with hysteresis."""
+    scores: dict[str, float] = {}
+    counts: dict[str, int]   = {}
+    for cls, conf in track.history:
+        scores[cls] = scores.get(cls, 0.0) + conf
+        counts[cls] = counts.get(cls, 0)   + 1
+
+    if not scores:
+        return track.stable_cls, track.stable_conf
+
+    best = max(scores, key=lambda c: scores[c])
+    if best == track.stable_cls:
+        avg = scores[best] / counts[best]
+        return best, avg
+
+    # Hysteresis: new class must appear enough and beat current by margin
+    if counts.get(best, 0) < _TRACK_SWITCH_N:
+        return track.stable_cls, track.stable_conf
+    current_score = scores.get(track.stable_cls, 0.0)
+    if scores[best] < current_score * (1.0 + _TRACK_SWITCH_MARGIN):
+        return track.stable_cls, track.stable_conf
+
+    return best, scores[best] / counts[best]
+
+
+def _apply_tracks(detections: list[dict]) -> list[dict]:
+    """
+    Associate per-frame YOLO boxes into tracks, emit stable class labels.
+
+    Each output box gains:
+      stable_cls / stable_conf  — smoothed label after tracking
+      raw_cls    / raw_conf     — original per-frame YOLO output (for debug)
+
+    Frame-level `classes` and `has_human` are recomputed from stable labels.
+    """
+    tracks: list[_Track] = []
+    result: list[dict]   = []
+
+    for det in detections:
+        ts       = det["ts_offset"]
+        raw_boxes = det.get("boxes") or []
+
+        # Expire stale tracks
+        tracks = [t for t in tracks if ts - t.ts <= _TRACK_MAX_AGE]
+
+        used_tracks: set[int] = set()
+        smoothed: list[dict]  = []
+
+        for box in raw_boxes:
+            # Greedy best-IoU match
+            best_iou   = _TRACK_IOU_MIN
+            best_track: _Track | None = None
+            for t in tracks:
+                if id(t) in used_tracks:
+                    continue
+                iou = _box_iou(box, t.bbox)
+                if iou > best_iou:
+                    best_iou, best_track = iou, t
+
+            if best_track is None:
+                best_track = _Track(bbox=box, ts=ts,
+                                    stable_cls=box["cls"], stable_conf=box["conf"])
+                tracks.append(best_track)
+
+            used_tracks.add(id(best_track))
+            best_track.bbox = box
+            best_track.ts   = ts
+            best_track.history.append((box["cls"], box["conf"]))
+
+            s_cls, s_conf = _resolve_stable(best_track)
+            best_track.stable_cls  = s_cls
+            best_track.stable_conf = s_conf
+
+            smoothed.append({
+                **box,
+                "cls":        s_cls,
+                "conf":       s_conf,
+                "raw_cls":    box["cls"],
+                "raw_conf":   box["conf"],
+            })
+
+        stable_classes = list({b["cls"] for b in smoothed}) if smoothed else []
+        has_human = any(b["cls"] == "person" for b in smoothed)
+        top_conf  = max((b["conf"] for b in smoothed if b["cls"] == "person"),
+                        default=det.get("confidence", 0.0))
+
+        result.append({
+            **det,
+            "boxes":      smoothed,
+            "classes":    stable_classes,
+            "has_human":  has_human,
+            "confidence": top_conf if has_human else det.get("confidence", 0.0),
+        })
+
+    return result
+
+
 def _yolo_tag_video(model, seg_path: Path, seg_id: int,
                     db: VideoSegmentDB) -> int:
     """Read video file at 1fps, run YOLO, store detections with exact timestamps."""
@@ -416,6 +545,7 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
         frame_num += 1
 
     cap.release()
+    detections = _apply_tracks(detections)
     db.replace_detections(seg_id, detections)
     return len(detections)
 
