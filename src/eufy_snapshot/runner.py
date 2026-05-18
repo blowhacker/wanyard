@@ -203,7 +203,6 @@ def _run_rtsp_with_detection(
     import cv2
     import tempfile
     from .capture import _convert_to_avif, build_output_path
-    from .detect import _parse_results
 
     url = source.url or ""
     if source.url_env:
@@ -240,9 +239,9 @@ def _run_rtsp_with_detection(
 
         try:
             from .detect import CCTV_CLASS_IDS, _CONF_THRESHOLD
-            results = model.predict(frame, classes=CCTV_CLASS_IDS, conf=_CONF_THRESHOLD,
-                                    imgsz=800, verbose=False)
-            has_human, top_conf, boxes = _parse_results(results)
+            from .video import _two_stage_predict
+            has_human, top_conf, boxes = _two_stage_predict(
+                model, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD)
 
             now = time.monotonic()
             if has_human or (now - last_saved) >= baseline:

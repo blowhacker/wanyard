@@ -391,9 +391,9 @@ class VideoSegmentDB:
 
 # ── Per-frame box tracker / class smoother ────────────────────────────────────
 _TRACK_IOU_MIN       = 0.25   # min IoU to associate a box with an existing track
-_TRACK_MAX_AGE       = 3.0    # seconds; track dies if unseen this long (3 frames @ 1fps)
-_TRACK_HISTORY_LEN   = 10     # rolling window of (cls, conf) observations per track
-_TRACK_SWITCH_N      = 2      # new class must appear ≥N times in window to be eligible
+_TRACK_MAX_AGE       = 3.0    # seconds; track dies if unseen this long
+_TRACK_HISTORY_LEN   = 45     # rolling window — covers ~3s at 15fps or 45s at 1fps
+_TRACK_SWITCH_N      = 3      # new class must appear ≥N times in window to be eligible
 _TRACK_SWITCH_MARGIN = 0.15   # new class weighted-conf must exceed current by this fraction
 
 
@@ -534,43 +534,62 @@ def _apply_tracks(detections: list[dict]) -> list[dict]:
     return result
 
 
+_TRIGGER_IMGSZ = 320   # fast scan — every frame
+_DETECT_IMGSZ  = 1280  # accurate classifier — only on non-vehicle triggers
+_VEHICLE_CLS   = {"car", "truck", "bus"}
+
+
+def _two_stage_predict(model, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD):
+    """Stage 1: 320 on every frame. Stage 2: 1280 when non-vehicle detected."""
+    from .detect import _parse_results
+    r1 = model.predict(frame, classes=CCTV_CLASS_IDS, conf=_CONF_THRESHOLD,
+                       imgsz=_TRIGGER_IMGSZ, verbose=False)
+    _, _, boxes_320 = _parse_results(r1)
+    if not boxes_320:
+        return False, 0.0, []
+    non_veh = [b for b in boxes_320 if b["cls"] not in _VEHICLE_CLS]
+    if non_veh:
+        r2 = model.predict(frame, classes=CCTV_CLASS_IDS, conf=_CONF_THRESHOLD,
+                           imgsz=_DETECT_IMGSZ, verbose=False)
+        has_human, conf, boxes = _parse_results(r2)
+        return has_human, conf, boxes if boxes else boxes_320
+    has_human = any(b["cls"] == "person" for b in boxes_320)
+    conf = max((b["conf"] for b in boxes_320 if b["cls"] == "person"), default=0.0)
+    return has_human, conf, boxes_320
+
+
 def _yolo_tag_video(model, seg_path: Path, seg_id: int,
                     db: VideoSegmentDB) -> int:
-    """Read video file at 1fps, run YOLO, store detections with exact timestamps."""
+    """Two-stage tagging: 320 on every frame, 1280 on non-vehicle triggers."""
     import cv2
-    from .detect import _parse_results, CCTV_CLASS_IDS, _CONF_THRESHOLD
+    from .detect import CCTV_CLASS_IDS, _CONF_THRESHOLD
 
     cap = cv2.VideoCapture(str(seg_path))
     if not cap.isOpened():
         return 0
 
-    fps        = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    step       = max(1, int(round(fps)))  # read every Nth frame = 1fps
-    frame_num  = 0
     detections: list[dict] = []
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        if frame_num % step == 0:
-            ts_ms  = cap.get(cv2.CAP_PROP_POS_MSEC)
-            ts_off = ts_ms / 1000.0
-            try:
-                results = model.predict(frame, classes=CCTV_CLASS_IDS,
-                                        conf=_CONF_THRESHOLD, imgsz=800, verbose=False)
-                has_human, conf, boxes = _parse_results(results)
-                classes = list({b["cls"] for b in boxes}) if boxes else []
-                detections.append({
-                    "ts_offset": ts_off,
-                    "has_human": has_human,
-                    "confidence": conf,
-                    "boxes": boxes,
-                    "classes": classes,
-                })
-            except Exception:
-                LOG.exception("yolo tag failed at %.1fs in %s", ts_off, seg_path.name)
-        frame_num += 1
+        ts_off = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        try:
+            has_human, conf, boxes = _two_stage_predict(
+                model, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD)
+            if not boxes:
+                continue  # nothing detected — skip frame
+            classes = list({b["cls"] for b in boxes})
+            detections.append({
+                "ts_offset": ts_off,
+                "has_human": has_human,
+                "confidence": conf,
+                "boxes": boxes,
+                "classes": classes,
+            })
+        except Exception:
+            LOG.exception("yolo tag failed at %.1fs in %s", ts_off, seg_path.name)
 
     cap.release()
     detections = _apply_tracks(detections)
