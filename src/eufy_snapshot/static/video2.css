@@ -75,7 +75,7 @@
   letter-spacing: 0.04em;
 }
 
-.v2-load-more {
+.v2-live-btn {
   height: 28px; width: auto; padding: 0 10px;
   font-family: var(--font); font-size: 0.60rem;
   font-weight: 500; letter-spacing: 0.08em;
@@ -83,9 +83,14 @@
   border: 1px solid var(--border-hi);
   border-radius: var(--r); color: var(--text-mid);
   cursor: pointer;
-  transition: border-color .12s, color .12s;
+  transition: border-color .12s, color .12s, background .12s;
 }
-.v2-load-more:hover { color: var(--amber); border-color: var(--amber-border); }
+.v2-live-btn:hover { color: var(--amber); border-color: var(--amber-border); }
+.v2-live-btn.active {
+  color: var(--amber);
+  border-color: var(--amber);
+  background: var(--amber-dim);
+}
 
 .vctr-play {
   border-color: var(--amber-border) !important;

@@ -561,7 +561,6 @@ const el = {
   loop:    $("v2Loop"),
   timeDisp:$("v2TimeDisp"),
   boxes:   $("v2Boxes"),
-  loadMore:$("v2LoadMore"),
   status:  $("v2Status"),
   liveBtn: $("v2LiveBtn"),
 };
@@ -1273,7 +1272,6 @@ el.boxes.addEventListener("click",  () => {
   el.boxes.classList.toggle("active", st.showBoxes);
 });
 el.boxes.classList.toggle("active", st.showBoxes);
-el.loadMore.addEventListener("click", () => { timeline.extendBack(6); load(); });
 el.liveBtn.addEventListener("click", () => {
   if (liveTail.active) stopLiveTail();
   else startLiveTail(st.source !== "all" ? st.source : null);
