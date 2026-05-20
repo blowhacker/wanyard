@@ -9,8 +9,6 @@ import sqlite3
 import subprocess
 import threading
 import time
-from collections import deque
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -68,8 +66,9 @@ CREATE INDEX IF NOT EXISTS vevt_class     ON video_events(class, abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_source_class_ts ON video_events(source_id, class, abs_ts);
 """
 
-_MOBILE_CLASSES     = {"person", "bicycle", "motorcycle", "bird", "cat", "dog"}
-_STATIONARY_CLASSES = {"car", "truck", "bus", "backpack", "suitcase"}
+_MOBILE_CLASSES     = {"person", "bicycle", "motorcycle", "truck", "bus",
+                        "bird", "cat", "dog"}
+_STATIONARY_CLASSES = {"car", "backpack", "suitcase"}
 
 
 def _dominant_class(classes: list[str]) -> str:
@@ -188,17 +187,6 @@ class VideoSegmentDB:
                 " VALUES(:segment_id,:source_id,:abs_ts,:class,:start_off,:end_off,:confidence,:boxes_json)",
                 events,
             )
-
-    def replace_events(self, segment_id: int, events: list[dict]) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM video_events WHERE segment_id=?", (segment_id,))
-            if events:
-                conn.executemany(
-                    "INSERT INTO video_events"
-                    "(segment_id, source_id, abs_ts, class, start_off, end_off, confidence, boxes_json)"
-                    " VALUES(:segment_id,:source_id,:abs_ts,:class,:start_off,:end_off,:confidence,:boxes_json)",
-                    events,
-                )
 
     def list_events(self, source_id: str | None = None, cls: str | None = None,
                     date: str | None = None, limit: int = 100,
@@ -389,191 +377,18 @@ class VideoSegmentDB:
         }
 
 
-# ── Per-frame box tracker / class smoother ────────────────────────────────────
-_TRACK_IOU_MIN       = 0.25   # min IoU to associate a box with an existing track
-_TRACK_MAX_AGE       = 3.0    # seconds; track dies if unseen this long
-_TRACK_HISTORY_LEN   = 45     # rolling window — covers ~3s at 15fps or 45s at 1fps
-_TRACK_SWITCH_N      = 3      # new class must appear ≥N times in window to be eligible
-_TRACK_SWITCH_MARGIN = 0.15   # new class weighted-conf must exceed current by this fraction
-
-
-@dataclass
-class _Track:
-    bbox:        dict
-    ts:          float
-    stable_cls:  str
-    stable_conf: float
-    history:     deque = field(default_factory=lambda: deque(maxlen=_TRACK_HISTORY_LEN))
-
-
-_TRACK_CENTROID_MAX = 0.20   # max centroid distance (fraction of frame) to still associate
-
-def _box_iou(a: dict, b: dict) -> float:
-    xi1 = max(a["x1"], b["x1"]); yi1 = max(a["y1"], b["y1"])
-    xi2 = min(a["x2"], b["x2"]); yi2 = min(a["y2"], b["y2"])
-    inter = max(0.0, xi2 - xi1) * max(0.0, yi2 - yi1)
-    if inter == 0.0:
-        return 0.0
-    area_a = (a["x2"] - a["x1"]) * (a["y2"] - a["y1"])
-    area_b = (b["x2"] - b["x1"]) * (b["y2"] - b["y1"])
-    union  = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
-
-def _box_proximity(a: dict, b: dict) -> float:
-    """Centroid distance as fraction of frame diagonal — lower is closer."""
-    cx_a = (a["x1"] + a["x2"]) / 2; cy_a = (a["y1"] + a["y2"]) / 2
-    cx_b = (b["x1"] + b["x2"]) / 2; cy_b = (b["y1"] + b["y2"]) / 2
-    return ((cx_a - cx_b) ** 2 + (cy_a - cy_b) ** 2) ** 0.5
-
-def _box_match(a: dict, b: dict) -> float:
-    """Match score: IoU if overlapping, else proximity-based fallback for fast movers."""
-    iou = _box_iou(a, b)
-    if iou >= _TRACK_IOU_MIN:
-        return iou
-    # Fallback: centroid within threshold → same object moving fast between frames
-    if _box_proximity(a, b) <= _TRACK_CENTROID_MAX:
-        return _TRACK_IOU_MIN  # floor score, still beats unmatched
-    return 0.0
-
-
-def _resolve_stable(track: _Track) -> tuple[str, float]:
-    """Confidence-weighted majority class with hysteresis."""
-    scores: dict[str, float] = {}
-    counts: dict[str, int]   = {}
-    for cls, conf in track.history:
-        scores[cls] = scores.get(cls, 0.0) + conf
-        counts[cls] = counts.get(cls, 0)   + 1
-
-    if not scores:
-        return track.stable_cls, track.stable_conf
-
-    best = max(scores, key=lambda c: scores[c])
-    if best == track.stable_cls:
-        avg = scores[best] / counts[best]
-        return best, avg
-
-    # Hysteresis: new class must appear enough and beat current by margin
-    if counts.get(best, 0) < _TRACK_SWITCH_N:
-        return track.stable_cls, track.stable_conf
-    current_score = scores.get(track.stable_cls, 0.0)
-    if scores[best] < current_score * (1.0 + _TRACK_SWITCH_MARGIN):
-        return track.stable_cls, track.stable_conf
-
-    return best, scores[best] / counts[best]
-
-
-def _apply_tracks(detections: list[dict]) -> list[dict]:
-    """
-    Associate per-frame YOLO boxes into tracks, emit stable class labels.
-
-    Each output box gains:
-      stable_cls / stable_conf  — smoothed label after tracking
-      raw_cls    / raw_conf     — original per-frame YOLO output (for debug)
-
-    Frame-level `classes` and `has_human` are recomputed from stable labels.
-    """
-    tracks: list[_Track] = []
-    result: list[dict]   = []
-
-    for det in detections:
-        ts       = det["ts_offset"]
-        raw_boxes = det.get("boxes") or []
-
-        # Expire stale tracks
-        tracks = [t for t in tracks if ts - t.ts <= _TRACK_MAX_AGE]
-
-        used_tracks: set[int] = set()
-        smoothed: list[dict]  = []
-
-        for box in raw_boxes:
-            # Greedy best-IoU match
-            best_iou   = _TRACK_IOU_MIN
-            best_track: _Track | None = None
-            for t in tracks:
-                if id(t) in used_tracks:
-                    continue
-                score = _box_match(box, t.bbox)
-                if score > best_iou:
-                    best_iou, best_track = score, t
-
-            if best_track is None:
-                best_track = _Track(bbox=box, ts=ts,
-                                    stable_cls=box["cls"], stable_conf=box["conf"])
-                tracks.append(best_track)
-
-            used_tracks.add(id(best_track))
-            best_track.bbox = box
-            best_track.ts   = ts
-            best_track.history.append((box["cls"], box["conf"]))
-
-            s_cls, s_conf = _resolve_stable(best_track)
-            best_track.stable_cls  = s_cls
-            best_track.stable_conf = s_conf
-
-            smoothed.append({
-                **box,
-                "cls":        s_cls,
-                "conf":       s_conf,
-                "raw_cls":    box["cls"],
-                "raw_conf":   box["conf"],
-            })
-
-        stable_classes = list({b["cls"] for b in smoothed}) if smoothed else []
-        has_human = any(b["cls"] == "person" for b in smoothed)
-        top_conf  = max((b["conf"] for b in smoothed if b["cls"] == "person"),
-                        default=det.get("confidence", 0.0))
-
-        result.append({
-            **det,
-            "boxes":      smoothed,
-            "classes":    stable_classes,
-            "has_human":  has_human,
-            "confidence": top_conf if has_human else det.get("confidence", 0.0),
-        })
-
-    return result
-
-
-_TRIGGER_IMGSZ = 320   # fast scan — every frame
-_DETECT_IMGSZ  = 1280  # accurate classifier — only on non-vehicle triggers
-_VEHICLE_CLS   = {"car", "truck", "bus"}
-
-
-def _two_stage_predict(model, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD):
-    """Stage 1: 320 on every frame. Stage 2: 1280 when non-vehicle detected."""
-    from .detect import _parse_results
-    r1 = model.predict(frame, classes=CCTV_CLASS_IDS, conf=_CONF_THRESHOLD,
-                       imgsz=_TRIGGER_IMGSZ, verbose=False)
-    _, _, boxes_320 = _parse_results(r1)
-    if not boxes_320:
-        return False, 0.0, []
-    non_veh = [b for b in boxes_320 if b["cls"] not in _VEHICLE_CLS]
-    if non_veh:
-        r2 = model.predict(frame, classes=CCTV_CLASS_IDS, conf=_CONF_THRESHOLD,
-                           imgsz=_DETECT_IMGSZ, verbose=False)
-        has_human, conf, boxes = _parse_results(r2)
-        return has_human, conf, boxes if boxes else boxes_320
-    has_human = any(b["cls"] == "person" for b in boxes_320)
-    conf = max((b["conf"] for b in boxes_320 if b["cls"] == "person"), default=0.0)
-    return has_human, conf, boxes_320
-
-
-_TAG_FPS = 3   # sample rate for post-hoc tagging — 3fps catches fast-moving animals
-               # while keeping decode overhead manageable
-
-
 def _yolo_tag_video(model, seg_path: Path, seg_id: int,
                     db: VideoSegmentDB) -> int:
-    """Two-stage tagging at _TAG_FPS: 320 on every sample, 1280 on non-vehicle triggers."""
+    """Read video file at 1fps, run YOLO, store detections with exact timestamps."""
     import cv2
-    from .detect import CCTV_CLASS_IDS, _CONF_THRESHOLD
+    from .detect import _parse_results, CCTV_CLASS_IDS, _CONF_THRESHOLD
 
     cap = cv2.VideoCapture(str(seg_path))
     if not cap.isOpened():
         return 0
 
-    native_fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
-    step       = max(1, int(round(native_fps / _TAG_FPS)))
+    fps        = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    step       = max(1, int(round(fps)))  # read every Nth frame = 1fps
     frame_num  = 0
     detections: list[dict] = []
 
@@ -582,14 +397,13 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
         if not ret:
             break
         if frame_num % step == 0:
-            ts_off = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            ts_ms  = cap.get(cv2.CAP_PROP_POS_MSEC)
+            ts_off = ts_ms / 1000.0
             try:
-                has_human, conf, boxes = _two_stage_predict(
-                    model, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD)
-                if not boxes:
-                    frame_num += 1
-                    continue
-                classes = list({b["cls"] for b in boxes})
+                results = model.predict(frame, classes=CCTV_CLASS_IDS,
+                                        conf=_CONF_THRESHOLD, verbose=False)
+                has_human, conf, boxes = _parse_results(results)
+                classes = list({b["cls"] for b in boxes}) if boxes else []
                 detections.append({
                     "ts_offset": ts_off,
                     "has_human": has_human,
@@ -602,19 +416,17 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
         frame_num += 1
 
     cap.release()
-    detections = _apply_tracks(detections)
     db.replace_detections(seg_id, detections)
     return len(detections)
 
 
 def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
                     model=None) -> None:
-    """YOLO-tag and extract events for closed segments missing detections or events."""
+    """YOLO-tag and extract events for closed segments missing detections."""
     with db._connect() as conn:
         segs = conn.execute(
             "SELECT s.* FROM segments s WHERE s.end_ts IS NOT NULL"
-            " AND (NOT EXISTS (SELECT 1 FROM video_detections WHERE segment_id=s.id)"
-            "   OR NOT EXISTS (SELECT 1 FROM video_events WHERE segment_id=s.id))"
+            " AND NOT EXISTS (SELECT 1 FROM video_detections WHERE segment_id=s.id)"
         ).fetchall()
     for row in segs:
         seg = dict(row)
@@ -631,59 +443,43 @@ def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
 
 
 def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) -> int:
-    """Group detections into events and store them, replacing any existing."""
+    """Group detections into events and store them."""
     rows = _events_from_detections(segment, detections)
-    db.replace_events(segment["id"], rows)
+    if rows:
+        db.insert_events(rows)
     return len(rows)
 
 
 def _events_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
-    """Per-class independent event grouping.
-
-    Each class seen in stable box detections gets its own event timeline,
-    grouped by gap. No class priority or dominant-class logic — a cat event
-    and a car event from the same frame are independent.
-    """
     if not detections:
         return []
 
     seg_start = segment["start_ts"]
-
-    # Collect per-class observations: (ts_offset, box_conf, frame_boxes)
-    class_obs: dict[str, list[tuple[float, float, list]]] = {}
-    for det in detections:
-        off = det["ts_offset"]
-        frame_boxes = det.get("boxes") or []
-        for box in frame_boxes:
-            cls = box.get("cls") or box.get("raw_cls", "")
-            if not cls:
-                continue
-            class_obs.setdefault(cls, []).append((off, box.get("conf", 0.0), frame_boxes))
-
     events: list[dict] = []
-    for cls, obs in class_obs.items():
-        obs.sort(key=lambda x: x[0])
-        start_off  = obs[0][0]
-        end_off    = obs[0][0]
-        best_conf  = obs[0][1]
-        best_boxes = obs[0][2]
+    current: dict | None = None
 
-        for off, conf, frame_boxes in obs[1:]:
-            if off - end_off <= _EVENT_GAP_SECONDS:
-                end_off = off
-                if conf > best_conf:
-                    best_conf  = conf
-                    best_boxes = frame_boxes
-            else:
-                events.append({"cls": cls, "start": start_off, "end": end_off,
-                                "conf": best_conf, "boxes": best_boxes})
-                start_off  = off
-                end_off    = off
-                best_conf  = conf
-                best_boxes = frame_boxes
+    for det in detections:
+        classes = det.get("classes") or []
+        if not classes:
+            continue
+        dom = _dominant_class(classes)
+        off = det["ts_offset"]
 
-        events.append({"cls": cls, "start": start_off, "end": end_off,
-                        "conf": best_conf, "boxes": best_boxes})
+        if current is None:
+            current = {"cls": dom, "start": off, "end": off,
+                       "conf": det["confidence"], "boxes": det.get("boxes")}
+        elif dom == current["cls"] and (off - current["end"]) <= _EVENT_GAP_SECONDS:
+            current["end"] = off
+            if det["confidence"] > current["conf"]:
+                current["conf"] = det["confidence"]
+                current["boxes"] = det.get("boxes")
+        else:
+            events.append(current)
+            current = {"cls": dom, "start": off, "end": off,
+                       "conf": det["confidence"], "boxes": det.get("boxes")}
+
+    if current:
+        events.append(current)
 
     return [{
         "segment_id": segment["id"],
@@ -712,15 +508,11 @@ class VideoWorker:
         self._last_det:  float       = 0.0
         self._recording: bool        = False
         self._prev_counts: dict      = {}
-        self._warmup_left: int       = 3  # silent frames to establish baseline
 
     def on_detection(self, ts: float, has_human: bool, confidence: float,
                      boxes: list | None, classes: list | None) -> None:
         triggered, new_counts = _is_new_activity(boxes, self._prev_counts)
         self._prev_counts = new_counts
-        if self._warmup_left > 0:
-            self._warmup_left -= 1
-            return  # establish baseline before enabling triggers
         with self._lock:
             if self._recording and (ts - self._seg_start) >= _MAX_SEGMENT_SECONDS:
                 self._stop_segment(ts)
