@@ -157,6 +157,33 @@ def _extract_video_thumb(seg_path: Path, cache_file: Path, t: float,
     return False
 
 
+async def _register_go2rtc_streams(config, source_db) -> None:
+    import logging as _log
+    from .capture import resolve_rtsp_url
+    _L = _log.getLogger(__name__)
+    config_dir = os.environ.get("GO2RTC_CONFIG_DIR", "")
+    if not config_dir:
+        return
+    all_sources = list(config.sources) + (list(source_db.to_source_configs()) if source_db else [])
+    stream_lines = []
+    for source in all_sources:
+        if source.type != "rtsp" or not source.enabled:
+            continue
+        url = resolve_rtsp_url(source)
+        if url:
+            stream_lines.append(f"  {source.id}: {url}")
+    if not stream_lines:
+        return
+    yaml_content = (
+        "api:\n  origin: '*'\n\nwebrtc:\n  candidates:\n    - stun:8555\n\nstreams:\n"
+        + "\n".join(stream_lines) + "\n"
+    )
+    config_path = Path(config_dir) / "go2rtc.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml_content)
+    _L.info("wrote go2rtc config: %d streams", len(stream_lines))
+
+
 def make_app(
     config: AppConfig,
     source_db=None,
