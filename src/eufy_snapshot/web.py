@@ -168,7 +168,6 @@ def make_app(
     video_dir=None,
     video_db=None,
     video_workers=None,
-    executor=None,
 ) -> Starlette:
     import eufy_snapshot
     static_dir = Path(eufy_snapshot.__file__).parent / "static"
@@ -181,11 +180,7 @@ def make_app(
         if detection_worker:
             detection_worker.start()
         asyncio.create_task(_register_go2rtc_streams(config, source_db))
-        if video_db and video_dir:
-            from .video import backfill_events
-            asyncio.create_task(asyncio.to_thread(
-                backfill_events, video_db, video_dir, executor
-            ))
+        # Backfill is handled by the yolo-serve process
 
         async def _refresh_loop() -> None:
             while True:

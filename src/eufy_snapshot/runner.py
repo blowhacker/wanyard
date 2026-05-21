@@ -21,14 +21,12 @@ class CaptureWorker:
         config: AppConfig,
         image_index: ImageIndex | None = None,
         source_db=None,
-        executor=None,
         detection_store=None,
         video_workers=None,
     ) -> None:
         self.config = config
         self.image_index = image_index
         self.source_db = source_db
-        self.executor = executor
         self.detection_store = detection_store
         self.video_workers = video_workers or {}
         self._stop = threading.Event()
@@ -41,17 +39,13 @@ class CaptureWorker:
 
         all_sources = _merged_sources(self.config, None, self.source_db)
 
-        if self.executor:
-            rtsp_sources = [s for s in all_sources if s.type == "rtsp" and s.enabled]
-            non_rtsp = tuple(s for s in all_sources if s.type != "rtsp" or not s.enabled)
-            for source in rtsp_sources:
+        if False:  # RTSP detection via yolo-serve (not yet wired)
+            rtsp_sources = []
+            if False:
                 t = threading.Thread(
-                    target=_run_rtsp_with_detection,
-                    args=(self.config, source, self.executor,
-                          self.image_index, self._stop.is_set,
-                          self.detection_store,
-                          self.video_workers.get(source.id)),
-                    name=f"detect-{source.id}",
+                    target=None,
+                    args=(),
+                    name="detect-placeholder",
                     daemon=True,
                 )
                 t.start()
@@ -194,16 +188,17 @@ def _rtsp_reader(url: str, frame_q: "queue.Queue", stop_fn: Callable[[], bool]) 
 def _run_rtsp_with_detection(
     config: AppConfig,
     source: SourceConfig,
-    executor,
     image_index: ImageIndex | None,
     should_stop: Callable[[], bool],
     detection_store=None,
     video_worker=None,
 ) -> None:
+    """RTSP capture with YOLO detection. Connects to yolo-serve socket for inference.
+    TODO: wire up yolo-serve socket client for recording trigger.
+    """
     import cv2
     import tempfile
     from .capture import _convert_to_avif, build_output_path
-    from . import yolo_worker
 
     url = source.url or ""
     if source.url_env:
@@ -239,10 +234,8 @@ def _run_rtsp_with_detection(
             continue
 
         try:
-            from .detect import CCTV_CLASS_IDS, _CONF_THRESHOLD
-            has_human, top_conf, boxes = executor.submit(
-                yolo_worker.predict_frame, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD
-            ).result()
+            has_human, top_conf, boxes = False, 0.0, []
+            # TODO: send frame to yolo-serve socket, get detection result
 
             now = time.monotonic()
             if has_human or (now - last_saved) >= baseline:

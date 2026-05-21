@@ -129,16 +129,14 @@ class DetectionStore:
 
 
 class DetectionWorker:
-    def __init__(self, store: DetectionStore, image_index, executor=None) -> None:
+    def __init__(self, store: DetectionStore, image_index) -> None:
         self._store = store
         self._image_index = image_index
-        self._executor = executor
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._model = None
 
     def start(self) -> None:
-        if not self._executor:
-            return
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
@@ -151,6 +149,14 @@ class DetectionWorker:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=15)
+
+    def _load_model(self):
+        if self._model is None:
+            from ultralytics import YOLO
+            model_path = os.environ.get("YOLO_MODEL_PATH", "yolo11m.pt")
+            LOG.info("loading YOLO model: %s", model_path)
+            self._model = YOLO(model_path)
+        return self._model
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -169,7 +175,7 @@ class DetectionWorker:
         if not pending:
             return
 
-        from . import yolo_worker
+        model = self._load_model()
         output_dir = self._image_index.output_dir
 
         for item in pending:
@@ -177,9 +183,11 @@ class DetectionWorker:
                 break
             try:
                 abs_path = str(output_dir / item.path)
-                has_human, conf, boxes = self._executor.submit(
-                    yolo_worker.predict_path, abs_path, CCTV_CLASS_IDS, _CONF_THRESHOLD
-                ).result()
+                results = model.predict(
+                    abs_path, classes=CCTV_CLASS_IDS,
+                    conf=_CONF_THRESHOLD, verbose=False,
+                )
+                has_human, conf, boxes = _parse_results(results)
                 self._store.set(item.path, has_human, conf, boxes)
                 LOG.debug("detected %s classes=%s", item.path,
                           [b["cls"] for b in boxes])

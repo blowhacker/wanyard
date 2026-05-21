@@ -3,13 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import multiprocessing
 import os
 import signal
 import subprocess
 import sys
 import threading
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from .capture import capture_once
@@ -20,7 +18,6 @@ from .index import ImageIndex
 from .runner import CaptureWorker, run_loop
 from .video import VideoSegmentDB, VideoWorker
 from .web import make_app
-from . import yolo_worker
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,6 +32,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_web(config)
     if args.command == "serve":
         return cmd_serve(config)
+    if args.command == "yolo-serve":
+        return cmd_yolo_serve()
     if args.command == "human-watch":
         return cmd_human_watch(config, args.source, args.interval, args.conf)
     parser.print_help()
@@ -55,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--source", help="poll only this source id")
     sub.add_parser("web", help="run the web viewer only")
     sub.add_parser("serve", help="run capture daemon and web viewer together")
+    sub.add_parser("yolo-serve", help="run YOLO inference server (backfill + live detection socket)")
     hw = sub.add_parser("human-watch", help="poll RTSP, save only frames with humans")
     hw.add_argument("--source", help="source id (required if multiple sources)")
     hw.add_argument("--interval", type=float, default=5.0, help="poll interval seconds (default 5)")
@@ -85,48 +85,34 @@ def cmd_serve(config: AppConfig) -> int:
     image_index = ImageIndex(
         config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
     )
-    det_store = DetectionStore(config.output_dir / "detections.db")
-    executor = _make_executor()
-    det_worker = DetectionWorker(det_store, image_index, executor=executor)
+    det_store  = DetectionStore(config.output_dir / "detections.db")
+    det_worker = DetectionWorker(det_store, image_index)
 
     video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
     video_db  = VideoSegmentDB(video_dir / "video.db")
     video_workers = {
-        s.id: VideoWorker(s, video_dir, video_db, executor=executor)
+        s.id: VideoWorker(s, video_dir, video_db)
         for s in all_sources if s.type == "rtsp" and s.enabled
     }
 
     worker = CaptureWorker(config, image_index, source_db=source_db,
-                           executor=executor, detection_store=det_store,
-                           video_workers=video_workers)
+                           detection_store=det_store, video_workers=video_workers)
 
     app = make_app(
         config, image_index, source_db=source_db, capture_worker=worker,
         detection_store=det_store, detection_worker=det_worker,
         video_dir=video_dir, video_db=video_db, video_workers=video_workers,
-        executor=executor,
     )
     _serve(app, config)
-    if executor:
-        executor.shutdown(wait=False)
     return 0
 
 
-def _make_executor() -> ProcessPoolExecutor | None:
-    model_path = os.environ.get("YOLO_MODEL_PATH", "yolo11m.pt")
-    try:
-        ctx = multiprocessing.get_context("spawn")
-        ex = ProcessPoolExecutor(
-            max_workers=1,
-            mp_context=ctx,
-            initializer=yolo_worker.init,
-            initargs=(model_path,),
-        )
-        ex.submit(yolo_worker.ping)  # starts worker process; don't block server startup
-    except Exception:
-        logging.warning("YOLO worker unavailable — detection disabled")
-        return None
-    return ex
+def cmd_yolo_serve() -> int:
+    from . import yolo_server
+    video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
+    video_db_path = video_dir / "video.db"
+    yolo_server.run(video_db_path, video_dir)
+    return 0
 
 
 def cmd_human_watch(

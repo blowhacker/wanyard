@@ -7,6 +7,26 @@ services:
     volumes:
       - ./go2rtc-data:/config
 
+  yolo:
+    image: eufy-snapshot:latest
+    container_name: eufy-yolo
+    restart: unless-stopped
+    command: ["-c", "/app/config.yaml", "yolo-serve"]
+    environment:
+      - YOLO_MODEL_PATH=/app/models/yolo11m.pt
+      - VIDEO_DIR=/app/video
+    volumes:
+      - ./config.banana.yaml:/app/config.yaml:ro
+      - ./models:/app/models
+      - ./video:/app/video
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   app:
     image: eufy-snapshot:latest
     container_name: eufy-snapshot
@@ -28,12 +48,5 @@ services:
       - ./video:/app/video
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     depends_on:
       - go2rtc
