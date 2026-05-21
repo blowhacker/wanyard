@@ -122,11 +122,10 @@ def _make_executor() -> ProcessPoolExecutor | None:
             initializer=yolo_worker.init,
             initargs=(model_path,),
         )
-        ex.submit(yolo_worker.ping).result()
+        ex.submit(yolo_worker.ping)  # starts worker process; don't block server startup
     except Exception:
         logging.warning("YOLO worker unavailable — detection disabled")
         return None
-    logging.info("YOLO worker process ready: %s", model_path)
     return ex
 
 
