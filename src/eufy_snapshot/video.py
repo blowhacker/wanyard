@@ -378,11 +378,12 @@ class VideoSegmentDB:
         }
 
 
-def _yolo_tag_video(model, seg_path: Path, seg_id: int,
+def _yolo_tag_video(executor, seg_path: Path, seg_id: int,
                     db: VideoSegmentDB) -> int:
     """Read video file at 1fps, run YOLO, store detections with exact timestamps."""
     import cv2
-    from .detect import _parse_results, CCTV_CLASS_IDS, _CONF_THRESHOLD
+    from .detect import CCTV_CLASS_IDS, _CONF_THRESHOLD
+    from . import yolo_worker
 
     cap = cv2.VideoCapture(str(seg_path))
     if not cap.isOpened():
@@ -401,9 +402,9 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
             ts_ms  = cap.get(cv2.CAP_PROP_POS_MSEC)
             ts_off = ts_ms / 1000.0
             try:
-                results = model.predict(frame, classes=CCTV_CLASS_IDS,
-                                        conf=_CONF_THRESHOLD, verbose=False)
-                has_human, conf, boxes = _parse_results(results)
+                has_human, conf, boxes = executor.submit(
+                    yolo_worker.predict_frame, frame, CCTV_CLASS_IDS, _CONF_THRESHOLD
+                ).result()
                 classes = list({b["cls"] for b in boxes}) if boxes else []
                 detections.append({
                     "ts_offset": ts_off,
@@ -422,7 +423,7 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
 
 
 def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
-                    model=None) -> None:
+                    executor=None) -> None:
     """YOLO-tag and extract events for closed segments missing detections."""
     with db._connect() as conn:
         segs = conn.execute(
@@ -432,9 +433,8 @@ def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
     for row in segs:
         seg = dict(row)
         seg_path = (video_dir / seg["path"]) if video_dir else None
-        # YOLO tag if model + file available
-        if model and seg_path and seg_path.exists():
-            n_det = _yolo_tag_video(model, seg_path, seg["id"], db)
+        if executor and seg_path and seg_path.exists():
+            n_det = _yolo_tag_video(executor, seg_path, seg["id"], db)
             LOG.info("backfill tagged %d frames in %s", n_det, seg["path"][-30:])
         # Extract events from detections (new or old)
         dets = db.detections_for_segment(seg["id"])
@@ -496,11 +496,11 @@ def _events_from_detections(segment: dict, detections: list[dict]) -> list[dict]
 
 class VideoWorker:
     def __init__(self, source, video_dir: Path, db: VideoSegmentDB,
-                 model=None) -> None:
+                 executor=None) -> None:
         self.source     = source
         self.video_dir  = video_dir
         self.db         = db
-        self.model      = model
+        self.executor   = executor
         self._lock      = threading.Lock()
         self._proc: subprocess.Popen | None = None
         self._seg_id:    int | None  = None
@@ -625,8 +625,8 @@ class VideoWorker:
 
             # YOLO tag from video file (exact timestamps, no sync drift)
             n_det = 0
-            if seg and self.model:
-                n_det = _yolo_tag_video(self.model, seg_path, seg_id, self.db)
+            if seg and self.executor:
+                n_det = _yolo_tag_video(self.executor, seg_path, seg_id, self.db)
             # Extract events from accurate detections
             if seg:
                 dets = self.db.detections_for_segment(seg_id)

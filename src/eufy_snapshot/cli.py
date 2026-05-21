@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import multiprocessing
 import os
 import signal
 import subprocess
 import sys
 import threading
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from .capture import capture_once
@@ -18,6 +20,7 @@ from .index import ImageIndex
 from .runner import CaptureWorker, run_loop
 from .video import VideoSegmentDB, VideoWorker
 from .web import make_app
+from . import yolo_worker
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,40 +86,48 @@ def cmd_serve(config: AppConfig) -> int:
         config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
     )
     det_store = DetectionStore(config.output_dir / "detections.db")
-    det_worker = DetectionWorker(det_store, image_index)
-    detection_model = _load_yolo_model()
+    executor = _make_executor()
+    det_worker = DetectionWorker(det_store, image_index, executor=executor)
 
-    # Video recording — must be before CaptureWorker so workers can be passed in
     video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
     video_db  = VideoSegmentDB(video_dir / "video.db")
     video_workers = {
-        s.id: VideoWorker(s, video_dir, video_db, model=detection_model)
+        s.id: VideoWorker(s, video_dir, video_db, executor=executor)
         for s in all_sources if s.type == "rtsp" and s.enabled
     }
 
     worker = CaptureWorker(config, image_index, source_db=source_db,
-                           detection_model=detection_model, detection_store=det_store,
+                           executor=executor, detection_store=det_store,
                            video_workers=video_workers)
 
     app = make_app(
         config, image_index, source_db=source_db, capture_worker=worker,
         detection_store=det_store, detection_worker=det_worker,
         video_dir=video_dir, video_db=video_db, video_workers=video_workers,
+        executor=executor,
     )
     _serve(app, config)
+    if executor:
+        executor.shutdown(wait=False)
     return 0
 
 
-def _load_yolo_model():
+def _make_executor() -> ProcessPoolExecutor | None:
+    model_path = os.environ.get("YOLO_MODEL_PATH", "yolo11m.pt")
     try:
-        import os
-        from ultralytics import YOLO
-        model_path = os.environ.get("YOLO_MODEL_PATH", "yolo11m.pt")
-        logging.info("loading YOLO model: %s", model_path)
-        return YOLO(model_path)
+        ctx = multiprocessing.get_context("spawn")
+        ex = ProcessPoolExecutor(
+            max_workers=1,
+            mp_context=ctx,
+            initializer=yolo_worker.init,
+            initargs=(model_path,),
+        )
+        ex.submit(yolo_worker.ping).result()
     except Exception:
-        logging.warning("YOLO model unavailable — detection-triggered capture disabled")
+        logging.warning("YOLO worker unavailable — detection disabled")
         return None
+    logging.info("YOLO worker process ready: %s", model_path)
+    return ex
 
 
 def cmd_human_watch(

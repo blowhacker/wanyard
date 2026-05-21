@@ -168,6 +168,7 @@ def make_app(
     video_dir=None,
     video_db=None,
     video_workers=None,
+    executor=None,
 ) -> Starlette:
     import eufy_snapshot
     static_dir = Path(eufy_snapshot.__file__).parent / "static"
@@ -182,11 +183,8 @@ def make_app(
         asyncio.create_task(_register_go2rtc_streams(config, source_db))
         if video_db and video_dir:
             from .video import backfill_events
-            _vmodel = (video_workers or {})
-            _m = next(iter(_vmodel.values()), None)
-            _model = _m.model if _m else None
             asyncio.create_task(asyncio.to_thread(
-                backfill_events, video_db, video_dir, _model
+                backfill_events, video_db, video_dir, executor
             ))
 
         async def _refresh_loop() -> None:
