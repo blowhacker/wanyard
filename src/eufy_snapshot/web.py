@@ -183,8 +183,11 @@ def make_app(
         # Backfill is handled by the yolo-serve process
 
         async def _refresh_loop() -> None:
+            # Scan 82k+ snapshot files at most once per minute to avoid
+            # starving the thread pool and GIL during API requests
+            interval = max(60, config.web.auto_refresh_seconds)
             while True:
-                await asyncio.sleep(max(1, config.web.auto_refresh_seconds))
+                await asyncio.sleep(interval)
                 await asyncio.to_thread(image_index.refresh)
 
         task = asyncio.create_task(_refresh_loop())
