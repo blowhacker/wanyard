@@ -573,6 +573,7 @@ def make_app(
             around = float(around_raw)
             events.sort(key=lambda e: (abs(e["abs_ts"] - around), e["abs_ts"]))
             events = events[:limit]
+            for e in events: e.pop("boxes_json", None)
             return JSONResponse({"events": events})
         since_raw = request.query_params.get("since")
         since     = float(since_raw) if since_raw else None
@@ -585,6 +586,7 @@ def make_app(
         events = provisional + events
         events.sort(key=lambda e: e["abs_ts"], reverse=True)
         events = events[:limit]
+        for e in events: e.pop("boxes_json", None)
         return JSONResponse({"events": events})
 
     async def api_video_class_counts(request: Request) -> JSONResponse:
