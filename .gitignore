@@ -11,3 +11,7 @@ apk/*.apk
 apk/*.apkm
 apk/*.xapk
 .env
+test-env/
+yolo11m.pt
+*.pt
+models/
