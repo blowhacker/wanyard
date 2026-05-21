@@ -387,6 +387,7 @@ class V2Timeline {
   #from = 0; #to = 0;
   #head = null;
   #SRC_W = 64;
+  #eventsFrom = 0; #eventsTo = 0;
 
   constructor(canvasEl) {
     this.#c   = canvasEl;
@@ -394,6 +395,7 @@ class V2Timeline {
   }
 
   setWindow(from, to) { this.#from = from; this.#to = to; this.draw(); }
+  setEventsWindow(from, to) { this.#eventsFrom = from; this.#eventsTo = to; this.draw(); }
   setPlayhead(ts)     { this.#head = ts; this.draw(); }
   setSrcNames(map)    { this.#srcNames = map; }
 
@@ -501,6 +503,16 @@ class V2Timeline {
         ctx.fillStyle = "rgba(74,94,110,0.9)";
       }
       t0 += interval;
+    }
+
+    // Events-loaded range indicator — thin green line above time labels
+    if (this.#eventsFrom < this.#eventsTo) {
+      const ex1 = Math.max(this.#SRC_W, this.#tsToX(this.#eventsFrom));
+      const ex2 = Math.min(W, this.#tsToX(this.#eventsTo));
+      if (ex2 > ex1) {
+        ctx.fillStyle = "rgba(42,172,106,0.55)";
+        ctx.fillRect(ex1, H - 22, ex2 - ex1, 2);
+      }
     }
 
     // Playhead
@@ -955,6 +967,7 @@ async function load() {
   st.segments = sr.segments || [];
   st.events   = er.events   || [];
   st.classes  = cr.classes  || {};
+  timeline.setEventsWindow(st.window.from, st.window.to);
 
   // Keep window right-edge at now+10min so ongoing recordings are reachable
   const nowTs = Date.now() / 1000;
