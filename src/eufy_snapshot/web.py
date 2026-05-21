@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote
 
-import time as _time
 from starlette.applications import Starlette
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
@@ -526,9 +525,6 @@ def make_app(
                 ).fetchone()
         return JSONResponse({"segment": dict(row) if row else None})
 
-    _timeline_cache: dict = {}
-    _TIMELINE_TTL = 5.0
-
     def _build_timeline(source_id):
         segs = video_db.list_segments(source_id)
         with video_db._connect() as conn:
@@ -552,14 +548,8 @@ def make_app(
         if not video_db:
             return JSONResponse({"segments": []})
         source_id = request.query_params.get("source") or None
-        cache_key = source_id or "__all__"
-        cached = _timeline_cache.get(cache_key)
-        if cached and (_time.monotonic() - cached[0]) < _TIMELINE_TTL:
-            return Response(cached[1], media_type="application/json")
         segs = await asyncio.to_thread(_build_timeline, source_id)
-        body = json.dumps({"segments": segs}).encode()
-        _timeline_cache[cache_key] = (_time.monotonic(), body)
-        return Response(body, media_type="application/json")
+        return JSONResponse({"segments": segs})
 
     async def api_video_events(request: Request) -> JSONResponse:
         if not video_db:
