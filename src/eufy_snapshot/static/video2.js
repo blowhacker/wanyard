@@ -1473,24 +1473,31 @@ async function init() {
   player.setRate(V2_SPEEDS[st.speed].rate);
 
   const urlTs = readState(); // read source/cls/ts from URL before first load
-  if (urlTs) st.initDone = true; // skip auto-seek to latest; we'll seek to urlTs
+  if (urlTs) st.initDone = true;
   renderSrcCtrl();
 
   const now = Date.now() / 1000;
-  // Center window around URL ts if provided, else show last 6h
   const anchor = urlTs ?? now;
   st.window.from = anchor - 3 * 3600;
   st.window.to   = anchor + 3 * 3600 + 600;
   timeline.setWindow(st.window.from, st.window.to);
 
-  await load();
-
-  // Restore URL timestamp after data loaded
+  // Fast path: if URL has ts, start video immediately via single segment lookup
+  // then load full timeline in background
   if (urlTs) {
-    el.empty.style.display = "none";
-    el.video.style.display = "block";
-    mode.seekTo(urlTs, st.source !== "all" ? st.source : null);
-    st.initDone = true;
+    const srcParam = st.source !== "all" ? `&source=${encodeURIComponent(st.source)}` : "";
+    fetch(`/api/video/segment-at?ts=${urlTs}${srcParam}`, { cache:"no-store" })
+      .then(r => r.json())
+      .then(({ segment }) => {
+        if (!segment) return;
+        player.setSegments([segment]);
+        el.empty.style.display = "none";
+        el.video.style.display = "block";
+        mode.seekTo(urlTs, segment.source_id);
+      });
+    load(); // background — no await
+  } else {
+    await load();
   }
 }
 

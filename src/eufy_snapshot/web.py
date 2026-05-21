@@ -492,6 +492,38 @@ def make_app(
     async def api_video_event_thumb(request: Request) -> Response:
         return await _serve_event_thumb(request.path_params["event_id"])
 
+    async def api_video_segment_at(request: Request) -> JSONResponse:
+        """Fast single-segment lookup by timestamp — for instant URL-based seek."""
+        if not video_db:
+            return JSONResponse({"segment": None})
+        try:
+            ts = float(request.query_params["ts"])
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "ts required"}, status_code=400)
+        source_id = request.query_params.get("source") or None
+        with video_db._connect() as conn:
+            where = "start_ts <= ? AND end_ts > ? AND end_ts IS NOT NULL"
+            params = [ts, ts]
+            if source_id:
+                where += " AND source_id = ?"
+                params.append(source_id)
+            row = conn.execute(
+                f"SELECT * FROM segments WHERE {where} ORDER BY start_ts DESC LIMIT 1",
+                params
+            ).fetchone()
+            if not row:
+                # Nearest closed segment before ts
+                where2 = "end_ts IS NOT NULL AND end_ts <= ?"
+                params2 = [ts]
+                if source_id:
+                    where2 += " AND source_id = ?"
+                    params2.append(source_id)
+                row = conn.execute(
+                    f"SELECT * FROM segments WHERE {where2} ORDER BY end_ts DESC LIMIT 1",
+                    params2
+                ).fetchone()
+        return JSONResponse({"segment": dict(row) if row else None})
+
     async def api_video2_timeline(request: Request) -> JSONResponse:
         """Segments list for the video2 filmstrip."""
         if not video_db:
@@ -605,6 +637,7 @@ def make_app(
         Route("/api/health",                api_health),
         Route("/api/thumb",                 api_thumb),
         Route("/api/video/event-thumb/{event_id}", api_video_event_thumb),
+        Route("/api/video/segment-at",      api_video_segment_at),
         Route("/api/video2/timeline",       api_video2_timeline),
         Route("/video2",                    lambda r: FileResponse(static_dir / "video2.html")),
         Route("/api/video/events",          api_video_events),
