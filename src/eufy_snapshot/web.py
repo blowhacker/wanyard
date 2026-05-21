@@ -9,7 +9,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote
 
+import time as _time
 from starlette.applications import Starlette
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
@@ -524,13 +526,11 @@ def make_app(
                 ).fetchone()
         return JSONResponse({"segment": dict(row) if row else None})
 
-    async def api_video2_timeline(request: Request) -> JSONResponse:
-        """Segments list for the video2 filmstrip."""
-        if not video_db:
-            return JSONResponse({"segments": []})
-        source_id = request.query_params.get("source") or None
-        segs = await asyncio.to_thread(video_db.list_segments, source_id)
-        # Attach event class summary per segment
+    _timeline_cache: dict = {}
+    _TIMELINE_TTL = 5.0
+
+    def _build_timeline(source_id):
+        segs = video_db.list_segments(source_id)
         with video_db._connect() as conn:
             rows = conn.execute(
                 "SELECT segment_id, class, COUNT(*) as n"
@@ -539,13 +539,27 @@ def make_app(
         summary: dict[int, dict] = {}
         for r in rows:
             summary.setdefault(r["segment_id"], {})[r["class"]] = r["n"]
-        for evt in await asyncio.to_thread(video_db.provisional_events, source_id):
+        for evt in video_db.provisional_events(source_id):
             summary.setdefault(evt["segment_id"], {})[evt["class"]] = (
                 summary.setdefault(evt["segment_id"], {}).get(evt["class"], 0) + 1
             )
         for s in segs:
             s["classes"] = summary.get(s["id"], {})
-        return JSONResponse({"segments": segs})
+        return segs
+
+    async def api_video2_timeline(request: Request) -> JSONResponse:
+        """Segments list for the video2 filmstrip."""
+        if not video_db:
+            return JSONResponse({"segments": []})
+        source_id = request.query_params.get("source") or None
+        cache_key = source_id or "__all__"
+        cached = _timeline_cache.get(cache_key)
+        if cached and (_time.monotonic() - cached[0]) < _TIMELINE_TTL:
+            return Response(cached[1], media_type="application/json")
+        segs = await asyncio.to_thread(_build_timeline, source_id)
+        body = json.dumps({"segments": segs}).encode()
+        _timeline_cache[cache_key] = (_time.monotonic(), body)
+        return Response(body, media_type="application/json")
 
     async def api_video_events(request: Request) -> JSONResponse:
         if not video_db:
@@ -661,7 +675,8 @@ def make_app(
         Mount("/", StaticFiles(directory=static_dir, html=True)),
     ]
 
-    return Starlette(routes=routes, lifespan=lifespan)
+    app = Starlette(routes=routes, lifespan=lifespan)
+    return GZipMiddleware(app, minimum_size=1024)
 
 
 # ── helpers ───────────────────────────────────────────────
