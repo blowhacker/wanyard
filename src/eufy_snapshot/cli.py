@@ -86,7 +86,7 @@ def cmd_serve(config: AppConfig) -> int:
         config.output_dir, config.filenames.timezone, config.web.max_index_items, all_sources
     )
     det_store  = DetectionStore(config.output_dir / "detections.db")
-    det_worker = DetectionWorker(det_store, image_index)
+    det_worker = None  # stills detection via yolo-serve (not yet wired)
 
     video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
     video_db  = VideoSegmentDB(video_dir / "video.db")
