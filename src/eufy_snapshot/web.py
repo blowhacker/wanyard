@@ -573,9 +573,11 @@ def make_app(
             for e in events: e.pop("boxes_json", None)
             return JSONResponse({"events": events})
         since_raw = request.query_params.get("since")
+        until_raw = request.query_params.get("until")
         since     = float(since_raw) if since_raw else None
+        until     = float(until_raw) if until_raw else None
         events = await asyncio.to_thread(
-            video_db.list_events, source_id, cls, date, limit, since
+            video_db.list_events, source_id, cls, date, limit, since, until
         )
         provisional = await asyncio.to_thread(video_db.provisional_events, source_id, since)
         if cls and cls != "all":

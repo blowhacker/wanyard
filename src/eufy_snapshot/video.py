@@ -191,7 +191,8 @@ class VideoSegmentDB:
 
     def list_events(self, source_id: str | None = None, cls: str | None = None,
                     date: str | None = None, limit: int = 100,
-                    since: float | None = None) -> list[dict]:
+                    since: float | None = None,
+                    until: float | None = None) -> list[dict]:
         where, params = ["1"], []
         if source_id and source_id != "all":
             where.append("e.source_id=?"); params.append(source_id)
@@ -199,6 +200,8 @@ class VideoSegmentDB:
             where.append("e.class=?"); params.append(cls)
         if since is not None:
             where.append("e.abs_ts>=?"); params.append(since)
+        if until is not None:
+            where.append("e.abs_ts<=?"); params.append(until)
         if date:
             # date is YYYY-MM-DD local; filter by Unix day boundary approximately
             import calendar
