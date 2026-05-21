@@ -851,7 +851,7 @@ function _makeThumbNode(evt, baseTs) {
       return;
     }
     stopLiveTail();
-    mode.seekTo(eventSeekTs(evt), evt.source_id);
+    mode.seekTo(eventSeekTs(evt), evt.source_id); pushState();
     scrollTimelineToTs(evt.abs_ts);
   });
 
@@ -1062,10 +1062,10 @@ el.tlCanvas.addEventListener("click", e => {
     }
     // Snap to exact event timestamp
     stopLiveTail(false);
-    mode.seekTo(hit.snapEvent.abs_ts, hit.snapEvent.source_id);
+    mode.seekTo(hit.snapEvent.abs_ts, hit.snapEvent.source_id); pushState();
   } else {
     stopLiveTail(false);
-    mode.seekTo(hit.ts, hit.srcId);
+    mode.seekTo(hit.ts, hit.srcId); pushState();
   }
   el.empty.style.display = "none";
   el.video.style.display = "block";
@@ -1146,7 +1146,7 @@ function navPrev() {
   if (!evt) return;
   if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
   stopLiveTail(false);
-  mode.seekTo(evt.abs_ts, evt.source_id);
+  mode.seekTo(evt.abs_ts, evt.source_id); pushState();
   scrollTimelineToTs(evt.abs_ts);
 }
 
@@ -1158,7 +1158,7 @@ function navNext() {
   if (!evt) return;
   if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
   stopLiveTail(false);
-  mode.seekTo(evt.abs_ts, evt.source_id);
+  mode.seekTo(evt.abs_ts, evt.source_id); pushState();
   scrollTimelineToTs(evt.abs_ts);
 }
 
@@ -1314,7 +1314,7 @@ el.rewind.addEventListener("click", () => {
   if (wasLive) stopLiveTail(false);
   if (ts != null) {
     const target = ts - 10;
-    mode.seekTo(target, src, "backward");
+    mode.seekTo(target, src, "backward"); pushState();
   }
 });
 el.loop.addEventListener("click",   () => { st.loop = !st.loop; el.loop.classList.toggle("active", st.loop); });
@@ -1364,12 +1364,10 @@ player.on("play",  () => { if (!liveTail.active) { el.play.textContent = "■"; 
 player.on("pause", () => { if (!liveTail.active) { el.play.textContent = "▶"; el.play.classList.remove("playing"); } });
 player.on("ended", () => { mode.handleEnded(st.source !== "all" ? st.source : null); });
 
-let _pushTimer = null;
 player.on("timeupdate", () => {
   const ts = player.currentTs;
   if (ts == null) return;
   timeline.setPlayhead(ts);
-  clearTimeout(_pushTimer); _pushTimer = setTimeout(pushState, 5000);
   el.timeDisp.textContent = fmtTs(ts);
   if (el.hudTs) el.hudTs.textContent = new Date(ts*1000).toLocaleTimeString(undefined,
     { hour:"2-digit", minute:"2-digit", second:"2-digit" });
