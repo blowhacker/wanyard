@@ -1538,55 +1538,99 @@ window.addEventListener("mouseup", e => {
 });
 
 // ── Timeline interactions ─────────────────────────────
+let _clickTimer = null;
 el.tlCanvas.addEventListener("click", e => {
-  if (_wasDrag) { _wasDrag = false; return; }  // ignore click after drag
+  if (_wasDrag) { _wasDrag = false; return; }
   const rect = el.tlCanvas.getBoundingClientRect();
   const hit  = timeline.decode(e.clientX - rect.left, e.clientY - rect.top);
   if (!hit) return;
-  if (hit.snapEvent) {
-    if (hit.snapEvent.provisional) {
-      startLiveTail(hit.snapEvent.source_id);
-      scrollTimelineToTs(hit.snapEvent.abs_ts);
-      return;
+  // Delay single-click action so dblclick can cancel it
+  clearTimeout(_clickTimer);
+  _clickTimer = setTimeout(() => {
+    if (hit.snapEvent) {
+      if (hit.snapEvent.provisional) {
+        startLiveTail(hit.snapEvent.source_id);
+        scrollTimelineToTs(hit.snapEvent.abs_ts);
+        return;
+      }
+      stopLiveTail(false);
+      mode.seekTo(hit.snapEvent.abs_ts, hit.snapEvent.source_id); pushState();
+    } else {
+      const nowTs = Date.now() / 1000;
+      const srcSegs = st.segments.filter(s => s.source_id === hit.srcId && s.end_ts != null);
+      const latestEnd = srcSegs.length ? Math.max(...srcSegs.map(s => s.end_ts)) : 0;
+      if (latestEnd > 0 && latestEnd > nowTs - 3600 && hit.ts >= latestEnd) {
+        startLiveTail(hit.srcId);
+        return;
+      }
+      stopLiveTail(false);
+      mode.seekTo(hit.ts, hit.srcId); pushState();
     }
-    // Snap to exact event timestamp
-    stopLiveTail(false);
-    mode.seekTo(hit.snapEvent.abs_ts, hit.snapEvent.source_id); pushState();
-  } else {
-    // If clicking near/past the last completed segment, go live via HLS
-    const nowTs = Date.now() / 1000;
-    const srcSegs = st.segments.filter(s => s.source_id === hit.srcId && s.end_ts != null);
-    const latestEnd = srcSegs.length ? Math.max(...srcSegs.map(s => s.end_ts)) : 0;
-    if (latestEnd > 0 && latestEnd > nowTs - 3600 && hit.ts >= latestEnd) {
-      startLiveTail(hit.srcId);
-      return;
-    }
-    stopLiveTail(false);
-    mode.seekTo(hit.ts, hit.srcId); pushState();
-  }
-  el.empty.style.display = "none";
-  el.video.style.display = "block";
+    el.empty.style.display = "none";
+    el.video.style.display = "block";
+  }, 220);
 });
 
-// Timeline scroll — momentum-based, smooth
+// Timeline scroll + zoom
+const TL_MIN_SPAN = 30;          // 30s — sub-segment detail
+const TL_MAX_SPAN = 7 * 86400;   // 7 days
+
 let _fetchDebounce = null;
-let _scrollVel = 0;       // seconds per frame velocity
+let _scrollVel = 0;
 let _scrollRaf = null;
+let _zoomRaf   = null;
+
+function _windowBounds() {
+  return {
+    oldest: st.segments.length
+      ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
+      : st.window.from,
+    newest: Date.now() / 1000 + 600,
+  };
+}
 
 function _applyWindowShift(shift) {
-  const span   = st.window.to - st.window.from;
-  const oldest = st.segments.length
-    ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
-    : st.window.from;
-  const newest = Date.now() / 1000 + 600;
+  const span = st.window.to - st.window.from;
+  const { oldest, newest } = _windowBounds();
   let newFrom = st.window.from + shift;
   let newTo   = st.window.to   + shift;
   if (newFrom < oldest) { newFrom = oldest; newTo = oldest + span; }
   if (newTo   > newest) { newTo = newest;   newFrom = newest - span; }
   if (newFrom < oldest)   newFrom = oldest;
-  st.window.from = newFrom;
-  st.window.to   = newTo;
+  st.window.from = newFrom; st.window.to = newTo;
   setTimelineWindow(newFrom, newTo);
+}
+
+function _applyZoom(factor, cursorX, rectWidth) {
+  const span   = st.window.to - st.window.from;
+  const plotW  = Math.max(1, rectWidth - timeline.labelWidth);
+  const newSpan = Math.max(TL_MIN_SPAN, Math.min(TL_MAX_SPAN, span * factor));
+  if (newSpan === span) return;
+  const pivotFrac = Math.max(0, Math.min(1, (cursorX - timeline.labelWidth) / plotW));
+  const pivotTs   = st.window.from + pivotFrac * span;
+  const { oldest, newest } = _windowBounds();
+  let nf = pivotTs - pivotFrac * newSpan;
+  let nt = nf + newSpan;
+  if (nf < oldest) { nf = oldest; nt = oldest + newSpan; }
+  if (nt > newest) { nt = newest; nf = newest - newSpan; }
+  if (nf < oldest)   nf = oldest;
+  st.window.from = nf; st.window.to = nt;
+  setTimelineWindow(nf, nt);
+}
+
+function _animateZoomTo(targetFrom, targetTo, ms = 180) {
+  if (_zoomRaf) { cancelAnimationFrame(_zoomRaf); _zoomRaf = null; }
+  const sf = st.window.from, st0 = st.window.to, t0 = performance.now();
+  function step(now) {
+    const t = Math.min(1, (now - t0) / ms);
+    const e = 1 - Math.pow(1 - t, 3);  // ease-out cubic
+    st.window.from = sf + (targetFrom - sf) * e;
+    st.window.to   = st0 + (targetTo   - st0) * e;
+    setTimelineWindow(st.window.from, st.window.to);
+    if (t < 1) _zoomRaf = requestAnimationFrame(step);
+    else { _zoomRaf = null; load(); }
+  }
+  _zoomRaf = requestAnimationFrame(step);
 }
 
 function _scrollDecay() {
@@ -1596,25 +1640,46 @@ function _scrollDecay() {
   _scrollRaf = requestAnimationFrame(_scrollDecay);
 }
 
+// Ctrl held → show zoom cursor
+window.addEventListener("keydown", e => { if (e.key === "Control") el.tlCanvas.style.cursor = "zoom-in"; });
+window.addEventListener("keyup",   e => { if (e.key === "Control") el.tlCanvas.style.cursor = ""; });
+
 el.tlCanvas.addEventListener("wheel", e => {
   e.preventDefault();
-  const rect     = el.tlCanvas.getBoundingClientRect();
+  const rect = el.tlCanvas.getBoundingClientRect();
+
+  if (e.ctrlKey) {
+    // Pinch-to-zoom (trackpad) or Ctrl+scroll (mouse)
+    const raw = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaY;
+    _applyZoom(Math.exp(raw * 0.006), e.clientX - rect.left, rect.width);
+    clearTimeout(_fetchDebounce);
+    _fetchDebounce = setTimeout(() => load(), 400);
+    return;
+  }
+
+  // Scroll / momentum
   const span     = st.window.to - st.window.from;
   const pxPerSec = Math.max(1, rect.width - timeline.labelWidth) / span;
-
-  // Normalize: trackpad gives pixel deltas (deltaMode=0, small values),
-  // mouse wheel gives line deltas (deltaMode=1, large discrete steps).
   const rawDelta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-  const delta    = e.deltaMode === 1 ? rawDelta * 40 : rawDelta;  // normalise lines→px
+  const delta    = e.deltaMode === 1 ? rawDelta * 40 : rawDelta;
   const shift    = delta / pxPerSec;
-
-  _scrollVel += shift * 0.35;                   // accumulate into velocity
-  _applyWindowShift(shift * 0.65);              // apply remainder directly for responsiveness
-
+  _scrollVel += shift * 0.35;
+  _applyWindowShift(shift * 0.65);
   if (!_scrollRaf) _scrollRaf = requestAnimationFrame(_scrollDecay);
   clearTimeout(_fetchDebounce);
   _fetchDebounce = setTimeout(() => load(), 500);
 }, { passive: false });
+
+// Double-click: zoom to 1h centred on click (toggle 1h ↔ 6h)
+el.tlCanvas.addEventListener("dblclick", e => {
+  clearTimeout(_clickTimer);  // cancel the pending single-click seek
+  const rect = el.tlCanvas.getBoundingClientRect();
+  const hit  = timeline.decode(e.clientX - rect.left, e.clientY - rect.top);
+  if (!hit) return;
+  const span = st.window.to - st.window.from;
+  const targetSpan = span <= 3600 ? 6 * 3600 : 3600;
+  _animateZoomTo(hit.ts - targetSpan * 0.4, hit.ts + targetSpan * 0.6);
+});
 
 // Hover → thumbnail preview
 let hoverTimer = null;
