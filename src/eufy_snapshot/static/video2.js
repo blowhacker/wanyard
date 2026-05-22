@@ -1013,9 +1013,11 @@ function renderSrcCtrl() {
     b.className = "source-pill" + (st.source === s.id ? " active" : "");
     b.textContent = s.name || s.id;
     b.addEventListener("click", () => {
-      stopLiveTail();
+      const wasLive = liveTail.active;
+      stopLiveTail(false);
       st.source = s.id; st.initDone = false;
       renderSrcCtrl(); load().then(pushState);
+      if (wasLive) startLiveTail(s.id);  // stay live, switch camera
     });
     pills.appendChild(b);
   });
