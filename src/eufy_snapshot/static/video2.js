@@ -880,6 +880,14 @@ function setTimelineWindow(from, to) {
   st.window.to = to;
   timeline.setWindow(from, to);
   renderRuler();
+  // Load events if window has drifted outside the already-loaded range
+  const needsLoad = st.eventsLoaded.from === 0
+    || from < st.eventsLoaded.from
+    || to   > st.eventsLoaded.to;
+  if (needsLoad) {
+    clearTimeout(_fetchDebounce);
+    _fetchDebounce = setTimeout(() => load(), 350);
+  }
 }
 
 function centerWindowOn(ts) {
