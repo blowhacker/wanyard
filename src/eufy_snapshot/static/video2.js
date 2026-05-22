@@ -1797,7 +1797,7 @@ async function startLiveTail(srcId = null) {
         });
       }
       if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
-      const hls = new Hls({ lowLatencyMode: true });
+      const hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 5 });
       liveTail.hls = hls;
       hls.loadSource(hlsUrl);
       hls.attachMedia(el.liveVideo);
