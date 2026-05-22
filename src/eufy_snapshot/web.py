@@ -777,6 +777,14 @@ def make_app(
             return Response(status_code=404)
         is_m3u8 = filename.endswith(".m3u8")
         media = "application/vnd.apple.mpegurl" if is_m3u8 else "video/mp2t"
+        if is_m3u8:
+            try:
+                content = path.read_bytes()
+            except OSError:
+                return Response(status_code=404)
+            return Response(content=content, media_type=media,
+                            headers={"Cache-Control": "no-cache",
+                                     "Content-Encoding": "identity"})
         return FileResponse(path, media_type=media,
                             headers={"Cache-Control": "no-cache, no-store",
                                      "Content-Encoding": "identity"})
