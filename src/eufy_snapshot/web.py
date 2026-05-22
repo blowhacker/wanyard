@@ -782,7 +782,8 @@ def make_app(
             _hls_req_times[key] = [t for t in times if now - t < 5]
             rate = len(_hls_req_times[key]) / 5
             if rate > 2:
-                LOG.warning("m3u8 hot: %s %.1f req/s", key, rate)
+                import logging as _logging
+                _logging.getLogger(__name__).warning("m3u8 %.1f req/s: %s", rate, key)
         if not video_dir or not source_id or ".." in source_id or ".." in filename:
             return Response(status_code=404)
         path = video_dir / "live" / source_id / filename
