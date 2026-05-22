@@ -1092,6 +1092,12 @@ function renderNearestEvents() {
     return;
   }
 
+  // Don't destroy DOM while user is hovering — would lose hover state and cause flicker
+  if (_nearHover) {
+    _updateEventRows(evts, baseTs);
+    return;
+  }
+
   _nearListSig = sig;
   _renderEventBuckets(evts, baseTs);
 }
@@ -1225,6 +1231,9 @@ function _renderEventBuckets(evts, baseTs) {
 let _nearRenderPending = false;
 let _lastNearRender = 0;
 let _nearListSig = "";
+let _nearHover = false;
+el.eventThumbs?.addEventListener("mouseenter", () => { _nearHover = true; });
+el.eventThumbs?.addEventListener("mouseleave", () => { _nearHover = false; });
 function scheduleNearestEvents(force = false) {
   const now = performance.now();
   if (!force && now - _lastNearRender < NEAR_EVENT_REFRESH_MS) return;
