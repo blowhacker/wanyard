@@ -711,7 +711,7 @@ const st = {
   source:   "all",
   cls:      new Set(),
   window:        { from: 0, to: 0 },
-  eventsLoaded:  { from: 0, to: 0 },  // actual loaded events range (wider than window)
+  eventsLoaded:  { ranges: [] },  // list of {from,to} intervals, merged on insert
   speed:    parseInt(localStorage.getItem("v2speed") || "1"),
   loop:     true,
   showBoxes:localStorage.getItem("v2boxes") !== "0",
@@ -721,6 +721,30 @@ const st = {
   summary: { total: 0, classes: {} },
 };
 const EVENTS_BUFFER = 3 * 3600;   // load 3h extra on each side of visible window
+
+function _eventsRangesClear()   { st.eventsLoaded.ranges = []; }
+function _eventsRangesAdd(from, to) {
+  const r = st.eventsLoaded.ranges;
+  r.push({ from, to });
+  r.sort((a, b) => a.from - b.from);
+  const merged = [r[0]];
+  for (let i = 1; i < r.length; i++) {
+    const last = merged[merged.length - 1];
+    if (r[i].from <= last.to) last.to = Math.max(last.to, r[i].to);
+    else merged.push(r[i]);
+  }
+  st.eventsLoaded.ranges = merged;
+}
+function _eventsRangesCovers(from, to) {
+  for (const r of st.eventsLoaded.ranges) {
+    if (r.from <= from && r.to >= to) return true;
+  }
+  return false;
+}
+function _eventsLoadedBounds() {
+  const r = st.eventsLoaded.ranges;
+  return r.length ? { from: r[0].from, to: r[r.length - 1].to } : { from: 0, to: 0 };
+}
 
 const liveTail = {
   hls: null,
@@ -881,9 +905,7 @@ function setTimelineWindow(from, to) {
   timeline.setWindow(from, to);
   renderRuler();
   // Load events if window has drifted outside the already-loaded range
-  const needsLoad = st.eventsLoaded.from === 0
-    || from < st.eventsLoaded.from
-    || to   > st.eventsLoaded.to;
+  const needsLoad = !_eventsRangesCovers(from, to);
   if (needsLoad) {
     clearTimeout(_fetchDebounce);
     _fetchDebounce = setTimeout(() => load(), 350);
@@ -1269,9 +1291,7 @@ async function load() {
   // Only re-fetch if the visible window has moved outside the already-loaded range.
   const evFrom = st.window.from - EVENTS_BUFFER;
   const evTo   = st.window.to   + EVENTS_BUFFER;
-  const needsEventsLoad = st.window.from < st.eventsLoaded.from
-                       || st.window.to   > st.eventsLoaded.to
-                       || st.eventsLoaded.from === 0;
+  const needsEventsLoad = !_eventsRangesCovers(st.window.from, st.window.to);
 
   const [sr, evR, cr] = await Promise.all([
     fetch(`/api/video2/timeline?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
@@ -1289,12 +1309,10 @@ async function load() {
     const byId = new Map(st.events.map(e => [e.id, e]));
     (evR.events || []).forEach(e => byId.set(e.id, e));
     st.events = [...byId.values()].sort((a, b) => b.abs_ts - a.abs_ts);
-    st.eventsLoaded = {
-      from: Math.min(st.eventsLoaded.from || evFrom, evFrom),
-      to:   Math.max(st.eventsLoaded.to   || evTo,   evTo),
-    };
+    _eventsRangesAdd(evFrom, evTo);
   }
-  timeline.setEventsWindow(st.eventsLoaded.from, st.eventsLoaded.to);
+  const _elb = _eventsLoadedBounds();
+  timeline.setEventsWindow(_elb.from, _elb.to);
 
   // Advance right-edge only when viewing recent content (within 2h of now)
   // Scrolling into history must not reset window.to to now — that causes
@@ -1364,7 +1382,7 @@ function renderSrcCtrl() {
       const wasLive = liveTail.active;
       stopLiveTail(false);
       st.source = s.id; st.initDone = false;
-      st.events = []; st.eventsLoaded = { from: 0, to: 0 };  // clear stale events
+      st.events = []; _eventsRangesClear();  // clear stale events
       closeSourceMenu();
       renderSrcCtrl(); load().then(pushState);
       if (wasLive) startLiveTail(s.id);
@@ -1592,12 +1610,12 @@ function navPrev() {
     stopLiveTail(false);
     mode.seekTo(evt.abs_ts, evt.source_id); pushState();
     scrollTimelineToTs(evt.abs_ts);
-  } else if (ts > st.eventsLoaded.from + 300) {
+  } else if (_eventsLoadedBounds().from > 0 && ts > _eventsLoadedBounds().from + 300) {
     // Shift window left and re-fetch to find earlier events (one retry only)
     const span = st.window.to - st.window.from;
     st.window.to   = ts - 1;
     st.window.from = st.window.to - span;
-    st.eventsLoaded = { from: 0, to: 0 };
+    _eventsRangesClear();
     setTimelineWindow(st.window.from, st.window.to);
     load().then(() => {
       const e2 = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts)[0];
@@ -1620,12 +1638,12 @@ function navNext() {
     stopLiveTail(false);
     mode.seekTo(evt.abs_ts, evt.source_id); pushState();
     scrollTimelineToTs(evt.abs_ts);
-  } else if (ts < st.eventsLoaded.to - 300) {
+  } else if (_eventsLoadedBounds().to > 0 && ts < _eventsLoadedBounds().to - 300) {
     // Shift window right and re-fetch to find later events (one retry only)
     const span = st.window.to - st.window.from;
     st.window.from = ts + 1;
     st.window.to   = st.window.from + span;
-    st.eventsLoaded = { from: 0, to: 0 };
+    _eventsRangesClear();
     setTimelineWindow(st.window.from, st.window.to);
     load().then(() => {
       const e2 = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts)[0];
