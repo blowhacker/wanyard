@@ -1848,8 +1848,6 @@ async function startLiveTail(srcId = null) {
       }
       if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
       const hls = new Hls({
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 6,
         manifestLoadingMaxRetry: 3,
         fragLoadingMaxRetry: 3,
       });
