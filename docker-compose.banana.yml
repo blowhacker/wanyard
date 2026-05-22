@@ -6,6 +6,12 @@ services:
     logging:
       driver: json-file
       options: {max-size: "50m", max-file: "3"}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket,json; s=socket.socket(socket.AF_UNIX); s.settimeout(2); s.connect('/run/yolo/yolo.sock'); s.sendall(b'{\"type\":\"ping\"}\\n'); r=json.loads(s.recv(256)); s.close(); exit(0 if r.get('status')=='ok' else 1)"]
+      interval: 30s
+      timeout: 5s
+      start-period: 30s
+      retries: 3
     command: ["-c", "/app/config.yaml", "yolo-serve"]
     environment:
       - YOLO_MODEL_PATH=/app/models/yolo11m.pt
