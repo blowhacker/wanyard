@@ -1862,8 +1862,10 @@ async function startLiveTail(srcId = null) {
       if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
       const hls = new Hls({
         lowLatencyMode: false,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 6,
+        // liveSyncDurationCount / liveMaxLatencyDurationCount intentionally omitted.
+        // Explicit liveMaxLatencyDurationCount triggers catchup mode during init
+        // (currentTime=0 → apparent latency=60s >> 12s limit → max poll rate).
+        // HLS.js defaults handle live sync correctly without this bug.
         manifestLoadingMaxRetry: 3,
         fragLoadingMaxRetry: 3,
         levelLoadingMaxRetry: 3,
