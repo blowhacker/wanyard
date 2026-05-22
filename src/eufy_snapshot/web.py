@@ -620,8 +620,11 @@ def make_app(
         if not path.exists():
             return Response(status_code=404)
         media = "application/vnd.apple.mpegurl" if filename.endswith(".m3u8") else "video/mp2t"
+        # Content-Encoding: identity prevents GZipMiddleware from compressing
+        # video data which would confuse the browser's HLS player
         return FileResponse(path, media_type=media,
-                            headers={"Cache-Control": "no-cache, no-store"})
+                            headers={"Cache-Control": "no-cache, no-store",
+                                     "Content-Encoding": "identity"})
 
     routes = [
         Route("/",                           lambda r: FileResponse(static_dir / "video2.html")),
