@@ -533,6 +533,7 @@ class VideoWorker:
         try:
             self._proc = subprocess.Popen(
                 [ffmpeg, "-y", "-hide_banner", "-loglevel", "warning",
+                 "-use_wallclock_as_timestamps", "1",
                  "-rtsp_transport", self.source.rtsp_transport,
                  "-i", url,
                  # Archive: MP4 with faststart

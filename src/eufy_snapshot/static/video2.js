@@ -1201,6 +1201,7 @@ async function startLiveTail(srcId = null) {
   el.play.textContent = "■";
   el.play.classList.add("playing");
   setStatus("LIVE");
+  history.replaceState(null, "", `${location.pathname}?source=${encodeURIComponent(chosen)}&live=1`);
 
   const hlsUrl = `/video/live/${encodeURIComponent(chosen)}/live.m3u8`;
 
@@ -1264,6 +1265,10 @@ function stopLiveTail(updateMode = true) {
   liveTail.active = false;
   liveTail.srcId = null;
   liveTail.latestDet = null;
+  // Restore URL: remove live=1 and ts params
+  const _p = new URLSearchParams(location.search);
+  _p.delete("live"); _p.delete("ts");
+  history.replaceState(null, "", `${location.pathname}${_p.size ? "?" + _p : ""}`);
   el.liveBtn.textContent = "LIVE";
   el.liveBtn.classList.remove("active");
   el.play.textContent = player.paused ? "▶" : "■";
