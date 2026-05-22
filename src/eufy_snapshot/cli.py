@@ -54,7 +54,8 @@ def cmd_serve(config: AppConfig) -> int:
 
     app = make_app(config, source_db=source_db,
                    video_dir=video_dir, video_db=video_db,
-                   video_workers=video_workers)
+                   video_workers=video_workers,
+                   capture_worker=capture_worker)
     _serve(app, config)
     return 0
 

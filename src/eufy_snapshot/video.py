@@ -14,7 +14,6 @@ from pathlib import Path
 
 LOG = logging.getLogger(__name__)
 
-_POST_EVENT_SECONDS  = 30
 _MAX_SEGMENT_SECONDS = 600
 _SPRITE_FPS          = "1/5"
 _SPRITE_W            = 160
@@ -67,9 +66,6 @@ CREATE INDEX IF NOT EXISTS vevt_source_class_ts ON video_events(source_id, class
 CREATE INDEX IF NOT EXISTS vevt_seg       ON video_events(segment_id, class);
 """
 
-_MOBILE_CLASSES     = {"person", "bicycle", "motorcycle", "truck", "bus",
-                        "bird", "cat", "dog"}
-_STATIONARY_CLASSES = {"car", "backpack", "suitcase"}
 
 
 def _dominant_class(classes: list[str]) -> str:
@@ -78,17 +74,6 @@ def _dominant_class(classes: list[str]) -> str:
             return c
     return classes[0] if classes else "unknown"
 
-
-def _is_new_activity(boxes: list | None, prev_counts: dict) -> tuple[bool, dict]:
-    counts: dict[str, int] = {}
-    for b in (boxes or []):
-        counts[b["cls"]] = counts.get(b["cls"], 0) + 1
-    if any(cls in _MOBILE_CLASSES for cls in counts):
-        return True, counts
-    for cls in _STATIONARY_CLASSES:
-        if counts.get(cls, 0) != prev_counts.get(cls, 0):
-            return True, counts
-    return False, counts
 
 
 class VideoSegmentDB:
@@ -497,145 +482,98 @@ def _events_from_detections(segment: dict, detections: list[dict]) -> list[dict]
 
 
 class VideoWorker:
+    """Continuous RTSP recorder — no detection trigger, pure archive + live HLS."""
+
     def __init__(self, source, video_dir: Path, db: VideoSegmentDB) -> None:
-        self.source     = source
-        self.video_dir  = video_dir
-        self.db         = db
-        self._lock      = threading.Lock()
+        self.source    = source
+        self.video_dir = video_dir
+        self.db        = db
+        self._stop     = threading.Event()
         self._proc: subprocess.Popen | None = None
         self._seg_id:    int | None  = None
         self._seg_path:  Path | None = None
         self._seg_start: float       = 0.0
-        self._last_det:  float       = 0.0
-        self._recording: bool        = False
-        self._prev_counts: dict      = {}
+        self._live_dir  = video_dir / "live" / source.id
+        self._live_dir.mkdir(parents=True, exist_ok=True)
 
-    def on_detection(self, ts: float, has_human: bool, confidence: float,
-                     boxes: list | None, classes: list | None) -> None:
-        triggered, new_counts = _is_new_activity(boxes, self._prev_counts)
-        self._prev_counts = new_counts
-        with self._lock:
-            if self._recording and (ts - self._seg_start) >= _MAX_SEGMENT_SECONDS:
-                self._stop_segment(ts)
-                if triggered:
-                    self._last_det = ts
-                    self._start_segment(ts)
-            elif triggered:
-                self._last_det = ts
-                if not self._recording:
-                    self._start_segment(ts)
-            elif self._recording:
-                if ts - self._last_det >= _POST_EVENT_SECONDS:
-                    self._stop_segment(ts)
-
-            if self._recording and self._seg_id:
-                self.db.add_detection(
-                    self._seg_id,
-                    max(0.0, ts - self._seg_start),
-                    has_human,
-                    confidence,
-                    boxes,
-                    classes,
-                )
+    def run(self) -> None:
+        """Continuous recording loop — call from a daemon thread."""
+        LOG.info("continuous recording started: %s", self.source.id)
+        while not self._stop.is_set():
+            ts = time.time()
+            self._start_segment(ts)
+            if self._proc:
+                self._stop.wait(_MAX_SEGMENT_SECONDS)
+                self._stop_segment(time.time())
+            else:
+                LOG.warning("ffmpeg failed for %s — retry in 30s", self.source.id)
+                self._stop.wait(30)
+        LOG.info("continuous recording stopped: %s", self.source.id)
 
     def stop(self) -> None:
-        with self._lock:
-            if self._recording:
-                self._stop_segment(time.time())
+        self._stop.set()
+        if self._proc and self._proc.poll() is None:
+            try:
+                self._proc.send_signal(signal.SIGTERM)
+                self._proc.wait(timeout=10)
+            except Exception:
+                self._proc.kill()
 
     def _start_segment(self, ts: float) -> None:
         from .capture import resolve_rtsp_url
-        url = resolve_rtsp_url(self.source)
-        if not url:
-            return
+        url    = resolve_rtsp_url(self.source)
         ffmpeg = shutil.which("ffmpeg")
-        if not ffmpeg:
+        if not url or not ffmpeg:
             return
-        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        dt       = datetime.fromtimestamp(ts, tz=timezone.utc)
         date_dir = self.video_dir / self.source.id / dt.strftime("%Y/%m/%d")
         date_dir.mkdir(parents=True, exist_ok=True)
         seg_path = date_dir / dt.strftime("%Y-%m-%d_%H-%M-%S.mp4")
         rel_path = seg_path.relative_to(self.video_dir).as_posix()
         try:
-            proc = subprocess.Popen(
+            self._proc = subprocess.Popen(
                 [ffmpeg, "-y", "-hide_banner", "-loglevel", "warning",
-                 "-use_wallclock_as_timestamps", "1",
                  "-rtsp_transport", self.source.rtsp_transport,
                  "-i", url,
+                 # Archive: MP4 with faststart
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
-                 "-movflags", "+faststart", str(seg_path)],
+                 "-movflags", "+faststart", str(seg_path),
+                 # Live: rolling 60s HLS, segments auto-deleted
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
+                 "-f", "hls", "-hls_time", "2", "-hls_list_size", "30",
+                 "-hls_flags", "delete_segments+omit_endlist",
+                 "-hls_segment_filename", str(self._live_dir / "seg_%06d.ts"),
+                 str(self._live_dir / "live.m3u8"),
+                ],
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             )
         except Exception:
-            LOG.exception("failed to start video segment for %s", self.source.id)
+            LOG.exception("failed to start ffmpeg for %s", self.source.id)
+            self._proc = None
             return
-        self._proc      = proc
         self._seg_path  = seg_path
         self._seg_start = ts
         try:
             self._seg_id = self.db.open_segment(self.source.id, rel_path, ts)
         except Exception:
-            LOG.exception("failed to register segment in DB for %s", self.source.id)
             self._seg_id = None
-        self._recording = True
-        LOG.info("video event recording started: %s", rel_path)
+        LOG.info("segment started: %s", rel_path)
 
     def _stop_segment(self, ts: float) -> None:
-        proc = self._proc; seg_path = self._seg_path; seg_id = self._seg_id
-        self._recording = False; self._proc = None
-        self._seg_id = None; self._seg_path = None
+        proc      = self._proc;     self._proc     = None
+        seg_path  = self._seg_path; self._seg_path = None
+        seg_id    = self._seg_id;   self._seg_id   = None
         if proc and proc.poll() is None:
-            try: proc.send_signal(signal.SIGTERM); proc.wait(timeout=10)
-            except Exception: proc.kill()
-        LOG.info("video event recording stopped (%.0fs)", ts - self._seg_start)
+            try:
+                proc.send_signal(signal.SIGTERM); proc.wait(timeout=10)
+            except Exception:
+                proc.kill()
         if seg_id and seg_path and seg_path.exists() and seg_path.stat().st_size > 0:
             self.db.close_segment(seg_id, ts, None, None)
             threading.Thread(target=self._post_process,
                              args=(seg_path, seg_id), daemon=True).start()
         elif seg_id:
             self.db.close_segment(seg_id, ts, None, None)
-
-    def _post_process(self, seg_path: Path, seg_id: int) -> None:
-        ffmpeg = shutil.which("ffmpeg")
-        if not ffmpeg:
-            return
-        try:
-            sprite_dir  = seg_path.with_suffix("")
-            sprite_dir.mkdir(parents=True, exist_ok=True)
-            sprite_path = sprite_dir / "sprite.jpg"
-            vtt_path    = sprite_dir / "thumbs.vtt"
-            r = subprocess.run(
-                [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-                 "-i", str(seg_path),
-                 "-vf", f"fps={_SPRITE_FPS},scale={_SPRITE_W}:-1,"
-                        f"tile={_SPRITE_COLS}x{_SPRITE_ROWS}",
-                 "-q:v", "5", "-frames:v", "1", str(sprite_path)],
-                capture_output=True, timeout=60, check=False,
-            )
-            sprite_rel = vtt_rel = None
-            if r.returncode == 0 and sprite_path.exists():
-                h = int(_SPRITE_W * 9 / 16)
-                _write_webvtt(vtt_path, sprite_path.name, _SPRITE_W, h,
-                              _SPRITE_COLS, _SPRITE_FPS)
-                sprite_rel = str(sprite_path.relative_to(self.video_dir))
-                vtt_rel    = str(vtt_path.relative_to(self.video_dir))
-
-            seg = self.db.get_segment(seg_id)
-            self.db.close_segment(seg_id, time.time(), sprite_rel, vtt_rel)
-
-            # YOLO tag from video file (exact timestamps, no sync drift)
-            n_det = 0
-            if seg:
-                n_det = 0  # YOLO tagging handled by yolo-serve process
-            # Extract events from accurate detections
-            if seg:
-                dets = self.db.detections_for_segment(seg_id)
-                n_evt = extract_events(seg, dets, self.db)
-                LOG.info("video post-processed: %s (%d dets, %d events)",
-                         seg_path.name, n_det, n_evt)
-        except Exception:
-            LOG.exception("video post-process failed for %s", seg_path.name)
-            self.db.close_segment(seg_id, time.time(), None, None)
 
 
 def _write_webvtt(path: Path, sprite_name: str, w: int, h: int,

@@ -190,6 +190,7 @@ def make_app(
     video_dir=None,
     video_db=None,
     video_workers=None,
+    capture_worker=None,
 ) -> Starlette:
     import eufy_snapshot
     static_dir = Path(eufy_snapshot.__file__).parent / "static"
@@ -197,11 +198,13 @@ def make_app(
     @asynccontextmanager
     async def lifespan(app: Starlette):
         asyncio.create_task(_register_go2rtc_streams(config, source_db))
+        if capture_worker:
+            capture_worker.start()
         try:
             yield
         finally:
-            for vw in (video_workers or {}).values():
-                await asyncio.to_thread(vw.stop)
+            if capture_worker:
+                await asyncio.to_thread(capture_worker.stop)
 
     # ── API handlers ──────────────────────────────────────
 
@@ -608,6 +611,18 @@ def make_app(
             "freed_bytes": deleted_bytes,
         })
 
+    async def serve_live_hls(request: Request) -> Response:
+        source_id = request.path_params.get("source_id", "")
+        filename  = request.path_params.get("filename", "")
+        if not video_dir or not source_id or ".." in source_id or ".." in filename:
+            return Response(status_code=404)
+        path = video_dir / "live" / source_id / filename
+        if not path.exists():
+            return Response(status_code=404)
+        media = "application/vnd.apple.mpegurl" if filename.endswith(".m3u8") else "video/mp2t"
+        return FileResponse(path, media_type=media,
+                            headers={"Cache-Control": "no-cache, no-store"})
+
     routes = [
         Route("/",                           lambda r: FileResponse(static_dir / "video2.html")),
         Route("/settings",                  lambda r: FileResponse(static_dir / "settings.html")),
@@ -623,6 +638,7 @@ def make_app(
         Route("/api/video/detections",      api_video_detections),
         Route("/api/video/live",            api_video_live_status),
         Route("/video/files/{path:path}",   serve_video_file),
+        Route("/video/live/{source_id}/{filename}", serve_live_hls),
         Route("/api/sources",                    api_sources,             methods=["GET", "POST"]),
         Route("/api/sources/{source_id}",        api_delete_source,       methods=["DELETE"]),
         Route("/api/settings/status",            api_settings_status),

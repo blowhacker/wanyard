@@ -600,7 +600,7 @@ const st = {
 };
 
 const liveTail = {
-  pc: null,
+  hls: null,
   active: false,
   srcId: null,
   pollTimer: null,
@@ -1202,34 +1202,39 @@ async function startLiveTail(srcId = null) {
   el.play.classList.add("playing");
   setStatus("LIVE");
 
-  liveTail.pc = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  });
-  liveTail.pc.ontrack = e => {
-    if (e.streams[0]) {
-      el.liveVideo.srcObject = e.streams[0];
+  const hlsUrl = `/video/live/${encodeURIComponent(chosen)}/live.m3u8`;
+
+  async function _attachHls() {
+    if (el.liveVideo.canPlayType("application/vnd.apple.mpegurl")) {
+      // Safari — native HLS
+      el.liveVideo.src = hlsUrl;
       el.liveVideo.play().catch(() => {});
+    } else {
+      // Chrome/Firefox — load hls.js lazily
+      if (!window.Hls) {
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
+          s.onload = res; s.onerror = rej;
+          document.head.appendChild(s);
+        });
+      }
+      if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
+      const hls = new Hls({ lowLatencyMode: true });
+      liveTail.hls = hls;
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(el.liveVideo);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => el.liveVideo.play().catch(() => {}));
     }
-  };
-  liveTail.pc.addTransceiver("video", { direction: "recvonly" });
-  liveTail.pc.addTransceiver("audio", { direction: "recvonly" });
+  }
 
   try {
-    const offer = await liveTail.pc.createOffer();
-    await liveTail.pc.setLocalDescription(offer);
-    const resp = await fetch(`http://${location.hostname}:1984/api/webrtc?src=${encodeURIComponent(chosen)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/sdp" },
-      body: offer.sdp,
-    });
-    if (!resp.ok) throw new Error(await resp.text());
-    const answerSdp = await resp.text();
-    await liveTail.pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+    await _attachHls();
     await pollLiveTail();
     liveTail.pollTimer = setInterval(pollLiveTail, 1500);
     liveTail.clockTimer = setInterval(updateLiveTailClock, 500);
   } catch (err) {
-    console.error("go2rtc:", err);
+    console.error("live HLS:", err);
     stopLiveTail();
     setStatus("LIVE ERR");
   }
@@ -1240,11 +1245,8 @@ function stopLiveTail(updateMode = true) {
   clearInterval(liveTail.clockTimer);
   liveTail.pollTimer = null;
   liveTail.clockTimer = null;
-  if (liveTail.pc) { liveTail.pc.close(); liveTail.pc = null; }
-  if (el.liveVideo?.srcObject) {
-    el.liveVideo.srcObject.getTracks().forEach(t => t.stop());
-    el.liveVideo.srcObject = null;
-  }
+  if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
+  if (el.liveVideo) { el.liveVideo.pause(); el.liveVideo.src = ""; }
   if (el.liveVideo) el.liveVideo.style.display = "none";
   liveTail.active = false;
   liveTail.srcId = null;
