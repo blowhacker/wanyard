@@ -370,7 +370,10 @@ def make_app(
         cls       = request.query_params.get("class")  or None
         classes_raw = request.query_params.get("classes") or None
         date      = request.query_params.get("date")   or None
-        limit     = int(request.query_params.get("limit", 100))
+        # When a time range is provided, since/until bound results — no count limit needed
+        _has_range = request.query_params.get("since") and request.query_params.get("until")
+        _default = 10**9 if _has_range else 1000
+        limit = int(request.query_params.get("limit", _default))
         around_raw = request.query_params.get("around")
         if around_raw:
             classes = None
