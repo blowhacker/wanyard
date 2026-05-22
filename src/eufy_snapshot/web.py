@@ -477,7 +477,140 @@ def make_app(
             headers["Cache-Control"] = "no-cache"
         return FileResponse(path, media_type=media, headers=headers)
 
+    async def api_settings_status(request: Request) -> JSONResponse:
+        import shutil as _shutil
+        disk = _shutil.disk_usage(video_dir or Path("."))
+        pending = 0
+        total_segs = 0
+        latest_event_ts = None
+        if video_db:
+            with video_db._connect() as conn:
+                pending = conn.execute(
+                    "SELECT COUNT(*) FROM segments s WHERE s.end_ts IS NOT NULL"
+                    " AND NOT EXISTS (SELECT 1 FROM video_detections WHERE segment_id=s.id)"
+                ).fetchone()[0]
+                total_segs = conn.execute(
+                    "SELECT COUNT(*) FROM segments WHERE end_ts IS NOT NULL"
+                ).fetchone()[0]
+                row = conn.execute(
+                    "SELECT MAX(abs_ts) FROM video_events"
+                ).fetchone()
+                latest_event_ts = row[0] if row else None
+        # Check yolo-serve socket
+        yolo_ok = False
+        try:
+            import socket as _sock, json as _json
+            s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect(os.environ.get("YOLO_SOCKET", "/tmp/yolo.sock"))
+            s.sendall(b'{"type":"ping"}\n')
+            resp = s.recv(256)
+            s.close()
+            yolo_ok = b'"ok"' in resp
+        except Exception:
+            pass
+        # Disk usage per source
+        source_sizes = {}
+        if video_dir:
+            for src_dir in video_dir.iterdir():
+                if src_dir.is_dir() and not src_dir.name.startswith("."):
+                    try:
+                        total = sum(f.stat().st_size for f in src_dir.rglob("*.mp4"))
+                        source_sizes[src_dir.name] = total
+                    except Exception:
+                        pass
+        return JSONResponse({
+            "disk": {"total": disk.total, "used": disk.used, "free": disk.free},
+            "video_dir": str(video_dir) if video_dir else None,
+            "source_sizes": source_sizes,
+            "segments": total_segs,
+            "backfill_pending": pending,
+            "yolo_connected": yolo_ok,
+            "latest_event_ts": latest_event_ts,
+        })
+
+    async def api_settings_camera_test(request: Request) -> Response:
+        """Grab a single frame from an RTSP URL and return it as JPEG."""
+        try:
+            body = await request.json()
+            url  = str(body.get("url", "")).strip()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        if not url.startswith(("rtsp://", "rtsps://")):
+            return JSONResponse({"error": "url must start with rtsp://"}, status_code=400)
+        import tempfile as _tmp
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return JSONResponse({"error": "ffmpeg not available"}, status_code=500)
+        with _tmp.NamedTemporaryFile(suffix=".jpg", delete=False) as tf:
+            out = Path(tf.name)
+        try:
+            r = subprocess.run(
+                [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                 "-rtsp_transport", "tcp", "-i", url,
+                 "-frames:v", "1", "-q:v", "5", str(out)],
+                capture_output=True, timeout=10, check=False,
+            )
+            if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+                return JSONResponse({"error": "could not connect or read frame"}, status_code=502)
+            return Response(out.read_bytes(), media_type="image/jpeg")
+        except subprocess.TimeoutExpired:
+            return JSONResponse({"error": "connection timed out"}, status_code=504)
+        finally:
+            out.unlink(missing_ok=True)
+
+    async def api_settings_cleanup(request: Request) -> JSONResponse:
+        """Delete segments (and their data) older than N days."""
+        if not video_db or not video_dir:
+            return JSONResponse({"error": "video not configured"}, status_code=501)
+        try:
+            body  = await request.json()
+            days  = int(body.get("days", 30))
+            src   = body.get("source_id") or None
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        cutoff = __import__("time").time() - days * 86400
+        with video_db._connect() as conn:
+            where = "end_ts IS NOT NULL AND end_ts < ?"
+            params: list = [cutoff]
+            if src:
+                where += " AND source_id = ?"
+                params.append(src)
+            segs = [dict(r) for r in conn.execute(
+                f"SELECT id, path FROM segments WHERE {where}", params
+            ).fetchall()]
+        deleted_files = deleted_bytes = 0
+        seg_ids = []
+        for seg in segs:
+            seg_ids.append(seg["id"])
+            p = video_dir / seg["path"]
+            try:
+                if p.exists():
+                    deleted_bytes += p.stat().st_size
+                    p.unlink()
+                    deleted_files += 1
+                # Remove spritesheet dir
+                sprite_dir = p.with_suffix("")
+                if sprite_dir.is_dir():
+                    import shutil as _sh
+                    _sh.rmtree(sprite_dir, ignore_errors=True)
+            except Exception:
+                pass
+        if seg_ids:
+            with video_db._connect() as conn:
+                placeholders = ",".join("?" * len(seg_ids))
+                conn.execute(f"DELETE FROM video_events WHERE segment_id IN ({placeholders})", seg_ids)
+                conn.execute(f"DELETE FROM video_detections WHERE segment_id IN ({placeholders})", seg_ids)
+                conn.execute(f"DELETE FROM segments WHERE id IN ({placeholders})", seg_ids)
+        return JSONResponse({
+            "deleted_segments": len(seg_ids),
+            "deleted_files": deleted_files,
+            "freed_bytes": deleted_bytes,
+        })
+
     routes = [
+        Route("/",                           lambda r: FileResponse(static_dir / "video2.html")),
+        Route("/settings",                  lambda r: FileResponse(static_dir / "settings.html")),
         Route("/api/health",                api_health),
         Route("/api/thumb",                 api_thumb),
         Route("/api/video/event-thumb/{event_id}", api_video_event_thumb),
@@ -490,8 +623,11 @@ def make_app(
         Route("/api/video/detections",      api_video_detections),
         Route("/api/video/live",            api_video_live_status),
         Route("/video/files/{path:path}",   serve_video_file),
-        Route("/api/sources",               api_sources,        methods=["GET", "POST"]),
-        Route("/api/sources/{source_id}",   api_delete_source,  methods=["DELETE"]),
+        Route("/api/sources",                    api_sources,             methods=["GET", "POST"]),
+        Route("/api/sources/{source_id}",        api_delete_source,       methods=["DELETE"]),
+        Route("/api/settings/status",            api_settings_status),
+        Route("/api/settings/camera/test",       api_settings_camera_test, methods=["POST"]),
+        Route("/api/settings/cleanup",           api_settings_cleanup,     methods=["POST"]),
         Mount("/", StaticFiles(directory=static_dir, html=True)),
     ]
 

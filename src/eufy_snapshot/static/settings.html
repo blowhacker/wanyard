@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings — Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/settings.css">
+</head>
+<body>
+  <main class="settings-page">
+    <header class="settings-header">
+      <a href="/video2" class="s-back">← MONITOR</a>
+      <span class="settings-title">SETTINGS</span>
+    </header>
+
+    <!-- System panel -->
+    <section class="s-panel" id="sysPanel">
+      <div class="s-panel-head">SYSTEM</div>
+      <div class="s-system-grid">
+        <div class="s-stat">
+          <div class="s-stat-label">DISK FREE</div>
+          <div class="s-stat-value" id="diskFree">--</div>
+        </div>
+        <div class="s-stat">
+          <div class="s-stat-label">VIDEO</div>
+          <div class="s-stat-value" id="videoSize">--</div>
+        </div>
+        <div class="s-stat">
+          <div class="s-stat-label">SEGMENTS</div>
+          <div class="s-stat-value" id="segCount">--</div>
+        </div>
+        <div class="s-stat">
+          <div class="s-stat-label">BACKFILL</div>
+          <div class="s-stat-value" id="backfillStatus">--</div>
+        </div>
+        <div class="s-stat">
+          <div class="s-stat-label">YOLO</div>
+          <div class="s-stat-value" id="yoloStatus">--</div>
+        </div>
+        <div class="s-stat">
+          <div class="s-stat-label">LAST EVENT</div>
+          <div class="s-stat-value" id="lastEvent">--</div>
+        </div>
+      </div>
+      <div class="s-source-sizes" id="sourceSizes"></div>
+    </section>
+
+    <!-- Cameras panel -->
+    <section class="s-panel">
+      <div class="s-panel-head">CAMERAS</div>
+      <div id="cameraList" class="s-camera-list"></div>
+      <div class="s-add-camera" id="addCameraForm">
+        <div class="s-add-head">ADD CAMERA</div>
+        <div class="s-field-row">
+          <label>NAME</label>
+          <input id="newName" type="text" placeholder="garden" autocomplete="off">
+        </div>
+        <div class="s-field-row">
+          <label>RTSP URL</label>
+          <input id="newUrl" type="text" placeholder="rtsp://user:pass@192.168.1.x/stream1" autocomplete="off">
+        </div>
+        <div class="s-test-row">
+          <button id="testBtn" class="s-btn">TEST</button>
+          <button id="addBtn" class="s-btn s-btn-primary" disabled>ADD</button>
+          <img id="testThumb" class="s-test-thumb" hidden alt="">
+          <span id="testMsg" class="s-test-msg"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Storage panel -->
+    <section class="s-panel">
+      <div class="s-panel-head">STORAGE</div>
+      <div class="s-storage-grid">
+        <div class="s-field-row">
+          <label>DELETE FOOTAGE OLDER THAN</label>
+          <select id="cleanupDays">
+            <option value="7">7 days</option>
+            <option value="14">14 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="60">60 days</option>
+            <option value="90">90 days</option>
+          </select>
+        </div>
+        <div class="s-field-row">
+          <label>CAMERA</label>
+          <select id="cleanupSource">
+            <option value="">All cameras</option>
+          </select>
+        </div>
+      </div>
+      <div class="s-cleanup-row">
+        <button id="cleanupBtn" class="s-btn s-btn-danger">DELETE OLD FOOTAGE</button>
+        <span id="cleanupMsg" class="s-test-msg"></span>
+      </div>
+    </section>
+  </main>
+  <script src="/settings.js"></script>
+</body>
+</html>
