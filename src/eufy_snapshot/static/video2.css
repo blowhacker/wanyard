@@ -115,7 +115,8 @@ body {
   align-items: center;
   gap: 6px;
 }
-.ab-src-pill {
+/* .ab-src-pills .ab-src-pill specificity 0-2-0 beats .v2-viewer button 0-1-1 */
+.ab-src-pills .ab-src-pill {
   display: flex;
   align-items: center;
   gap: 3px;
@@ -128,21 +129,21 @@ body {
   white-space: nowrap;
   transition: border-color 100ms, background 100ms, color 100ms;
 }
-.ab-src-pill:hover { border-color: var(--line); background: var(--surf); color: var(--txt-2); }
-.ab-src-pill.active {
+.ab-src-pills .ab-src-pill:hover { border-color: var(--line); background: var(--surf); color: var(--txt-2); }
+.ab-src-pills .ab-src-pill.active {
   border-color: var(--amber-ring);
   background: var(--amber-soft);
   color: var(--amber);
 }
-.ab-src-pill .dot {
+.ab-src-pills .ab-src-pill .dot {
   width: 5px; height: 5px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--green);
   margin-left: 4px;
 }
-.ab-src-pill .dot.buffering { background: var(--amber); }
-.ab-src-pill .dot.offline   { background: var(--red); }
+.ab-src-pills .ab-src-pill .dot.buffering { background: var(--amber); }
+.ab-src-pills .ab-src-pill .dot.offline   { background: var(--red); }
 .ab-status {
   display: flex;
   align-items: center;
