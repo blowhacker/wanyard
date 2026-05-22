@@ -302,6 +302,30 @@ class VideoSegmentDB:
                 counts[evt["class"]] = counts.get(evt["class"], 0) + 1
         return counts
 
+    def activity_summary(self, source_id: str | None = None,
+                         since: float | None = None,
+                         until: float | None = None) -> dict:
+        where, params = ["1"], []
+        if source_id and source_id != "all":
+            where.append("source_id=?"); params.append(source_id)
+        if since is not None:
+            where.append("abs_ts>=?"); params.append(since)
+        if until is not None:
+            where.append("abs_ts<?"); params.append(until)
+        sql = (
+            "SELECT class, COUNT(*) as n FROM video_events"
+            f" WHERE {' AND '.join(where)}"
+            " GROUP BY class"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        classes = {r["class"]: r["n"] for r in rows}
+        for evt in self.provisional_events(source_id, since):
+            if until is not None and evt["abs_ts"] >= until:
+                continue
+            classes[evt["class"]] = classes.get(evt["class"], 0) + 1
+        return {"total": sum(classes.values()), "classes": classes}
+
     def list_segments(self, source_id: str | None = None) -> list[dict]:
         where, params = [], []
         if source_id and source_id != "all":
@@ -310,6 +334,24 @@ class VideoSegmentDB:
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY start_ts DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def segments_overlapping(self, source_id: str | None,
+                             start_ts: float, end_ts: float) -> list[dict]:
+        where, params = [
+            "end_ts IS NOT NULL",
+            "end_ts>?",
+            "start_ts<?",
+        ], [start_ts, end_ts]
+        if source_id and source_id != "all":
+            where.append("source_id=?"); params.append(source_id)
+        sql = (
+            "SELECT * FROM segments"
+            f" WHERE {' AND '.join(where)}"
+            " ORDER BY start_ts"
+        )
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]

@@ -6,7 +6,7 @@
   <title>Settings — Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/settings.css">
 </head>
@@ -50,7 +50,7 @@
     </section>
 
     <!-- Cameras panel -->
-    <section class="s-panel">
+    <section class="s-panel" id="cameras">
       <div class="s-panel-head">CAMERAS</div>
       <div id="cameraList" class="s-camera-list"></div>
       <div class="s-add-camera" id="addCameraForm">
@@ -89,7 +89,7 @@
         <button id="autoSaveBtn" class="s-btn s-btn-primary">SAVE AUTO-CLEANUP</button>
         <span id="autoMsg" class="s-test-msg"></span>
       </div>
-      <div class="s-panel-head" style="border-top:1px solid var(--border-lo)">MANUAL DELETE</div>
+      <div class="s-panel-head" style="border-top:1px solid var(--line-soft)">MANUAL DELETE</div>
       <div class="s-storage-grid">
         <div class="s-field-row">
           <label>OLDER THAN</label>

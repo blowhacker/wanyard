@@ -4,15 +4,15 @@
   display: grid;
   grid-template-columns: 280px 1fr;
   height: 100vh;
-  background: var(--bg-deep);
+  background: var(--bg);
 }
 
 /* ── Sidebar ─────────────────────────────────────── */
 .video-sidebar {
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
-  border-right: 1px solid var(--border-lo);
+  background: var(--surf);
+  border-right: 1px solid var(--line-soft);
   overflow: hidden;
 }
 
@@ -21,33 +21,33 @@
   align-items: center;
   justify-content: space-between;
   padding: 11px 16px;
-  background: var(--bg-deep);
-  border-bottom: 1px solid var(--border-sub);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line-soft);
   flex-shrink: 0;
 }
 
 .video-back {
   font-family: var(--font);
-  font-size: 0.56rem;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.12em;
-  color: var(--text-lo);
+  letter-spacing: 0.08em;
+  color: var(--txt-3);
   text-decoration: none;
   padding: 3px 7px;
-  border: 1px solid var(--border-lo);
+  border: 1px solid var(--line-soft);
   border-radius: var(--r);
   transition: color .12s, border-color .12s;
 }
-.video-back:hover { color: var(--amber); border-color: var(--amber-border); }
+.video-back:hover { color: var(--amber); border-color: var(--amber-ring); }
 
 .video-brand {
-  font-size: 0.56rem; font-weight: 500;
-  letter-spacing: 0.3em; color: var(--text-lo);
+  font-size: 11px; font-weight: 500;
+  letter-spacing: 0.08em; color: var(--txt-3);
 }
 
 .video-filters {
   padding: 10px 14px 6px;
-  border-bottom: 1px solid var(--border-sub);
+  border-bottom: 1px solid var(--line-soft);
   display: flex; flex-direction: column; gap: 6px;
   flex-shrink: 0;
 }
@@ -57,7 +57,7 @@
 .video-class-chips {
   display: flex; gap: 3px; flex-wrap: wrap;
   padding: 8px 14px;
-  border-bottom: 1px solid var(--border-sub);
+  border-bottom: 1px solid var(--line-soft);
   flex-shrink: 0;
 }
 
@@ -66,13 +66,13 @@
   flex: 1;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--border-hi) transparent;
+  scrollbar-color: var(--line) transparent;
 }
 
 .video-empty-state {
   padding: 24px 14px;
-  font-size: 0.58rem;
-  color: var(--text-lo);
+  font-size: 11px;
+  color: var(--txt-3);
   letter-spacing: 0.1em;
   text-align: center;
 }
@@ -86,10 +86,10 @@
   border-left: 3px solid transparent;
   transition: background .1s, border-color .1s;
 }
-.video-event-item:hover { background: var(--bg-section); }
+.video-event-item:hover { background: var(--surf); }
 .video-event-item.active {
   border-left-color: var(--amber);
-  background: var(--amber-dim);
+  background: var(--amber-soft);
 }
 
 .vei-thumb {
@@ -105,7 +105,7 @@
 .vei-meta { flex: 1; min-width: 0; }
 
 .vei-class {
-  font-size: 0.62rem; font-weight: 500;
+  font-size: 11px; font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -118,14 +118,14 @@
 .vei-class-bus,
 .vei-class-motorcycle,
 .vei-class-bicycle  { color: var(--amber); }
-.vei-class-car      { color: var(--text-mid); }
+.vei-class-car      { color: var(--txt-2); }
 
 .vei-time {
-  font-size: 0.52rem; color: var(--text-mid);
+  font-size: 11px; color: var(--txt-2);
   margin-top: 2px; letter-spacing: 0.04em;
 }
 .vei-dur {
-  font-size: 0.46rem; color: var(--text-lo); margin-top: 1px;
+  font-size: 11px; color: var(--txt-3); margin-top: 1px;
 }
 
 /* ── Main / stage ────────────────────────────────── */
@@ -168,16 +168,16 @@
 /* ── Scrubber ─────────────────────────────────────── */
 .video-scrubber-wrap {
   padding: 8px 16px 4px;
-  background: var(--bg-strip);
-  border-top: 1px solid var(--border-sub);
+  background: var(--bg);
+  border-top: 1px solid var(--line-soft);
   flex-shrink: 0;
 }
 
 .video-scrubber {
   position: relative;
   height: 28px;
-  background: var(--bg-section);
-  border: 1px solid var(--border-lo);
+  background: var(--surf);
+  border: 1px solid var(--line-soft);
   border-radius: var(--r);
   cursor: pointer;
 }
@@ -200,7 +200,7 @@
 
 .video-scrub-labels {
   display: flex; justify-content: space-between;
-  font-size: 0.46rem; color: var(--text-lo);
+  font-size: 11px; color: var(--txt-3);
   letter-spacing: 0.06em; margin-top: 2px;
 }
 
@@ -208,32 +208,32 @@
 .video-controls {
   display: flex; align-items: center;
   gap: 6px; padding: 6px 14px 10px;
-  background: var(--bg-strip);
-  border-top: 1px solid var(--border-sub);
+  background: var(--bg);
+  border-top: 1px solid var(--line-soft);
   flex-shrink: 0;
 }
 
 .vctr-btn {
   height: 34px; width: 34px; padding: 0;
   font-size: 0.9rem;
-  background: var(--bg-section);
-  border: 1px solid var(--border-hi);
+  background: var(--surf);
+  border: 1px solid var(--line);
   border-radius: var(--r);
-  color: var(--text-mid);
+  color: var(--txt-2);
   cursor: pointer;
   transition: border-color .12s, color .12s, background .12s;
 }
-.vctr-btn:hover { border-color: var(--amber-border); color: var(--amber); }
+.vctr-btn:hover { border-color: var(--amber-ring); color: var(--amber); }
 .vctr-play {
-  border-color: var(--amber-border);
+  border-color: var(--amber-ring);
   color: var(--amber);
-  background: var(--amber-dim);
+  background: var(--amber-soft);
   width: 42px;
 }
 .vctr-right { margin-left: auto; }
 
 .vctr-time {
-  font-size: 0.62rem; color: var(--text-mid);
+  font-size: 11px; color: var(--txt-2);
   letter-spacing: 0.06em; padding: 0 6px;
   font-family: var(--font);
 }
@@ -241,27 +241,27 @@
 .vctr-sync {
   display: flex; align-items: center; gap: 3px;
   margin-left: 8px;
-  border-left: 1px solid var(--border-lo);
+  border-left: 1px solid var(--line-soft);
   padding-left: 10px;
 }
 .vctr-sync-btn {
   height: 22px; width: 22px; padding: 0;
   font-size: 0.9rem; font-weight: 700;
-  background: var(--bg-section);
-  border: 1px solid var(--border-hi);
-  border-radius: var(--r); color: var(--text-mid);
+  background: var(--surf);
+  border: 1px solid var(--line);
+  border-radius: var(--r); color: var(--txt-2);
   cursor: pointer; line-height: 1;
 }
-.vctr-sync-btn:hover { color: var(--amber); border-color: var(--amber-border); }
+.vctr-sync-btn:hover { color: var(--amber); border-color: var(--amber-ring); }
 .vctr-sync-label {
-  font-size: 0.5rem; letter-spacing: 0.1em;
-  color: var(--text-lo); min-width: 30px; text-align: center;
+  font-size: 11px; letter-spacing: 0.1em;
+  color: var(--txt-3); min-width: 30px; text-align: center;
   font-family: var(--font);
 }
 
 .vctr-live-badge {
-  font-size: 0.56rem; font-weight: 500;
-  letter-spacing: 0.14em;
+  font-size: 11px; font-weight: 500;
+  letter-spacing: 0.08em;
   color: var(--green);
   animation: pulse-g 1.5s ease-in-out infinite;
 }

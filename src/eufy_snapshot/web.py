@@ -5,10 +5,13 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote
 
+from starlette.background import BackgroundTask
 from starlette.applications import Starlette
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
@@ -417,6 +420,67 @@ def make_app(
         counts = await asyncio.to_thread(video_db.class_counts, source_id)
         return JSONResponse({"classes": counts})
 
+    async def api_video_activity_summary(request: Request) -> JSONResponse:
+        if not video_db:
+            return JSONResponse({"total": 0, "classes": {}})
+        source_id = request.query_params.get("source") or None
+        try:
+            since = float(request.query_params["since"])
+            until = float(request.query_params["until"])
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "since and until required"}, status_code=400)
+        summary = await asyncio.to_thread(video_db.activity_summary, source_id, since, until)
+        return JSONResponse(summary)
+
+    def _source_statuses() -> dict:
+        sources = _sources_list(config, source_db)
+        now = time.time()
+        statuses = {}
+        if not video_db:
+            return {
+                s["id"]: {"state": "offline", "last_ts": None, "age_seconds": None}
+                for s in sources
+            }
+        with video_db._connect() as conn:
+            rows = conn.execute(
+                "SELECT source_id, MAX(COALESCE(end_ts, start_ts)) as last_ts"
+                " FROM segments GROUP BY source_id"
+            ).fetchall()
+            live_rows = conn.execute(
+                "SELECT source_id, MAX(start_ts) as start_ts FROM segments"
+                " WHERE end_ts IS NULL AND start_ts>=? GROUP BY source_id",
+                (now - 3600,),
+            ).fetchall()
+        last = {r["source_id"]: r["last_ts"] for r in rows}
+        live = {r["source_id"]: r["start_ts"] for r in live_rows}
+        for src in sources:
+            sid = src["id"]
+            hls = (video_dir / "live" / sid / "live.m3u8") if video_dir else None
+            hls_age = None
+            if hls and hls.exists():
+                try:
+                    hls_age = now - hls.stat().st_mtime
+                except OSError:
+                    hls_age = None
+            if sid in live and hls_age is not None and hls_age <= 12:
+                state = "live"
+            elif sid in live:
+                state = "buffering"
+            elif last.get(sid) and now - float(last[sid]) < 900:
+                state = "buffering"
+            else:
+                state = "offline"
+            statuses[sid] = {
+                "state": state,
+                "last_ts": last.get(sid),
+                "age_seconds": (now - float(last[sid])) if last.get(sid) else None,
+                "hls_age_seconds": hls_age,
+            }
+        return statuses
+
+    async def api_video_source_status(request: Request) -> JSONResponse:
+        return JSONResponse({"sources": await asyncio.to_thread(_source_statuses)})
+
     async def api_video_segments(request: Request) -> JSONResponse:
         if not video_db:
             return JSONResponse({"segments": []})
@@ -439,6 +503,89 @@ def make_app(
         source_id = request.query_params.get("source") or None
         status = await asyncio.to_thread(video_db.live_status, source_id)
         return JSONResponse(status)
+
+    def _export_clip(source_id: str | None, ts: float,
+                     before: float, after: float) -> tuple[Path | None, Path | None, str | None]:
+        if not video_dir or not video_db:
+            return None, None, "video is not configured"
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return None, None, "ffmpeg is not available"
+        start_ts, end_ts = ts - before, ts + after
+        segs = video_db.segments_overlapping(source_id, start_ts, end_ts)
+        if not segs:
+            return None, None, "no recorded video for that range"
+
+        tmpdir = Path(tempfile.mkdtemp(prefix="eufy_clip_"))
+        parts: list[Path] = []
+        root = video_dir.resolve()
+        for i, seg in enumerate(segs):
+            seg_path = (video_dir / seg["path"]).resolve()
+            try:
+                seg_path.relative_to(root)
+            except ValueError:
+                continue
+            if not seg_path.is_file():
+                continue
+            clip_start = max(start_ts, float(seg["start_ts"]))
+            clip_end = min(end_ts, float(seg["end_ts"]))
+            if clip_end <= clip_start:
+                continue
+            out = tmpdir / f"part_{i:03d}.mp4"
+            cmd = [
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", f"{max(0.0, clip_start - float(seg['start_ts'])):.3f}",
+                "-i", str(seg_path),
+                "-t", f"{clip_end - clip_start:.3f}",
+                "-map", "0:v:0?", "-map", "0:a:0?",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-c:a", "aac", "-movflags", "+faststart",
+                str(out),
+            ]
+            r = subprocess.run(cmd, capture_output=True, timeout=90, check=False)
+            if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+                parts.append(out)
+
+        if not parts:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return None, None, "could not export clip"
+        if len(parts) == 1:
+            return parts[0], tmpdir, None
+
+        list_file = tmpdir / "parts.txt"
+        list_file.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts))
+        out = tmpdir / "clip.mp4"
+        r = subprocess.run(
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "concat", "-safe", "0", "-i", str(list_file),
+             "-c", "copy", "-movflags", "+faststart", str(out)],
+            capture_output=True, timeout=90, check=False,
+        )
+        if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return None, None, "could not stitch clip"
+        return out, tmpdir, None
+
+    async def api_video_clip(request: Request) -> Response:
+        try:
+            ts = float(request.query_params["ts"])
+            before = min(300.0, max(0.0, float(request.query_params.get("before", 30))))
+            after = min(300.0, max(0.0, float(request.query_params.get("after", 30))))
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "ts is required"}, status_code=400)
+        source_id = request.query_params.get("source") or None
+        path, tmpdir, error = await asyncio.to_thread(_export_clip, source_id, ts, before, after)
+        if error or not path or not tmpdir:
+            return JSONResponse({"error": error or "could not export clip"}, status_code=404)
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(ts))
+        filename = f"cam-viewer-{source_id or 'all'}-{stamp}.mp4"
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            filename=filename,
+            background=BackgroundTask(shutil.rmtree, tmpdir, ignore_errors=True),
+            headers={"Cache-Control": "no-store"},
+        )
 
     async def serve_video_file(request: Request) -> Response:
         if not video_dir:
@@ -646,9 +793,12 @@ def make_app(
         Route("/video2",                    lambda r: FileResponse(static_dir / "video2.html")),
         Route("/api/video/events",          api_video_events),
         Route("/api/video/classes",         api_video_class_counts),
+        Route("/api/video/activity-summary", api_video_activity_summary),
         Route("/api/video/segments",        api_video_segments),
         Route("/api/video/detections",      api_video_detections),
         Route("/api/video/live",            api_video_live_status),
+        Route("/api/video/source-status",   api_video_source_status),
+        Route("/api/video/clip",            api_video_clip),
         Route("/video/files/{path:path}",   serve_video_file),
         Route("/video/live/{source_id}/{filename}", serve_live_hls),
         Route("/api/sources",                    api_sources,             methods=["GET", "POST"]),

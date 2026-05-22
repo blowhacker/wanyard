@@ -377,8 +377,8 @@ class AppMode {
 // V2Timeline — pure renderer + decode(x,y) helper
 // ═══════════════════════════════════════════════════════
 const EVENT_COLORS = {
-  person:"#2aac6a",bird:"#20c0b0",cat:"#20c0b0",dog:"#20c0b0",
-  car:"#c08020",truck:"#c08020",bus:"#c08020",motorcycle:"#c08020",bicycle:"#c08020",
+  person:"#4ec98a",bird:"#78b7ff",cat:"#78b7ff",dog:"#78b7ff",
+  car:"#e8a558",truck:"#e8a558",bus:"#e8a558",motorcycle:"#e8a558",bicycle:"#e8a558",
 };
 
 class V2Timeline {
@@ -386,7 +386,6 @@ class V2Timeline {
   #segs = []; #evts = []; #srcNames = {};
   #from = 0; #to = 0;
   #head = null;
-  #SRC_W = 64;
   #eventsFrom = 0; #eventsTo = 0;
 
   constructor(canvasEl) {
@@ -414,25 +413,25 @@ class V2Timeline {
   // ── Pure decode — returns null or {ts, srcId, snapEvent} ─
   decode(x, y) {
     const W = this.#c.clientWidth, H = this.#c.clientHeight;
-    if (x < this.#SRC_W || x > W || y < 0 || y > H - 20) return null;
+    if (x < 0 || x > W || y < 0 || y > H) return null;
 
-    const srcIds = this.#uniqueSrcs();
-    if (!srcIds.length) return null;
+    const ts = this.#xToTs(x);
 
-    const LANE_H = Math.floor((H - 20) / srcIds.length);
-    const row    = Math.min(srcIds.length - 1, Math.floor(y / LANE_H));
-    const srcId  = srcIds[row];
-    const ts     = this.#xToTs(x);
-
-    // Snap to nearest event within 8px
     const SNAP = 8;
     let snapEvent = null, best = Infinity;
-    for (const e of this.#evts.filter(e => e.source_id === srcId)) {
-      const ex   = this.#tsToX(e.abs_ts);
+    for (const e of this.#evts) {
+      const ex = this.#tsToX(e.abs_ts);
       const dist = Math.abs(ex - x);
       if (dist < SNAP && dist < best) { best = dist; snapEvent = e; }
     }
 
+    const seg = snapEvent
+      ? null
+      : this.#segs
+          .filter(s => s.end_ts != null && s.start_ts <= ts && s.end_ts > ts)
+          .sort((a, b) => b.start_ts - a.start_ts)[0];
+    const srcId = snapEvent?.source_id ?? seg?.source_id ?? this.#uniqueSrcs()[0] ?? null;
+    if (!srcId) return null;
     return { ts, srcId, snapEvent };
   }
 
@@ -442,189 +441,107 @@ class V2Timeline {
     const dpr = window.devicePixelRatio || 1;
     const W = c.clientWidth, H = c.clientHeight;
     c.width = W * dpr; c.height = H * dpr;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
     if (!W || !H) return;
+    const span = this.#to - this.#from;
+    if (span <= 0) return;
 
-    const srcIds = this.#uniqueSrcs();
-    if (!srcIds.length) return;
-    const LABEL_H = 18;
-    const LANE_H  = Math.floor((H - LABEL_H) / srcIds.length);
-    const SRC_W   = this.#SRC_W;
-    const span    = this.#to - this.#from;
-    const nowTs   = Date.now() / 1000;
+    const nowTs = Date.now() / 1000;
+    const top = 12;
+    const bottom = H - 12;
+    const barMaxH = Math.max(8, bottom - top);
 
-    // ── Day boundary lines ──────────────────────────────
-    // Find midnight (UTC offset to local midnight)
-    const tzOffsetSec = new Date().getTimezoneOffset() * -60;
-    let midnightTs = Math.ceil((this.#from - tzOffsetSec) / 86400) * 86400 + tzOffsetSec;
-    while (midnightTs <= this.#to) {
-      const x = this.#tsToX(midnightTs);
-      if (x > SRC_W && x < W) {
-        ctx.save();
-        ctx.setLineDash([2, 5]);
-        ctx.strokeStyle = "rgba(255,255,255,0.12)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(x, 0); ctx.lineTo(x, H - LABEL_H);
-        ctx.stroke();
-        ctx.restore();
-      }
-      midnightTs += 86400;
-    }
+    ctx.fillStyle = "rgba(255,255,255,0.025)";
+    ctx.fillRect(0, top, W, barMaxH);
 
-    // ── Per-lane rendering ──────────────────────────────
-    srcIds.forEach((srcId, row) => {
-      const top = row * LANE_H + 2, bot = top + LANE_H - 4, mid = (top + bot) / 2;
-
-      // Source label
-      ctx.fillStyle = "rgba(100,118,136,0.9)";
-      ctx.font = `bold 9px 'IBM Plex Mono',monospace`;
-      ctx.textAlign = "right";
-      ctx.fillText((this.#srcNames[srcId] || srcId).slice(0, 12), SRC_W - 6, mid + 3);
-
-      // Lane divider
-      if (row > 0) {
-        ctx.fillStyle = "rgba(255,255,255,0.05)";
-        ctx.fillRect(SRC_W, top - 2, W - SRC_W, 1);
-      }
-
-      // Segment bands
-      ctx.fillStyle = "rgba(255,255,255,0.07)";
-      this.#segs.filter(s => s.source_id === srcId).forEach(s => {
-        const x1 = this.#tsToX(s.start_ts), x2 = this.#tsToX(s.end_ts ?? this.#to);
-        if (x2 < SRC_W || x1 > W) return;
-        ctx.fillRect(Math.max(SRC_W, x1), top + 2, Math.min(W, x2) - Math.max(SRC_W, x1), bot - top - 4);
-      });
-
-      // Event lines (vertical bars, merge nicely when dense)
-      const srcEvts = this.#evts.filter(e => e.source_id === srcId);
-      srcEvts.forEach(e => {
-        const x = this.#tsToX(e.abs_ts);
-        if (x < SRC_W || x > W) return;
-        ctx.fillStyle = EVENT_COLORS[e.class] || "#ccd8e4";
-        ctx.globalAlpha = 0.75;
-        ctx.fillRect(x - 0.75, top + 4, 1.5, bot - top - 8);
-      });
-      ctx.globalAlpha = 1;
-
-      // Off-screen event indicators
-      const nBefore = srcEvts.filter(e => e.abs_ts < this.#from).length;
-      const nAfter  = srcEvts.filter(e => e.abs_ts > this.#to).length;
-      ctx.font = "bold 9px 'IBM Plex Mono',monospace";
-      if (nBefore > 0) {
-        const label = `◀ ${nBefore}`;
-        const tw = ctx.measureText(label).width + 8;
-        ctx.fillStyle = "rgba(192,128,32,0.18)";
-        ctx.fillRect(SRC_W, mid - 8, tw, 16);
-        ctx.fillStyle = "rgba(192,128,32,0.95)";
-        ctx.textAlign = "left";
-        ctx.fillText(label, SRC_W + 4, mid + 3);
-      }
-      if (nAfter > 0) {
-        const label = `${nAfter} ▶`;
-        const tw = ctx.measureText(label).width + 8;
-        ctx.fillStyle = "rgba(192,128,32,0.18)";
-        ctx.fillRect(W - tw, mid - 8, tw, 16);
-        ctx.fillStyle = "rgba(192,128,32,0.95)";
-        ctx.textAlign = "right";
-        ctx.fillText(label, W - 4, mid + 3);
-      }
+    // Segment coverage: faint base bars show recorded coverage even where no event exists.
+    ctx.fillStyle = "rgba(255,255,255,0.055)";
+    this.#segs.forEach(s => {
+      const x1 = Math.max(0, this.#tsToX(s.start_ts));
+      const x2 = Math.min(W, this.#tsToX(s.end_ts ?? Math.min(this.#to, nowTs)));
+      if (x2 <= 0 || x1 >= W || x2 <= x1) return;
+      ctx.fillRect(x1, bottom - 8, x2 - x1, 8);
     });
 
-    // ── Time / date labels ──────────────────────────────
-    const interval = this.#labelInterval();
-    const multiDay = span > 20 * 3600;
-    let t0 = Math.ceil(this.#from / interval) * interval;
-    ctx.font = "9px 'IBM Plex Mono',monospace";
-    while (t0 <= this.#to) {
-      const x = this.#tsToX(t0);
-      if (x >= SRC_W && x <= W) {
-        const d = new Date(t0 * 1000);
-        let label;
-        if (multiDay) {
-          // Show "22 May 16:00" when spanning multiple days
-          label = d.toLocaleDateString(undefined, { day:"2-digit", month:"short" })
-                + " " + d.toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit" });
-        } else {
-          label = d.toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit" });
-        }
-        ctx.fillStyle = "rgba(74,94,110,0.12)";
-        ctx.fillRect(x, 0, 1, H - LABEL_H);
-        ctx.fillStyle = "rgba(90,112,130,0.95)";
-        ctx.textAlign = "center";
-        ctx.fillText(label, x, H - 4);
+    // Event density in 15-minute bins.
+    const bin = 15 * 60;
+    const firstBin = Math.floor(this.#from / bin) * bin;
+    const bins = [];
+    for (let t = firstBin; t < this.#to; t += bin) bins.push({ start: t, count: 0, live: false });
+    this.#evts.forEach(e => {
+      if (e.abs_ts < this.#from || e.abs_ts > this.#to) return;
+      const idx = Math.floor((e.abs_ts - firstBin) / bin);
+      if (bins[idx]) {
+        bins[idx].count++;
+        bins[idx].live ||= Boolean(e.provisional);
       }
-      t0 += interval;
-    }
+    });
+    const max = Math.max(1, ...bins.map(b => b.count));
+    bins.forEach(b => {
+      const x1 = Math.max(0, this.#tsToX(b.start));
+      const x2 = Math.min(W, this.#tsToX(Math.min(b.start + bin, this.#to)));
+      if (x2 <= 0 || x1 >= W || x2 <= x1) return;
+      const h = b.count ? Math.max(8, (b.count / max) * barMaxH) : 7;
+      const future = this.#head != null && b.start > this.#head;
+      const w = Math.max(1, x2 - x1 - 1);
+      if (b.live) {
+        const g = ctx.createLinearGradient(0, bottom - h, 0, bottom);
+        g.addColorStop(0, "rgba(78,201,138,0.9)");
+        g.addColorStop(1, "rgba(78,201,138,0.28)");
+        ctx.fillStyle = g;
+      } else if (b.count && !future) {
+        const g = ctx.createLinearGradient(0, bottom - h, 0, bottom);
+        g.addColorStop(0, "rgba(232,165,88,0.65)");
+        g.addColorStop(1, "rgba(232,165,88,0.25)");
+        ctx.fillStyle = g;
+      } else {
+        ctx.fillStyle = b.count ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.05)";
+      }
+      ctx.globalAlpha = future ? 0.4 : 1;
+      ctx.fillRect(x1, bottom - h, w, h);
+      ctx.globalAlpha = 1;
+    });
 
-    // ── Date context pill — pinned left, always visible ─
-    {
-      const fromDate = new Date(this.#from * 1000);
-      const toDate   = new Date(this.#to   * 1000);
-      const fromDay  = fromDate.toLocaleDateString(undefined, { day:"numeric", month:"short" });
-      const toDay    = toDate.toLocaleDateString(undefined, { day:"numeric", month:"short" });
-      const dateLabel = fromDay === toDay ? fromDay : `${fromDay} – ${toDay}`;
-      ctx.font = "bold 9px 'IBM Plex Mono',monospace";
-      const tw = ctx.measureText(dateLabel).width + 10;
-      ctx.fillStyle = "rgba(22,30,40,0.85)";
-      ctx.fillRect(SRC_W + 2, 2, tw, 14);
-      ctx.fillStyle = "rgba(160,185,200,0.95)";
-      ctx.textAlign = "left";
-      ctx.fillText(dateLabel, SRC_W + 7, 12);
-    }
-
-    // ── Events-loaded indicator ─────────────────────────
     if (this.#eventsFrom < this.#eventsTo) {
-      const ex1 = Math.max(SRC_W, this.#tsToX(this.#eventsFrom));
+      const ex1 = Math.max(0, this.#tsToX(this.#eventsFrom));
       const ex2 = Math.min(W, this.#tsToX(this.#eventsTo));
       if (ex2 > ex1) {
-        ctx.fillStyle = "rgba(42,172,106,0.45)";
-        ctx.fillRect(ex1, H - LABEL_H - 2, ex2 - ex1, 2);
+        ctx.fillStyle = "rgba(78,201,138,0.28)";
+        ctx.fillRect(ex1, H - 3, ex2 - ex1, 2);
       }
     }
 
-    // ── NOW marker ──────────────────────────────────────
     if (nowTs >= this.#from && nowTs <= this.#to) {
       const nx = this.#tsToX(nowTs);
-      ctx.fillStyle = "rgba(255,255,255,0.25)";
-      ctx.fillRect(nx, 0, 1, H - LABEL_H);
-      ctx.fillStyle = "rgba(220,220,220,0.7)";
-      ctx.font = "bold 8px 'IBM Plex Mono',monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("NOW", nx, H - LABEL_H - 4);
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
+      ctx.fillRect(nx, 4, 1, H - 8);
     }
 
-    // ── Playhead ────────────────────────────────────────
     if (this.#head != null) {
       const x = this.#tsToX(this.#head);
-      if (x >= SRC_W && x <= W) {
-        ctx.fillStyle = "#c08020";
-        ctx.fillRect(x - 1, 0, 2, H - LABEL_H);
+      if (x >= 0 && x <= W) {
+        ctx.fillStyle = "#e8a558";
+        ctx.fillRect(x, 0, 1, H);
         ctx.beginPath();
-        ctx.moveTo(x-5,0); ctx.lineTo(x+5,0); ctx.lineTo(x,8);
-        ctx.closePath(); ctx.fill();
+        ctx.arc(x, 6, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(232,165,88,0.18)";
+        ctx.lineWidth = 8;
+        ctx.stroke();
       }
     }
   }
 
-  #tsToX(ts) { return this.#SRC_W + ((ts-this.#from)/(this.#to-this.#from))*(this.#c.clientWidth-this.#SRC_W); }
-  #xToTs(x)  { return this.#from + ((x-this.#SRC_W)/(this.#c.clientWidth-this.#SRC_W))*(this.#to-this.#from); }
+  #tsToX(ts) { return ((ts - this.#from) / (this.#to - this.#from)) * this.#c.clientWidth; }
+  #xToTs(x)  { return this.#from + (x / this.#c.clientWidth) * (this.#to - this.#from); }
   #uniqueSrcs() { return [...new Set(this.#segs.map(s => s.source_id))]; }
-  #labelInterval() {
-    const span = this.#to - this.#from;
-    if (span > 20*3600) return 4*3600;
-    if (span > 8*3600)  return 2*3600;
-    if (span > 3*3600)  return 3600;
-    if (span > 90*60)   return 30*60;
-    return 15*60;
-  }
 }
 
 // ═══════════════════════════════════════════════════════
 // App — thin wiring layer
 // ═══════════════════════════════════════════════════════
-const V2_SPEEDS    = [{label:"½×",rate:.5},{label:"1×",rate:1},{label:"2×",rate:2},{label:"4×",rate:4}];
+const V2_SPEEDS    = [{label:"0.5×",rate:.5},{label:"1×",rate:1},{label:"2×",rate:2},{label:"4×",rate:4}];
 const POST_BUFFER  = 10;
 const LIVE_OPEN_MAX_AGE = 3600;
 
@@ -637,14 +554,19 @@ const el = {
   tlCanvas:$("v2Timeline"),
   thumb:   $("v2ThumbPreview"),
   empty:   $("v2Empty"),
-  hudSrc:  $("v2HudSource"),
-  hudTs:   $("v2HudTs"),
   tsDisp:  $("v2Timestamp"),
+  tsTime:  $("v2TsTime"),
+  tsDate:  $("v2TsDate"),
   srcCtrl: $("v2SourceCtrl"),
+  srcButton:$("v2SourceButton"),
+  srcLabel:$("v2SourceLabel"),
+  srcDot:  $("v2SourceDot"),
+  srcMenu: $("v2SourceMenu"),
   clsField:$("v2ClassField"),
   clsCtrl: $("v2ClassCtrl"),
   nearScope:$("v2NearScope"),
   eventThumbs:$("v2EventThumbs"),
+  eventCount:$("v2EventCount"),
   play:    $("v2Play"),
   prev:    $("v2Prev"),
   next:    $("v2Next"),
@@ -653,8 +575,12 @@ const el = {
   loop:    $("v2Loop"),
   timeDisp:$("v2TimeDisp"),
   boxes:   $("v2Boxes"),
+  fullscreen:$("v2Fullscreen"),
+  download: $("v2DownloadClip"),
   status:  $("v2Status"),
   liveBtn: $("v2LiveBtn"),
+  stage:   document.querySelector(".v2-stage"),
+  ruler:   $("v2Ruler"),
 };
 
 // ── Core instances ────────────────────────────────────
@@ -668,6 +594,7 @@ const st = {
   events:   [],
   classes:  {},
   sources:  [],
+  sourceStatus: {},
   source:   "all",
   cls:      new Set(),
   window:        { from: 0, to: 0 },
@@ -678,6 +605,7 @@ const st = {
   dets:     {},  // segId → [{ts_offset, boxes, classes}]
   initDone: false,
   classSearchSeq: 0,
+  summary: { total: 0, classes: {} },
 };
 const EVENTS_BUFFER = 3 * 3600;   // load 3h extra on each side of visible window
 
@@ -689,6 +617,40 @@ const liveTail = {
   clockTimer: null,
   latestDet: null,
 };
+
+const VEHICLE_CLASSES = new Set(["car", "truck", "bus", "motorcycle", "bicycle"]);
+const FILTER_GROUPS = [
+  { key: "all", label: "All", classes: null },
+  { key: "person", label: "Person", classes: ["person"] },
+  { key: "vehicle", label: "Vehicle", classes: [...VEHICLE_CLASSES] },
+  { key: "other", label: "Other", classes: null },
+];
+
+function otherClasses() {
+  return Object.keys(st.summary.classes || st.classes || {})
+    .filter(c => c !== "person" && !VEHICLE_CLASSES.has(c));
+}
+
+function filterGroupClasses(key) {
+  if (key === "all") return [];
+  if (key === "person") return ["person"];
+  if (key === "vehicle") return [...VEHICLE_CLASSES];
+  if (key === "other") {
+    const classes = otherClasses();
+    return classes.length ? classes : ["__other__"];
+  }
+  return [];
+}
+
+function currentFilterGroup() {
+  if (st.cls.size === 0) return "all";
+  const selected = [...st.cls].sort().join(",");
+  for (const g of FILTER_GROUPS.slice(1)) {
+    const classes = filterGroupClasses(g.key).sort().join(",");
+    if (classes && classes === selected) return g.key;
+  }
+  return "custom";
+}
 
 // ── Derived views ─────────────────────────────────────
 // All segments for source — used for timeline bands (always show coverage)
@@ -715,12 +677,12 @@ const NEAR_EVENT_REFRESH_MS = 1500;
 
 function nearbyClassSet() {
   if (st.cls.size > 0) return new Set(st.cls);
-  return new Set(["person"]);
+  return new Set(Object.keys(st.summary.classes || st.classes || {}));
 }
 
 function nearbyScopeLabel() {
   const classes = [...nearbyClassSet()];
-  return classes.join(", ");
+  return classes.length ? classes.join(", ") : "all";
 }
 
 function renderNearScope() {
@@ -731,7 +693,7 @@ function nearestEvents(baseTs) {
   let evts = st.events;
   if (st.source !== "all") evts = evts.filter(e => e.source_id === st.source);
   const classes = nearbyClassSet();
-  evts = evts.filter(e => classes.has(e.class));
+  if (classes.size > 0) evts = evts.filter(e => classes.has(e.class));
   return evts
     .map(e => ({ event: e, dist: Math.abs(e.abs_ts - baseTs) }))
     .sort((a, b) => a.dist - b.dist || a.event.abs_ts - b.event.abs_ts)
@@ -747,15 +709,98 @@ function classFilteredEvents(classes = st.cls) {
   return evts;
 }
 
-function setStatus(text) {
-  if (el.status) el.status.textContent = text;
+function setStatus(state, detail = "") {
+  if (!el.status) return;
+  const textEl = el.status.querySelector("[data-status-text]") || el.status;
+  const normalized = String(state || "replay").toLowerCase();
+  let cls = "replay";
+  let text = "REPLAY";
+  if (normalized === "live") {
+    cls = "live";
+    text = detail || "LIVE";
+  } else if (normalized === "buffering" || normalized === "sync" || normalized === "search") {
+    cls = "buffering";
+    text = normalized === "search" ? "SEARCHING" : "BUFFERING...";
+  } else if (normalized === "offline" || normalized === "live err" || normalized === "none") {
+    cls = "offline";
+    text = normalized === "none" ? "NO EVENTS" : (detail || "OFFLINE");
+  } else if (normalized === "auto" || normalized === "seek" || normalized === "playlist" || normalized === "replay") {
+    cls = "replay";
+    text = detail || "REPLAY";
+  } else {
+    text = String(state).toUpperCase();
+  }
+  el.status.classList.remove("live", "buffering", "offline", "replay");
+  el.status.classList.add(cls);
+  textEl.textContent = text;
+  if (el.srcDot) {
+    el.srcDot.classList.toggle("offline", cls === "offline");
+    el.srcDot.classList.toggle("buffering", cls === "buffering");
+  }
+}
+
+function setPlayIcon(playing) {
+  if (!el.play) return;
+  el.play.innerHTML = playing
+    ? '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><rect x="3" y="2.5" width="2" height="7" rx=".4" fill="currentColor"/><rect x="7" y="2.5" width="2" height="7" rx=".4" fill="currentColor"/></svg>'
+    : '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3.5 2.5 9.5 6l-6 3.5v-7z" fill="currentColor"/></svg>';
+  el.play.classList.toggle("playing", playing);
+}
+
+function formatClock(ts) {
+  return new Date(ts * 1000).toLocaleTimeString(undefined,
+    { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+}
+
+function formatDateChip(ts) {
+  const d = new Date(ts * 1000);
+  const date = d.toLocaleDateString(undefined, { year:"numeric", month:"2-digit", day:"2-digit" });
+  const weekday = d.toLocaleDateString(undefined, { weekday:"short" });
+  return `${date} · ${weekday}`;
+}
+
+function setTimestampChip(ts, srcId = null, live = false) {
+  if (ts == null) return;
+  if (el.tsTime) el.tsTime.textContent = formatClock(ts);
+  if (el.tsDate) el.tsDate.textContent = formatDateChip(ts);
+  if (el.timeDisp) {
+    el.timeDisp.innerHTML = `<span>${formatClock(ts)}</span><span class="sub">/ 23:59:59</span>`;
+  }
+  if (el.tsDisp) {
+    el.tsDisp.dataset.sourceId = srcId || "";
+    el.tsDisp.dataset.live = live ? "1" : "0";
+  }
+}
+
+function renderRuler() {
+  if (!el.ruler) return;
+  el.ruler.querySelectorAll(".tick").forEach(n => n.remove());
+  const span = st.window.to - st.window.from;
+  if (span <= 0) return;
+  const interval = span > 20 * 3600 ? 3 * 3600 : span > 8 * 3600 ? 2 * 3600 : 3600;
+  let t = Math.ceil(st.window.from / interval) * interval;
+  while (t <= st.window.to) {
+    const tick = document.createElement("span");
+    tick.className = "tick";
+    tick.style.left = `${((t - st.window.from) / span) * 100}%`;
+    tick.textContent = new Date(t * 1000).toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit" });
+    el.ruler.appendChild(tick);
+    t += interval;
+  }
+}
+
+function setTimelineWindow(from, to) {
+  st.window.from = from;
+  st.window.to = to;
+  timeline.setWindow(from, to);
+  renderRuler();
 }
 
 function centerWindowOn(ts) {
   const span = st.window.to - st.window.from;
   st.window.from = ts - span * 0.4;
   st.window.to   = ts + span * 0.6;
-  timeline.setWindow(st.window.from, st.window.to);
+  setTimelineWindow(st.window.from, st.window.to);
 }
 
 async function fetchNearestEvents(classes, around, limit = 20) {
@@ -768,6 +813,53 @@ async function fetchNearestEvents(classes, around, limit = 20) {
   if (!r.ok) return [];
   const data = await r.json();
   return data.events || [];
+}
+
+function todayRange() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { since: start.getTime() / 1000, until: end.getTime() / 1000 };
+}
+
+async function fetchActivitySummary() {
+  const { since, until } = todayRange();
+  const p = new URLSearchParams({ since: String(Math.floor(since)), until: String(Math.ceil(until)) });
+  if (st.source !== "all") p.set("source", st.source);
+  const r = await fetch(`/api/video/activity-summary?${p}`, { cache:"no-store" }).catch(() => null);
+  if (!r?.ok) {
+    const classes = {};
+    let evts = st.events;
+    if (st.source !== "all") evts = evts.filter(e => e.source_id === st.source);
+    evts.forEach(e => { classes[e.class] = (classes[e.class] || 0) + 1; });
+    st.summary = { total: Object.values(classes).reduce((a, b) => a + b, 0), classes };
+    return;
+  }
+  st.summary = await r.json();
+}
+
+function updateActivityCount() {
+  if (!el.eventCount) return;
+  const n = st.summary.total || 0;
+  el.eventCount.textContent = `${n} today`;
+}
+
+async function fetchSourceStatus() {
+  const r = await fetch("/api/video/source-status", { cache:"no-store" }).catch(() => null);
+  if (!r?.ok) return;
+  const data = await r.json();
+  st.sourceStatus = data.sources || {};
+}
+
+function sourceState(srcId) {
+  if (srcId === "all") {
+    const states = Object.values(st.sourceStatus).map(s => s.state);
+    if (states.includes("live")) return "live";
+    if (states.includes("buffering")) return "buffering";
+    return states.length ? "offline" : "buffering";
+  }
+  return st.sourceStatus[srcId]?.state || "buffering";
 }
 
 function mergeEvents(events) {
@@ -904,24 +996,54 @@ function renderNearestEvents() {
     el.eventThumbs.innerHTML = "";
     const empty = document.createElement("div");
     empty.className = "v2-event-thumbs-empty";
-    empty.textContent = `No ${scope} events`;
+    empty.textContent = scope === "all" ? "No events" : `No ${scope} events`;
     el.eventThumbs.appendChild(empty);
     return;
   }
 
   if (_nearListSig === sig) {
-    _updateThumbNodes(evts, baseTs);
+    _updateEventRows(evts, baseTs);
     return;
   }
 
   _nearListSig = sig;
-  _reconcileThumbNodes(evts, baseTs);
+  _renderEventBuckets(evts, baseTs);
+}
+
+function classLabel(cls) {
+  if (!cls) return "Motion";
+  if (cls === "person") return "Person";
+  if (VEHICLE_CLASSES.has(cls)) return "Vehicle";
+  return cls.slice(0, 1).toUpperCase() + cls.slice(1);
+}
+
+function eventTag(cls) {
+  if (cls === "person") return "P";
+  if (VEHICLE_CLASSES.has(cls)) return "V";
+  return "O";
+}
+
+function eventDurationLabel(evt) {
+  const seconds = Math.max(1, Math.round((evt.end_off ?? 0) - (evt.start_off ?? 0)));
+  if (seconds < 60) return `+${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return s ? `+${m}m ${s}s` : `+${m}m`;
+}
+
+function bucketStart(ts) {
+  return Math.floor(ts / (15 * 60)) * 15 * 60;
+}
+
+function bucketLabel(start) {
+  const end = start + 15 * 60;
+  return `${eventLocalTime(start).slice(0, 5)} - ${eventLocalTime(end).slice(0, 5)}`;
 }
 
 function _makeThumbNode(evt, baseTs) {
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "v2-event-thumb"
+  btn.className = "v2-event-row v2-event-thumb"
     + (evt.provisional ? " provisional" : "")
     + (isEventActive(evt, baseTs) ? " active" : "");
   btn.dataset.eventId = String(evt.id);
@@ -937,10 +1059,12 @@ function _makeThumbNode(evt, baseTs) {
     scrollTimelineToTs(evt.abs_ts);
   });
 
+  const thumb = document.createElement("div");
+  thumb.className = "ev-thumb";
   let media;
   if (evt.provisional) {
     media = document.createElement("div");
-    media.className = "v2-event-thumb-live";
+    media.className = "ev-thumb-live";
     media.textContent = "LIVE";
   } else {
     media = document.createElement("img");
@@ -948,33 +1072,39 @@ function _makeThumbNode(evt, baseTs) {
     media.alt = "";
     media.src = `/api/video/event-thumb/${evt.id}`;
   }
-
-  const klass = document.createElement("div");
-  klass.className = "v2-event-thumb-class";
-  klass.textContent = evt.class;
+  const tag = document.createElement("div");
+  tag.className = "ev-thumb-tag";
+  tag.textContent = eventTag(evt.class);
+  thumb.append(media, tag);
 
   const meta = document.createElement("div");
-  meta.className = "v2-event-thumb-meta";
-  const t = document.createElement("span");
-  t.textContent = eventLocalTime(evt.abs_ts);
+  meta.className = "ev-meta";
+  const klass = document.createElement("div");
+  klass.className = "ev-cls";
+  klass.textContent = classLabel(evt.class);
+  const time = document.createElement("div");
+  time.className = "ev-time";
+  time.textContent = `${eventLocalTime(evt.abs_ts)} · `;
   const d = document.createElement("span");
+  d.className = "dur";
   d.dataset.nearDist = "1";
-  d.textContent = relEventLabel(evt.abs_ts, baseTs);
-  meta.append(t, d);
+  d.textContent = eventDurationLabel(evt);
+  time.appendChild(d);
+  meta.append(klass, time);
 
-  btn.append(media, klass, meta);
+  btn.append(thumb, meta);
   return btn;
 }
 
 function _updateThumbNode(btn, evt, baseTs) {
   btn.classList.toggle("active", isEventActive(evt, baseTs));
   const dist = btn.querySelector("[data-near-dist]");
-  const label = relEventLabel(evt.abs_ts, baseTs);
+  const label = eventDurationLabel(evt);
   if (dist && dist.textContent !== label) dist.textContent = label;
 }
 
-function _updateThumbNodes(evts, baseTs) {
-  const nodes = el.eventThumbs.querySelectorAll(".v2-event-thumb");
+function _updateEventRows(evts, baseTs) {
+  const nodes = el.eventThumbs.querySelectorAll(".v2-event-row");
   evts.forEach((evt, i) => {
     const btn = nodes[i];
     if (!btn || btn.dataset.eventId !== String(evt.id)) return;
@@ -982,36 +1112,31 @@ function _updateThumbNodes(evts, baseTs) {
   });
 }
 
-function _reconcileThumbNodes(evts, baseTs) {
-  // Keyed reconciliation: reuse existing nodes, freeze hovered node in place
-  const existing = new Map(
-    [...el.eventThumbs.querySelectorAll(".v2-event-thumb")]
-      .map(n => [n.dataset.eventId, n])
-  );
-  const hoveredId = el.eventThumbs.querySelector(".v2-event-thumb:hover")?.dataset.eventId;
-  const newIds = new Set(evts.map(e => String(e.id)));
-
-  // Remove stale nodes — except the hovered one
-  for (const [id, node] of existing) {
-    if (!newIds.has(id) && id !== hoveredId) node.remove();
-  }
-
-  const fragment = document.createDocumentFragment();
-  for (const evt of evts) {
-    const key = String(evt.id);
-    if (key === hoveredId) {
-      // Hovered: update labels only, leave it where it is in the DOM
-      const node = existing.get(key);
-      if (node) _updateThumbNode(node, evt, baseTs);
-      continue;
-    }
-    let btn = existing.get(key);
-    if (btn) _updateThumbNode(btn, evt, baseTs);
-    else btn = _makeThumbNode(evt, baseTs);
-    fragment.appendChild(btn);
-  }
-
-  el.eventThumbs.appendChild(fragment);
+function _renderEventBuckets(evts, baseTs) {
+  el.eventThumbs.innerHTML = "";
+  const buckets = new Map();
+  evts.forEach(evt => {
+    const key = bucketStart(evt.abs_ts);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(evt);
+  });
+  [...buckets.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .forEach(([start, bucketEvents]) => {
+      const group = document.createElement("div");
+      group.className = "ev-day";
+      const h = document.createElement("div");
+      h.className = "ev-day-h";
+      const count = bucketEvents.length;
+      h.innerHTML = `<span></span><span></span>`;
+      h.children[0].textContent = bucketLabel(start);
+      h.children[1].textContent = `${count} ${count === 1 ? "event" : "events"}`;
+      group.appendChild(h);
+      bucketEvents
+        .sort((a, b) => b.abs_ts - a.abs_ts)
+        .forEach(evt => group.appendChild(_makeThumbNode(evt, baseTs)));
+      el.eventThumbs.appendChild(group);
+    });
 }
 
 let _nearRenderPending = false;
@@ -1077,7 +1202,7 @@ async function load() {
   const nowTs = Date.now() / 1000;
   if (nowTs > st.window.to - 60 && st.window.to > nowTs - 7200) {
     st.window.to = nowTs + 600;
-    timeline.setWindow(st.window.from, st.window.to);
+    setTimelineWindow(st.window.from, st.window.to);
   }
 
   player.setSegments(st.segments);
@@ -1087,7 +1212,10 @@ async function load() {
   timeline.setSrcNames(srcNames);
   timeline.setData(allSegsForSrc(), filteredEvts());
 
+  await fetchSourceStatus();
   renderSrcCtrl();
+  await fetchActivitySummary();
+  updateActivityCount();
   renderClsCtrl();
   renderNearScope();
   scheduleNearestEvents(true);
@@ -1106,49 +1234,80 @@ async function load() {
 
 // ── Source control ────────────────────────────────────
 function renderSrcCtrl() {
-  el.srcCtrl.innerHTML = "";
+  if (!el.srcMenu || !el.srcLabel) return;
+  el.srcMenu.innerHTML = "";
   const rtsp = st.sources.filter(s => s.type === "rtsp");
-  if (!rtsp.length) return;
-  const pills = document.createElement("div"); pills.className = "source-pills";
+  if (!rtsp.length) {
+    el.srcLabel.textContent = "No sources";
+    return;
+  }
+  const current = st.source === "all"
+    ? { id:"all", name:"All sources" }
+    : rtsp.find(s => s.id === st.source) || rtsp[0];
+  el.srcLabel.textContent = current.name || current.id;
+  const currentState = sourceState(current.id);
+  el.srcDot?.classList.toggle("offline", currentState === "offline");
+  el.srcDot?.classList.toggle("buffering", currentState === "buffering");
+
   [{ id:"all", name:"ALL" }, ...rtsp].forEach(s => {
     const b = document.createElement("button");
-    b.className = "source-pill" + (st.source === s.id ? " active" : "");
-    b.textContent = s.name || s.id;
+    b.type = "button";
+    b.className = "ab-menu-item" + (st.source === s.id ? " active" : "");
+    b.role = "menuitem";
+    b.innerHTML = `<span class="dot"></span><span class="name"></span>`;
+    b.querySelector(".name").textContent = s.name || s.id;
+    const dot = b.querySelector(".dot");
+    const state = sourceState(s.id);
+    dot.classList.toggle("offline", state === "offline");
+    dot.classList.toggle("buffering", state === "buffering");
     b.addEventListener("click", () => {
       const wasLive = liveTail.active;
       stopLiveTail(false);
       st.source = s.id; st.initDone = false;
       st.events = []; st.eventsLoaded = { from: 0, to: 0 };  // clear stale events
+      closeSourceMenu();
       renderSrcCtrl(); load().then(pushState);
       if (wasLive) startLiveTail(s.id);
     });
-    pills.appendChild(b);
+    el.srcMenu.appendChild(b);
   });
-  el.srcCtrl.appendChild(pills);
+}
+
+function closeSourceMenu() {
+  el.srcMenu.hidden = true;
+  el.srcCtrl?.classList.remove("open");
+  el.srcButton?.setAttribute("aria-expanded", "false");
+}
+
+function toggleSourceMenu() {
+  const open = el.srcMenu.hidden;
+  el.srcMenu.hidden = !open;
+  el.srcCtrl?.classList.toggle("open", open);
+  el.srcButton?.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 // ── Class filter ──────────────────────────────────────
 function renderClsCtrl() {
   el.clsCtrl.innerHTML = "";
-  const entries = Object.entries(st.classes).sort((a,b) => b[1]-a[1]);
-  if (!entries.length) { el.clsField.hidden = true; return; }
   el.clsField.hidden = false;
+  const counts = st.summary.classes || st.classes || {};
+  const active = currentFilterGroup();
+  const groupCount = key => {
+    if (key === "all") return st.summary.total || Object.values(counts).reduce((a, b) => a + b, 0);
+    return filterGroupClasses(key).reduce((sum, cls) => sum + (counts[cls] || 0), 0);
+  };
 
-  const allBtn = document.createElement("button");
-  allBtn.className = "class-chip" + (st.cls.size === 0 ? " active" : "");
-  allBtn.textContent = "ALL";
-  allBtn.addEventListener("click", () => {
-    st.cls.clear();
-    handleClassSelectionChanged(new Set());
-  });
-  el.clsCtrl.appendChild(allBtn);
-
-  entries.forEach(([c, n]) => {
+  FILTER_GROUPS.forEach(group => {
+    const n = groupCount(group.key);
     const b = document.createElement("button");
-    b.className = "class-chip" + (st.cls.has(c) ? " active" : "");
-    b.textContent = `${c} ×${n}`;
+    b.type = "button";
+    b.className = "class-chip" + (active === group.key ? " active" : "");
+    b.innerHTML = `<span></span><span class="count"></span>`;
+    b.children[0].textContent = group.label;
+    b.children[1].textContent = String(n);
     b.addEventListener("click", () => {
-      st.cls.has(c) ? st.cls.delete(c) : st.cls.add(c);
+      st.cls.clear();
+      filterGroupClasses(group.key).forEach(c => st.cls.add(c));
       pushState();
       handleClassSelectionChanged(new Set(st.cls));
     });
@@ -1170,7 +1329,7 @@ window.addEventListener("mousemove", e => {
   if (!_drag.moved) return;
   const rect = el.tlCanvas.getBoundingClientRect();
   const span = _drag.toSnap - _drag.fromSnap;
-  const pxPerSec = (rect.width - 64) / span;
+  const pxPerSec = rect.width / span;
   const shift = -dx / pxPerSec;
   const oldest = st.segments.length
     ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
@@ -1181,7 +1340,7 @@ window.addEventListener("mousemove", e => {
   if (nt > newest) { nt = newest; nf = newest - span; }
   if (nf < oldest) nf = oldest;
   st.window.from = nf; st.window.to = nt;
-  timeline.setWindow(nf, nt);
+  setTimelineWindow(nf, nt);
 });
 window.addEventListener("mouseup", e => {
   if (!_drag) return;
@@ -1235,7 +1394,7 @@ function _applyWindowShift(shift) {
   if (newFrom < oldest)   newFrom = oldest;
   st.window.from = newFrom;
   st.window.to   = newTo;
-  timeline.setWindow(newFrom, newTo);
+  setTimelineWindow(newFrom, newTo);
 }
 
 function _scrollDecay() {
@@ -1249,7 +1408,7 @@ el.tlCanvas.addEventListener("wheel", e => {
   e.preventDefault();
   const rect     = el.tlCanvas.getBoundingClientRect();
   const span     = st.window.to - st.window.from;
-  const pxPerSec = (rect.width - 64) / span;
+  const pxPerSec = rect.width / span;
 
   // Normalize: trackpad gives pixel deltas (deltaMode=0, small values),
   // mouse wheel gives line deltas (deltaMode=1, large discrete steps).
@@ -1297,7 +1456,7 @@ function scrollTimelineToTs(ts) {
   if (ts < st.window.from + span * 0.1 || ts > st.window.to - span * 0.1) {
     st.window.from = ts - span * 0.4;
     st.window.to   = ts + span * 0.6;
-    timeline.setWindow(st.window.from, st.window.to);
+    setTimelineWindow(st.window.from, st.window.to);
   }
 }
 
@@ -1317,7 +1476,7 @@ function navPrev() {
     st.window.to   = ts - 1;
     st.window.from = st.window.to - span;
     st.eventsLoaded = { from: 0, to: 0 };
-    timeline.setWindow(st.window.from, st.window.to);
+    setTimelineWindow(st.window.from, st.window.to);
     load().then(() => {
       const e2 = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts)[0];
       if (!e2) return;
@@ -1345,7 +1504,7 @@ function navNext() {
     st.window.from = ts + 1;
     st.window.to   = st.window.from + span;
     st.eventsLoaded = { from: 0, to: 0 };
-    timeline.setWindow(st.window.from, st.window.to);
+    setTimelineWindow(st.window.from, st.window.to);
     load().then(() => {
       const e2 = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts)[0];
       if (!e2) return;
@@ -1391,10 +1550,8 @@ async function startLiveTail(srcId = null) {
   el.video.style.display = "none";
   el.empty.style.display = "none";
   el.liveVideo.style.display = "block";
-  el.liveBtn.textContent = "● LIVE";
-  el.liveBtn.classList.add("active");
-  el.play.textContent = "■";
-  el.play.classList.add("playing");
+  el.liveBtn.classList.add("active", "on");
+  setPlayIcon(true);
   setStatus("LIVE");
   history.replaceState(null, "", `${location.pathname}?source=${encodeURIComponent(chosen)}&live=1`);
 
@@ -1403,7 +1560,7 @@ async function startLiveTail(srcId = null) {
   el.liveVideo.onerror = e => {
     const err = el.liveVideo.error;
     console.error("liveVideo error:", err?.code, err?.message, hlsUrl);
-    setStatus("LIVE ERR");
+    setStatus("OFFLINE");
   };
 
   async function _attachHls() {
@@ -1445,7 +1602,7 @@ async function startLiveTail(srcId = null) {
   } catch (err) {
     console.error("live HLS:", err);
     stopLiveTail();
-    setStatus("LIVE ERR");
+    setStatus("OFFLINE");
   }
 }
 
@@ -1464,15 +1621,13 @@ function stopLiveTail(updateMode = true) {
   const _p = new URLSearchParams(location.search);
   _p.delete("live"); _p.delete("ts");
   history.replaceState(null, "", `${location.pathname}${_p.size ? "?" + _p : ""}`);
-  el.liveBtn.textContent = "LIVE";
-  el.liveBtn.classList.remove("active");
-  el.play.textContent = player.paused ? "▶" : "■";
-  el.play.classList.toggle("playing", !player.paused);
+  el.liveBtn.classList.remove("active", "on");
+  setPlayIcon(!player.paused);
   drawBoxList(el.video, []);
   if (updateMode) mode.stopLive();
   if (el.video.dataset.src) el.video.style.display = "block";
   else el.empty.style.display = "block";
-  setStatus("AUTO");
+  setStatus("REPLAY");
 }
 
 async function pollLiveTail() {
@@ -1495,14 +1650,8 @@ function updateLiveTailClock() {
   if (!liveTail.active) return;
   const ts = liveTail.latestDet?.abs_ts ?? Date.now() / 1000;
   timeline.setPlayhead(ts);
-  el.timeDisp.textContent = fmtTs(ts);
-  if (el.hudTs) el.hudTs.textContent = new Date(ts * 1000).toLocaleTimeString(undefined,
-    { hour:"2-digit", minute:"2-digit", second:"2-digit" });
-  if (el.tsDisp) {
-    const src = st.sources.find(s => s.id === liveTail.srcId);
-    el.tsDisp.textContent = `${src?.name || liveTail.srcId} · LIVE · ${new Date(ts * 1000).toLocaleString(undefined,
-      { dateStyle:"short", timeStyle:"medium" })}`;
-  }
+  setTimestampChip(ts, liveTail.srcId, true);
+  setStatus("LIVE");
   drawLiveBoxes();
 }
 
@@ -1511,8 +1660,7 @@ function togglePlayback() {
   if (liveTail.active) {
     if (el.liveVideo.paused) el.liveVideo.play().catch(() => {});
     else el.liveVideo.pause();
-    el.play.textContent = el.liveVideo.paused ? "▶" : "■";
-    el.play.classList.toggle("playing", !el.liveVideo.paused);
+    setPlayIcon(!el.liveVideo.paused);
     return;
   }
   if (!player.paused) { player.pause(); return; }
@@ -1532,23 +1680,62 @@ el.rewind.addEventListener("click", () => {
     mode.seekTo(target, src, "backward"); pushState();
   }
 });
-el.loop.addEventListener("click",   () => { st.loop = !st.loop; el.loop.classList.toggle("active", st.loop); });
+el.loop.addEventListener("click",   () => {
+  st.loop = !st.loop;
+  el.loop.classList.toggle("active", st.loop);
+  el.loop.classList.toggle("on", st.loop);
+});
 el.boxes.addEventListener("click",  () => {
   st.showBoxes = !st.showBoxes;
   localStorage.setItem("v2boxes", st.showBoxes ? "1" : "0");
   el.boxes.classList.toggle("active", st.showBoxes);
 });
 el.boxes.classList.toggle("active", st.showBoxes);
+el.loop.classList.toggle("on", st.loop);
 el.liveBtn.addEventListener("click", () => {
   if (liveTail.active) stopLiveTail();
   else startLiveTail(st.source !== "all" ? st.source : null);
 });
+el.srcButton?.addEventListener("click", e => {
+  e.stopPropagation();
+  toggleSourceMenu();
+});
+document.addEventListener("click", e => {
+  if (!el.srcCtrl?.contains(e.target)) closeSourceMenu();
+});
+
+function toggleFullscreen() {
+  const s = el.stage || document.querySelector(".v2-stage");
+  if (!s) return;
+  document.fullscreenElement ? document.exitFullscreen() : s.requestFullscreen().catch(()=>{});
+}
+
+function downloadCurrentClip() {
+  const ts = liveTail.active ? (liveTail.latestDet?.abs_ts ?? Date.now() / 1000) : player.reliableTs;
+  const src = liveTail.active ? liveTail.srcId : (player.currentSeg?.source_id ?? (st.source !== "all" ? st.source : null));
+  if (!ts || !src) {
+    setStatus("NONE");
+    return;
+  }
+  const p = new URLSearchParams({ source: src, ts: String(Math.floor(ts)), before: "30", after: "30" });
+  el.download?.classList.add("loading");
+  const a = document.createElement("a");
+  a.href = `/api/video/clip?${p}`;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => el.download?.classList.remove("loading"), 1200);
+}
+el.fullscreen?.addEventListener("click", toggleFullscreen);
+el.download?.addEventListener("click", downloadCurrentClip);
 
 // Speed pills
 function buildSpeedPills() {
   el.speeds.innerHTML = "";
   V2_SPEEDS.forEach((s, i) => {
     const b = document.createElement("button");
+    b.type = "button";
     b.className = "speed-pill" + (i === st.speed ? " active" : "");
     b.textContent = s.label;
     b.addEventListener("click", () => { st.speed = i; localStorage.setItem("v2speed", i); player.setRate(s.rate); buildSpeedPills(); });
@@ -1560,37 +1747,42 @@ function buildSpeedPills() {
 document.addEventListener("keydown", e => {
   if (["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
   if (e.key === " ")           { e.preventDefault(); togglePlayback(); }
+  if (e.key === "ArrowLeft" && e.shiftKey) {
+    e.preventDefault();
+    el.rewind.click();
+    return;
+  }
   if (e.key === "ArrowLeft")  { e.preventDefault(); navPrev(); }
   if (e.key === "ArrowRight") { e.preventDefault(); navNext(); }
+  if (e.key.toLowerCase() === "l") { e.preventDefault(); el.loop.click(); }
+  if (e.key.toLowerCase() === "b") { e.preventDefault(); el.boxes.click(); }
+  if (["1", "2", "3", "4"].includes(e.key)) {
+    e.preventDefault();
+    const idx = Number(e.key) - 1;
+    const speed = V2_SPEEDS[idx];
+    if (speed) {
+      st.speed = idx;
+      localStorage.setItem("v2speed", idx);
+      player.setRate(speed.rate);
+      buildSpeedPills();
+    }
+  }
 });
 el.video.addEventListener("click",    togglePlayback);
 el.liveVideo.addEventListener("click", togglePlayback);
-el.video.addEventListener("dblclick", () => {
-  const s = document.querySelector(".v2-stage");
-  document.fullscreenElement ? document.exitFullscreen() : s.requestFullscreen().catch(()=>{});
-});
-el.liveVideo.addEventListener("dblclick", () => {
-  const s = document.querySelector(".v2-stage");
-  document.fullscreenElement ? document.exitFullscreen() : s.requestFullscreen().catch(()=>{});
-});
+el.video.addEventListener("dblclick", toggleFullscreen);
+el.liveVideo.addEventListener("dblclick", toggleFullscreen);
 
 // ── Player events → UI ────────────────────────────────
-player.on("play",  () => { if (!liveTail.active) { el.play.textContent = "■"; el.play.classList.add("playing"); } });
-player.on("pause", () => { if (!liveTail.active) { el.play.textContent = "▶"; el.play.classList.remove("playing"); } });
+player.on("play",  () => { if (!liveTail.active) setPlayIcon(true); });
+player.on("pause", () => { if (!liveTail.active) setPlayIcon(false); });
 player.on("ended", () => { mode.handleEnded(st.source !== "all" ? st.source : null); });
 
 player.on("timeupdate", () => {
   const ts = player.currentTs;
   if (ts == null) return;
   timeline.setPlayhead(ts);
-  el.timeDisp.textContent = fmtTs(ts);
-  if (el.hudTs) el.hudTs.textContent = new Date(ts*1000).toLocaleTimeString(undefined,
-    { hour:"2-digit", minute:"2-digit", second:"2-digit" });
-  if (el.tsDisp) {
-    const src = st.sources.find(s => s.id === (player.currentSeg?.source_id));
-    el.tsDisp.textContent = `${src?.name || ""} · ${new Date(ts*1000).toLocaleString(undefined,
-      {dateStyle:"short",timeStyle:"medium"})}`;
-  }
+  setTimestampChip(ts, player.currentSeg?.source_id ?? null, false);
   drawBoxes(ts);
   scheduleNearestEvents();
 });
@@ -1656,25 +1848,18 @@ function drawBoxList(v, boxes) {
   ctx.globalAlpha=1;
 }
 
-function fmtTs(ts) {
-  const d = new Date(ts * 1000);
-  const day = d.toLocaleDateString(undefined, { day:"numeric", month:"short" });
-  const t   = d.toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit", second:"2-digit" });
-  return `${day} ${t}`;
-}
-
 // ── Auto-refresh ──────────────────────────────────────
 setInterval(async () => {
-  el.status.textContent = liveTail.active ? "LIVE" : "SYNC";
+  setStatus(liveTail.active ? "LIVE" : "SYNC");
   const nowTs = Date.now() / 1000;
   // Only advance right edge when viewing recent content — never override
   // manual scroll into history (would corrupt the events window range)
   if (st.window.to > nowTs - 7200) {
     st.window.to = nowTs;
-    timeline.setWindow(st.window.from, st.window.to);
+    setTimelineWindow(st.window.from, st.window.to);
   }
   await load();
-  el.status.textContent = liveTail.active ? "LIVE" : "AUTO";
+  setStatus(liveTail.active ? "LIVE" : "REPLAY");
 }, 15000);
 
 window.addEventListener("resize", () => timeline.draw());
@@ -1703,6 +1888,7 @@ function readState() {
 async function init() {
   const r = await fetch("/api/sources", { cache:"no-store" });
   if (r.ok) st.sources = (await r.json()).sources || [];
+  await fetchSourceStatus();
   buildSpeedPills();
   player.setRate(V2_SPEEDS[st.speed].rate);
 
@@ -1714,7 +1900,7 @@ async function init() {
   const anchor = urlTs ?? now;
   st.window.from = anchor - 3 * 3600;
   st.window.to   = anchor + 3 * 3600 + 600;
-  timeline.setWindow(st.window.from, st.window.to);
+  setTimelineWindow(st.window.from, st.window.to);
 
   if (urlLive) {
     // Direct live URL: load data in background, immediately enter live
