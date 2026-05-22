@@ -1493,7 +1493,7 @@ function readState() {
   const p = new URLSearchParams(location.search);
   if (p.has("source")) st.source = p.get("source");
   if (p.has("cls"))    p.get("cls").split(",").filter(Boolean).forEach(c => st.cls.add(c));
-  return p.has("ts") ? parseFloat(p.get("ts")) : null;
+  return { ts: p.has("ts") ? parseFloat(p.get("ts")) : null, live: p.get("live") === "1" };
 }
 
 // ── Boot ──────────────────────────────────────────────
@@ -1503,8 +1503,8 @@ async function init() {
   buildSpeedPills();
   player.setRate(V2_SPEEDS[st.speed].rate);
 
-  const urlTs = readState(); // read source/cls/ts from URL before first load
-  if (urlTs) st.initDone = true;
+  const { ts: urlTs, live: urlLive } = readState();
+  if (urlTs || urlLive) st.initDone = true;
   renderSrcCtrl();
 
   const now = Date.now() / 1000;
@@ -1513,9 +1513,12 @@ async function init() {
   st.window.to   = anchor + 3 * 3600 + 600;
   timeline.setWindow(st.window.from, st.window.to);
 
-  // Fast path: if URL has ts, start video immediately via single segment lookup
-  // then load full timeline in background
-  if (urlTs) {
+  if (urlLive) {
+    // Direct live URL: load data in background, immediately enter live
+    load();
+    startLiveTail(st.source !== "all" ? st.source : null);
+  } else if (urlTs) {
+    // Fast path: start video immediately, load timeline in background
     const srcParam = st.source !== "all" ? `&source=${encodeURIComponent(st.source)}` : "";
     fetch(`/api/video/segment-at?ts=${urlTs}${srcParam}`, { cache:"no-store" })
       .then(r => r.json())
@@ -1526,7 +1529,7 @@ async function init() {
         el.video.style.display = "block";
         mode.seekTo(urlTs, segment.source_id);
       });
-    load(); // background — no await
+    load();
   } else {
     await load();
   }
