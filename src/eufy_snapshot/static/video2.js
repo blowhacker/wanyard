@@ -1357,7 +1357,11 @@ async function load() {
     const byId = new Map(st.events.map(e => [e.id, e]));
     (evR.events || []).forEach(e => byId.set(e.id, e));
     st.events = [...byId.values()].sort((a, b) => b.abs_ts - a.abs_ts);
-    _eventsRangesAdd(evFrom, evTo);
+    // Cap at last completed segment: live gap has no YOLO-tagged events yet.
+    // When the segment closes and gets tagged, latestSegEnd advances and the
+    // 15s refresh re-fetches (since loaded range won't cover the new region).
+    const latestSegEnd = st.segments.reduce((m, s) => s.end_ts ? Math.max(m, s.end_ts) : m, 0);
+    _eventsRangesAdd(evFrom, latestSegEnd > 0 ? Math.min(evTo, latestSegEnd) : evTo);
   }
   timeline.clearFetchingRange();
   timeline.setEventsRanges(st.eventsLoaded.ranges);
