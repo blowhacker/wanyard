@@ -23,6 +23,22 @@ from .config import AppConfig
 
 _THUMB_W  = 160
 _IMG_CACHE = "public, max-age=604800, immutable"
+_GZIP_SKIP_PREFIXES = ("/video/live/",)
+
+
+class _PathAwareGZipMiddleware:
+    def __init__(self, app, *, minimum_size: int, skip_prefixes: tuple[str, ...]):
+        self.app = app
+        self.gzip_app = GZipMiddleware(app, minimum_size=minimum_size)
+        self.skip_prefixes = skip_prefixes
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            path = scope.get("path", "")
+            if any(path.startswith(prefix) for prefix in self.skip_prefixes):
+                await self.app(scope, receive, send)
+                return
+        await self.gzip_app(scope, receive, send)
 
 
 def _generate_thumb(src: Path, dest: Path) -> bool:
@@ -783,11 +799,9 @@ def make_app(
             except OSError:
                 return Response(status_code=404)
             return Response(content=content, media_type=media,
-                            headers={"Cache-Control": "no-cache",
-                                     "Content-Encoding": "identity"})
+                            headers={"Cache-Control": "no-cache"})
         return FileResponse(path, media_type=media,
-                            headers={"Cache-Control": "no-cache, no-store",
-                                     "Content-Encoding": "identity"})
+                            headers={"Cache-Control": "no-cache, no-store"})
 
     routes = [
         Route("/",                           lambda r: FileResponse(static_dir / "video2.html")),
@@ -817,7 +831,8 @@ Route("/api/video/events",          api_video_events),
     ]
 
     app = Starlette(routes=routes, lifespan=lifespan)
-    return GZipMiddleware(app, minimum_size=1024)
+    return _PathAwareGZipMiddleware(app, minimum_size=1024,
+                                    skip_prefixes=_GZIP_SKIP_PREFIXES)
 
 
 # ── helpers ───────────────────────────────────────────────
