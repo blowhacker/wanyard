@@ -661,7 +661,7 @@ class VideoWorker:
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
                  "-f", "hls", "-hls_time", "2", "-hls_list_size", "30",
                  "-hls_start_number_source", "epoch",
-                 "-hls_flags", "delete_segments+omit_endlist",
+                 "-hls_flags", "delete_segments+omit_endlist+temp_file",
                  "-hls_segment_filename", str(self._live_dir / "seg_%010d.ts"),
                  str(self._live_dir / "live.m3u8"),
                 ],
