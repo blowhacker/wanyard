@@ -15,6 +15,12 @@ from pathlib import Path
 LOG = logging.getLogger(__name__)
 
 _MAX_SEGMENT_SECONDS = 600
+_LIVE_HLS_SEGMENT_SECONDS = 2
+_LIVE_HLS_LIST_SIZE = 30
+_LIVE_HLS_UNREFERENCED_RETENTION_SECONDS = (
+    _LIVE_HLS_SEGMENT_SECONDS * (_LIVE_HLS_LIST_SIZE + 30)
+)
+_LIVE_HLS_STALE_PLAYLIST_SECONDS = _LIVE_HLS_UNREFERENCED_RETENTION_SECONDS
 _SPRITE_FPS          = "1/5"
 _SPRITE_W            = 160
 _SPRITE_COLS         = 10
@@ -588,14 +594,40 @@ class VideoWorker:
         self._live_dir  = video_dir / "live" / source.id
         self._live_dir.mkdir(parents=True, exist_ok=True)
 
-    def _prune_live_dir(self, max_age_seconds: int = 900) -> None:
-        cutoff = time.time() - max_age_seconds
-        for path in self._live_dir.glob("*.ts"):
-            try:
-                if path.stat().st_mtime < cutoff:
-                    path.unlink()
-            except OSError:
-                pass
+    def _live_playlist_segments(self) -> set[str]:
+        playlist = self._live_dir / "live.m3u8"
+        try:
+            stat = playlist.stat()
+            if time.time() - stat.st_mtime > _LIVE_HLS_STALE_PLAYLIST_SECONDS:
+                try:
+                    playlist.unlink()
+                except OSError:
+                    pass
+                return set()
+            lines = playlist.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return set()
+
+        segments: set[str] = set()
+        for line in lines:
+            item = line.strip()
+            if not item or item.startswith("#"):
+                continue
+            segments.add(Path(item.split("?", 1)[0]).name)
+        return segments
+
+    def _prune_live_dir(self) -> None:
+        referenced = self._live_playlist_segments()
+        cutoff = time.time() - _LIVE_HLS_UNREFERENCED_RETENTION_SECONDS
+        for pattern in ("*.ts", "*.tmp"):
+            for path in self._live_dir.glob(pattern):
+                try:
+                    if path.name in referenced:
+                        continue
+                    if path.stat().st_mtime < cutoff:
+                        path.unlink()
+                except OSError:
+                    pass
 
     def run(self) -> None:
         """Continuous recording loop — call from a daemon thread."""
@@ -657,9 +689,12 @@ class VideoWorker:
                  # Archive: MP4 with faststart
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
                  "-movflags", "+faststart", str(seg_path),
-                 # Live: rolling 60s HLS, segments auto-deleted
+                 # Live: rolling HLS. ffmpeg deletes the active window; startup
+                 # pruning clears unreferenced files from older ffmpeg writers.
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
-                 "-f", "hls", "-hls_time", "2", "-hls_list_size", "30",
+                 "-f", "hls",
+                 "-hls_time", str(_LIVE_HLS_SEGMENT_SECONDS),
+                 "-hls_list_size", str(_LIVE_HLS_LIST_SIZE),
                  "-hls_start_number_source", "epoch",
                  "-hls_flags", "delete_segments+omit_endlist+temp_file",
                  "-hls_segment_filename", str(self._live_dir / "seg_%010d.ts"),

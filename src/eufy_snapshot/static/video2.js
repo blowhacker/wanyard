@@ -704,8 +704,6 @@ class V2Timeline {
 const V2_SPEEDS    = [{label:"0.5×",rate:.5},{label:"1×",rate:1},{label:"2×",rate:2},{label:"4×",rate:4}];
 const POST_BUFFER  = 10;
 const LIVE_OPEN_MAX_AGE = 3600;
-const LIVE_STALL_SECONDS = 8;
-const LIVE_RESTART_COOLDOWN_SECONDS = 30;
 
 // ── DOM ───────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -800,7 +798,6 @@ const liveTail = {
   pollTimer: null,
   clockTimer: null,
   latestDet: null,
-  lastRestartAt: 0,
 };
 
 // ── Derived views ─────────────────────────────────────
@@ -1798,7 +1795,7 @@ function loadHlsJs() {
   if (!window.__v2HlsPromise) {
     window.__v2HlsPromise = new Promise((res, rej) => {
       const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
+      s.src = "/hls.min.js";
       s.onload = () => res(window.Hls);
       s.onerror = rej;
       document.head.appendChild(s);
@@ -1836,8 +1833,6 @@ async function startLiveTail(srcId = null) {
 
   liveTail.active = true;
   liveTail.latestDet = null;
-  _liveStalledSince = 0;
-  _liveLastTime = -1;
   mode.enterLive();
   player.pause();
 
@@ -1875,13 +1870,6 @@ async function startLiveTail(srcId = null) {
         // Explicit liveMaxLatencyDurationCount triggers catchup mode during init
         // (currentTime=0 → apparent latency=60s >> 12s limit → max poll rate).
         // HLS.js defaults handle live sync correctly without this bug.
-        manifestLoadingMaxRetry: 3,
-        fragLoadingMaxRetry: 3,
-        levelLoadingMaxRetry: 3,
-        manifestLoadingRetryDelay: 1000,
-        levelLoadingRetryDelay: 1000,
-        manifestLoadingMaxRetryTimeout: 8000,
-        levelLoadingMaxRetryTimeout: 8000,
       });
       liveTail.hls = hls;
       hls.loadSource(hlsUrl);
@@ -1939,8 +1927,6 @@ function stopLiveTail(updateMode = true, invalidate = true) {
   liveTail.starting = false;
   liveTail.srcId = null;
   liveTail.latestDet = null;
-  _liveStalledSince = 0;
-  _liveLastTime = -1;
   // Restore URL: remove live=1 and ts params
   const _p = new URLSearchParams(location.search);
   _p.delete("live"); _p.delete("ts");
@@ -1970,9 +1956,6 @@ async function pollLiveTail() {
   updateLiveTailClock();
 }
 
-let _liveStalledSince = 0;
-let _liveLastTime = -1;
-
 function updateLiveTailClock() {
   if (!liveTail.active) return;
 
@@ -1981,32 +1964,7 @@ function updateLiveTailClock() {
     el.liveVideo.play().catch(() => {});
   }
 
-  // Detect stall: currentTime not advancing while playing. Recovery is
-  // deliberately rate-limited because reattaching HLS can amplify playlist
-  // reload loops if the browser or stream is already unhealthy.
-  const ct = el.liveVideo.currentTime;
   const now = Date.now() / 1000;
-  if (!el.liveVideo.paused) {
-    if (ct === _liveLastTime) {
-      if (_liveStalledSince === 0) _liveStalledSince = now;
-      if (now - _liveStalledSince > LIVE_STALL_SECONDS) {
-        if (now - liveTail.lastRestartAt < LIVE_RESTART_COOLDOWN_SECONDS) {
-          setStatus("BUFFERING");
-          return;
-        }
-        console.warn("HLS stall detected — restarting live tail");
-        _liveStalledSince = 0; _liveLastTime = -1;
-        liveTail.lastRestartAt = now;
-        const srcId = liveTail.srcId;
-        stopLiveTail(false);
-        startLiveTail(srcId);
-        return;
-      }
-    } else {
-      _liveStalledSince = 0;
-      _liveLastTime = ct;
-    }
-  }
 
   const ts = liveTail.latestDet?.abs_ts ?? now;
   timeline.setPlayhead(ts);
