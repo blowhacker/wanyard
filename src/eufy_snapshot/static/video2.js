@@ -549,18 +549,18 @@ class V2Timeline {
         if (nBefore > 0) {
           const label = `◄ ${nBefore}`;
           const tw = ctx.measureText(label).width + 10;
-          ctx.fillStyle = "rgba(232,165,88,0.32)";
+          ctx.fillStyle = "rgba(8,10,14,0.85)";
           ctx.fillRect(SRC_W, mid - 10, tw, 20);
-          ctx.fillStyle = "#e8a558";
+          ctx.fillStyle = "rgba(230,235,244,0.95)";
           ctx.textAlign = "left";
           ctx.fillText(label, SRC_W + 5, mid);
         }
         if (nAfter > 0) {
           const label = `${nAfter} ►`;
           const tw = ctx.measureText(label).width + 10;
-          ctx.fillStyle = "rgba(232,165,88,0.32)";
+          ctx.fillStyle = "rgba(8,10,14,0.85)";
           ctx.fillRect(W - tw, mid - 10, tw, 20);
-          ctx.fillStyle = "#e8a558";
+          ctx.fillStyle = "rgba(230,235,244,0.95)";
           ctx.textAlign = "right";
           ctx.fillText(label, W - 5, mid);
         }
