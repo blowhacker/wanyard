@@ -366,11 +366,35 @@ class VideoSegmentDB:
         }
 
 
+_CONF_THRESHOLD = 0.35
+_CCTV_CLASSES = {
+    0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus",
+    7: "truck", 14: "bird", 15: "cat", 16: "dog",
+    24: "backpack", 28: "suitcase",
+}
+_CCTV_CLASS_IDS = list(_CCTV_CLASSES.keys())
+
+
+def _parse_results(results) -> tuple:
+    if not results or results[0].boxes is None or not len(results[0].boxes):
+        return False, 0.0, []
+    r = results[0]
+    boxes = []
+    for xyxyn, conf, cls_id in zip(
+        r.boxes.xyxyn.tolist(), r.boxes.conf.tolist(), r.boxes.cls.tolist()
+    ):
+        x1, y1, x2, y2 = xyxyn
+        cls = _CCTV_CLASSES.get(int(cls_id), str(int(cls_id)))
+        boxes.append({"x1": x1, "y1": y1, "x2": x2, "y2": y2, "conf": conf, "cls": cls})
+    has_human = any(b["cls"] == "person" for b in boxes)
+    top_conf  = max((b["conf"] for b in boxes if b["cls"] == "person"), default=0.0)
+    return has_human, top_conf, boxes
+
+
 def _yolo_tag_video(model, seg_path: Path, seg_id: int,
                     db: VideoSegmentDB) -> int:
     """Read video file at 1fps, run YOLO, store detections with exact timestamps."""
     import cv2
-    from .detect import _parse_results, CCTV_CLASS_IDS, _CONF_THRESHOLD
 
     cap = cv2.VideoCapture(str(seg_path))
     if not cap.isOpened():
@@ -389,7 +413,7 @@ def _yolo_tag_video(model, seg_path: Path, seg_id: int,
             ts_ms  = cap.get(cv2.CAP_PROP_POS_MSEC)
             ts_off = ts_ms / 1000.0
             try:
-                results = model.predict(frame, classes=CCTV_CLASS_IDS,
+                results = model.predict(frame, classes=_CCTV_CLASS_IDS,
                                         conf=_CONF_THRESHOLD, verbose=False)
                 has_human, conf, boxes = _parse_results(results)
                 classes = list({b["cls"] for b in boxes}) if boxes else []
