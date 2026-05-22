@@ -528,10 +528,16 @@ class VideoWorker:
                 ts = time.time()
                 self._start_segment(ts)
                 if self._proc:
-                    self._stop.wait(_MAX_SEGMENT_SECONDS)
+                    # Poll every 5s so we detect ffmpeg exit within 5 seconds
+                    deadline = time.time() + _MAX_SEGMENT_SECONDS
+                    while time.time() < deadline and not self._stop.is_set():
+                        if self._proc.poll() is not None:
+                            LOG.warning("ffmpeg exited early for %s", self.source.id)
+                            break
+                        self._stop.wait(5)
                     self._stop_segment(time.time())
                 else:
-                    LOG.warning("ffmpeg failed for %s — retry in 30s", self.source.id)
+                    LOG.warning("ffmpeg failed to start for %s — retry in 30s", self.source.id)
                     self._stop.wait(30)
             except Exception:
                 LOG.exception("recording error for %s — retry in 30s", self.source.id)
