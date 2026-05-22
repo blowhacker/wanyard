@@ -446,81 +446,163 @@ class V2Timeline {
     ctx.clearRect(0, 0, W, H);
     if (!W || !H) return;
 
-    const srcIds  = this.#uniqueSrcs();
+    const srcIds = this.#uniqueSrcs();
     if (!srcIds.length) return;
-    const LABEL_H = 20;
+    const LABEL_H = 18;
     const LANE_H  = Math.floor((H - LABEL_H) / srcIds.length);
+    const SRC_W   = this.#SRC_W;
+    const span    = this.#to - this.#from;
+    const nowTs   = Date.now() / 1000;
 
+    // ── Day boundary lines ──────────────────────────────
+    // Find midnight (UTC offset to local midnight)
+    const tzOffsetSec = new Date().getTimezoneOffset() * -60;
+    let midnightTs = Math.ceil((this.#from - tzOffsetSec) / 86400) * 86400 + tzOffsetSec;
+    while (midnightTs <= this.#to) {
+      const x = this.#tsToX(midnightTs);
+      if (x > SRC_W && x < W) {
+        ctx.save();
+        ctx.setLineDash([2, 5]);
+        ctx.strokeStyle = "rgba(255,255,255,0.12)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, 0); ctx.lineTo(x, H - LABEL_H);
+        ctx.stroke();
+        ctx.restore();
+      }
+      midnightTs += 86400;
+    }
+
+    // ── Per-lane rendering ──────────────────────────────
     srcIds.forEach((srcId, row) => {
       const top = row * LANE_H + 2, bot = top + LANE_H - 4, mid = (top + bot) / 2;
 
       // Source label
-      ctx.fillStyle = "rgba(107,122,140,0.9)";
-      ctx.font = "9px 'IBM Plex Mono',monospace";
+      ctx.fillStyle = "rgba(100,118,136,0.9)";
+      ctx.font = `bold 9px 'IBM Plex Mono',monospace`;
       ctx.textAlign = "right";
-      ctx.fillText((this.#srcNames[srcId] || srcId).slice(0, 12), this.#SRC_W - 4, mid + 3);
+      ctx.fillText((this.#srcNames[srcId] || srcId).slice(0, 12), SRC_W - 6, mid + 3);
 
       // Lane divider
       if (row > 0) {
-        ctx.fillStyle = "rgba(255,255,255,0.04)";
-        ctx.fillRect(this.#SRC_W, top - 2, W - this.#SRC_W, 1);
+        ctx.fillStyle = "rgba(255,255,255,0.05)";
+        ctx.fillRect(SRC_W, top - 2, W - SRC_W, 1);
       }
 
       // Segment bands
-      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      ctx.fillStyle = "rgba(255,255,255,0.07)";
       this.#segs.filter(s => s.source_id === srcId).forEach(s => {
         const x1 = this.#tsToX(s.start_ts), x2 = this.#tsToX(s.end_ts ?? this.#to);
-        if (x2 < this.#SRC_W || x1 > W) return;
-        ctx.fillRect(Math.max(this.#SRC_W, x1), top, Math.min(W, x2) - Math.max(this.#SRC_W, x1), bot - top);
+        if (x2 < SRC_W || x1 > W) return;
+        ctx.fillRect(Math.max(SRC_W, x1), top + 2, Math.min(W, x2) - Math.max(SRC_W, x1), bot - top - 4);
       });
 
-      // Event dots
-      this.#evts.filter(e => e.source_id === srcId).forEach(e => {
+      // Event dots (in-range)
+      const srcEvts = this.#evts.filter(e => e.source_id === srcId);
+      srcEvts.forEach(e => {
         const x = this.#tsToX(e.abs_ts);
-        if (x < this.#SRC_W || x > W) return;
+        if (x < SRC_W || x > W) return;
         ctx.fillStyle = EVENT_COLORS[e.class] || "#ccd8e4";
-        ctx.globalAlpha = 0.85;
+        ctx.globalAlpha = 0.9;
         ctx.beginPath();
         ctx.arc(x, mid, 3.5, 0, Math.PI * 2);
         ctx.fill();
       });
       ctx.globalAlpha = 1;
+
+      // Off-screen event indicators
+      const nBefore = srcEvts.filter(e => e.abs_ts < this.#from).length;
+      const nAfter  = srcEvts.filter(e => e.abs_ts > this.#to).length;
+      ctx.font = "bold 9px 'IBM Plex Mono',monospace";
+      if (nBefore > 0) {
+        const label = `◀ ${nBefore}`;
+        const tw = ctx.measureText(label).width + 8;
+        ctx.fillStyle = "rgba(192,128,32,0.18)";
+        ctx.fillRect(SRC_W, mid - 8, tw, 16);
+        ctx.fillStyle = "rgba(192,128,32,0.95)";
+        ctx.textAlign = "left";
+        ctx.fillText(label, SRC_W + 4, mid + 3);
+      }
+      if (nAfter > 0) {
+        const label = `${nAfter} ▶`;
+        const tw = ctx.measureText(label).width + 8;
+        ctx.fillStyle = "rgba(192,128,32,0.18)";
+        ctx.fillRect(W - tw, mid - 8, tw, 16);
+        ctx.fillStyle = "rgba(192,128,32,0.95)";
+        ctx.textAlign = "right";
+        ctx.fillText(label, W - 4, mid + 3);
+      }
     });
 
-    // Time labels
-    ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(74,94,110,0.9)";
-    ctx.font = "9px 'IBM Plex Mono',monospace";
+    // ── Time / date labels ──────────────────────────────
     const interval = this.#labelInterval();
+    const multiDay = span > 20 * 3600;
     let t0 = Math.ceil(this.#from / interval) * interval;
+    ctx.font = "9px 'IBM Plex Mono',monospace";
     while (t0 <= this.#to) {
       const x = this.#tsToX(t0);
-      if (x >= this.#SRC_W && x <= W) {
-        ctx.fillText(new Date(t0*1000).toLocaleTimeString(undefined,
-          { hour:"2-digit", minute:"2-digit" }), x, H - 5);
+      if (x >= SRC_W && x <= W) {
+        const d = new Date(t0 * 1000);
+        let label;
+        if (multiDay) {
+          // Show "22 May 16:00" when spanning multiple days
+          label = d.toLocaleDateString(undefined, { day:"2-digit", month:"short" })
+                + " " + d.toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit" });
+        } else {
+          label = d.toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit" });
+        }
         ctx.fillStyle = "rgba(74,94,110,0.12)";
-        ctx.fillRect(x, 0, 1, H - 20);
-        ctx.fillStyle = "rgba(74,94,110,0.9)";
+        ctx.fillRect(x, 0, 1, H - LABEL_H);
+        ctx.fillStyle = "rgba(90,112,130,0.95)";
+        ctx.textAlign = "center";
+        ctx.fillText(label, x, H - 4);
       }
       t0 += interval;
     }
 
-    // Events-loaded range indicator — thin green line above time labels
+    // ── Date context pill — pinned left, always visible ─
+    {
+      const fromDate = new Date(this.#from * 1000);
+      const toDate   = new Date(this.#to   * 1000);
+      const fromDay  = fromDate.toLocaleDateString(undefined, { day:"numeric", month:"short" });
+      const toDay    = toDate.toLocaleDateString(undefined, { day:"numeric", month:"short" });
+      const dateLabel = fromDay === toDay ? fromDay : `${fromDay} – ${toDay}`;
+      ctx.font = "bold 9px 'IBM Plex Mono',monospace";
+      const tw = ctx.measureText(dateLabel).width + 10;
+      ctx.fillStyle = "rgba(22,30,40,0.85)";
+      ctx.fillRect(SRC_W + 2, 2, tw, 14);
+      ctx.fillStyle = "rgba(160,185,200,0.95)";
+      ctx.textAlign = "left";
+      ctx.fillText(dateLabel, SRC_W + 7, 12);
+    }
+
+    // ── Events-loaded indicator ─────────────────────────
     if (this.#eventsFrom < this.#eventsTo) {
-      const ex1 = Math.max(this.#SRC_W, this.#tsToX(this.#eventsFrom));
+      const ex1 = Math.max(SRC_W, this.#tsToX(this.#eventsFrom));
       const ex2 = Math.min(W, this.#tsToX(this.#eventsTo));
       if (ex2 > ex1) {
-        ctx.fillStyle = "rgba(42,172,106,0.55)";
-        ctx.fillRect(ex1, H - 22, ex2 - ex1, 2);
+        ctx.fillStyle = "rgba(42,172,106,0.45)";
+        ctx.fillRect(ex1, H - LABEL_H - 2, ex2 - ex1, 2);
       }
     }
 
-    // Playhead
+    // ── NOW marker ──────────────────────────────────────
+    if (nowTs >= this.#from && nowTs <= this.#to) {
+      const nx = this.#tsToX(nowTs);
+      ctx.fillStyle = "rgba(255,255,255,0.25)";
+      ctx.fillRect(nx, 0, 1, H - LABEL_H);
+      ctx.fillStyle = "rgba(220,220,220,0.7)";
+      ctx.font = "bold 8px 'IBM Plex Mono',monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("NOW", nx, H - LABEL_H - 4);
+    }
+
+    // ── Playhead ────────────────────────────────────────
     if (this.#head != null) {
       const x = this.#tsToX(this.#head);
-      if (x >= this.#SRC_W && x <= W) {
+      if (x >= SRC_W && x <= W) {
         ctx.fillStyle = "#c08020";
-        ctx.fillRect(x - 1, 0, 2, H - 20);
+        ctx.fillRect(x - 1, 0, 2, H - LABEL_H);
         ctx.beginPath();
         ctx.moveTo(x-5,0); ctx.lineTo(x+5,0); ctx.lineTo(x,8);
         ctx.closePath(); ctx.fill();
@@ -1098,35 +1180,52 @@ el.tlCanvas.addEventListener("click", e => {
   el.video.style.display = "block";
 });
 
-// Timeline scroll — shift window, clamp to data bounds
+// Timeline scroll — momentum-based, smooth
 let _fetchDebounce = null;
+let _scrollVel = 0;       // seconds per frame velocity
+let _scrollRaf = null;
+
+function _applyWindowShift(shift) {
+  const span   = st.window.to - st.window.from;
+  const oldest = st.segments.length
+    ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
+    : st.window.from;
+  const newest = Date.now() / 1000 + 600;
+  let newFrom = st.window.from + shift;
+  let newTo   = st.window.to   + shift;
+  if (newFrom < oldest) { newFrom = oldest; newTo = oldest + span; }
+  if (newTo   > newest) { newTo = newest;   newFrom = newest - span; }
+  if (newFrom < oldest)   newFrom = oldest;
+  st.window.from = newFrom;
+  st.window.to   = newTo;
+  timeline.setWindow(newFrom, newTo);
+}
+
+function _scrollDecay() {
+  if (Math.abs(_scrollVel) < 0.5) { _scrollVel = 0; _scrollRaf = null; return; }
+  _applyWindowShift(_scrollVel);
+  _scrollVel *= 0.82;
+  _scrollRaf = requestAnimationFrame(_scrollDecay);
+}
+
 el.tlCanvas.addEventListener("wheel", e => {
   e.preventDefault();
   const rect     = el.tlCanvas.getBoundingClientRect();
   const span     = st.window.to - st.window.from;
   const pxPerSec = (rect.width - 64) / span;
-  const delta    = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+
+  // Normalize: trackpad gives pixel deltas (deltaMode=0, small values),
+  // mouse wheel gives line deltas (deltaMode=1, large discrete steps).
+  const rawDelta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  const delta    = e.deltaMode === 1 ? rawDelta * 40 : rawDelta;  // normalise lines→px
   const shift    = delta / pxPerSec;
 
-  // Clamp: keep at least some data visible
-  const oldest = st.segments.length
-    ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
-    : st.window.from;
-  const newest = Date.now() / 1000 + 600;
+  _scrollVel += shift * 0.35;                   // accumulate into velocity
+  _applyWindowShift(shift * 0.65);              // apply remainder directly for responsiveness
 
-  let newFrom = st.window.from + shift;
-  let newTo   = st.window.to   + shift;
-  if (newFrom < oldest)           { newFrom = oldest; newTo = oldest + span; }
-  if (newTo   > newest)           { newTo = newest;   newFrom = newest - span; }
-  if (newFrom < oldest)             newFrom = oldest;  // clamp both after adj
-
-  st.window.from = newFrom;
-  st.window.to   = newTo;
-  timeline.setWindow(st.window.from, st.window.to);
-
-  // Fetch events for newly-visible area after scroll settles
+  if (!_scrollRaf) _scrollRaf = requestAnimationFrame(_scrollDecay);
   clearTimeout(_fetchDebounce);
-  _fetchDebounce = setTimeout(() => load(), 400);
+  _fetchDebounce = setTimeout(() => load(), 500);
 }, { passive: false });
 
 // Hover → thumbnail preview
