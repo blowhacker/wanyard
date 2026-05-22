@@ -565,11 +565,7 @@ class VideoWorker:
                 proc.send_signal(signal.SIGTERM); proc.wait(timeout=10)
             except Exception:
                 proc.kill()
-        if seg_id and seg_path and seg_path.exists() and seg_path.stat().st_size > 0:
-            self.db.close_segment(seg_id, ts, None, None)
-            threading.Thread(target=self._post_process,
-                             args=(seg_path, seg_id), daemon=True).start()
-        elif seg_id:
+        if seg_id:
             self.db.close_segment(seg_id, ts, None, None)
 
 
