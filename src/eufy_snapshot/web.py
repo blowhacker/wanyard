@@ -767,9 +767,22 @@ def make_app(
             "freed_bytes": deleted_bytes,
         })
 
+    _hls_req_times: dict = {}
+
     async def serve_live_hls(request: Request) -> Response:
+        import time as _time
         source_id = request.path_params.get("source_id", "")
         filename  = request.path_params.get("filename", "")
+        if filename.endswith(".m3u8"):
+            key = f"{source_id}/{filename}"
+            now = _time.monotonic()
+            times = _hls_req_times.setdefault(key, [])
+            times.append(now)
+            # Keep last 5s of timestamps
+            _hls_req_times[key] = [t for t in times if now - t < 5]
+            rate = len(_hls_req_times[key]) / 5
+            if rate > 2:
+                LOG.warning("m3u8 hot: %s %.1f req/s", key, rate)
         if not video_dir or not source_id or ".." in source_id or ".." in filename:
             return Response(status_code=404)
         path = video_dir / "live" / source_id / filename
