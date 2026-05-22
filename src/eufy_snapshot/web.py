@@ -783,7 +783,7 @@ def make_app(
             if cached_bytes is not None and now - cached_at < 0.5:
                 return Response(content=cached_bytes,
                                 media_type="application/vnd.apple.mpegurl",
-                                headers={"Cache-Control": "no-cache, no-store",
+                                headers={"Cache-Control": "private, max-age=1, must-revalidate",
                                          "Content-Encoding": "identity"})
         path = video_dir / "live" / source_id / filename
         if not path.exists():
@@ -797,7 +797,7 @@ def make_app(
             content = path.read_bytes()
             _m3u8_cache[source_id] = (content, _time.monotonic())
             return Response(content=content, media_type=media,
-                            headers={"Cache-Control": "no-cache, no-store",
+                            headers={"Cache-Control": "private, max-age=1, must-revalidate",
                                      "Content-Encoding": "identity"})
         return FileResponse(path, media_type=media,
                             headers={"Cache-Control": "no-cache, no-store",

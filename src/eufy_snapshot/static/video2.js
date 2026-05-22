@@ -704,6 +704,8 @@ class V2Timeline {
 const V2_SPEEDS    = [{label:"0.5×",rate:.5},{label:"1×",rate:1},{label:"2×",rate:2},{label:"4×",rate:4}];
 const POST_BUFFER  = 10;
 const LIVE_OPEN_MAX_AGE = 3600;
+const LIVE_STALL_SECONDS = 8;
+const LIVE_RESTART_COOLDOWN_SECONDS = 30;
 
 // ── DOM ───────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -793,9 +795,12 @@ const liveTail = {
   hls: null,
   active: false,
   srcId: null,
+  starting: false,
+  token: 0,
   pollTimer: null,
   clockTimer: null,
   latestDet: null,
+  lastRestartAt: 0,
 };
 
 // ── Derived views ─────────────────────────────────────
@@ -1786,8 +1791,13 @@ async function startLiveTail(srcId = null) {
     setStatus("NONE", "NO SOURCE");
     return;
   }
-  if (liveTail.active && liveTail.srcId === chosen) return;
-  stopLiveTail(false);
+  if ((liveTail.active || liveTail.starting) && liveTail.srcId === chosen) return;
+  const token = ++liveTail.token;
+  liveTail.starting = true;
+  liveTail.srcId = chosen;
+  stopLiveTail(false, false);
+  liveTail.starting = true;
+  liveTail.srcId = chosen;
 
   if (requestedAll && st.source === "all") {
     st.source = chosen;
@@ -1802,8 +1812,9 @@ async function startLiveTail(srcId = null) {
   }
 
   liveTail.active = true;
-  liveTail.srcId = chosen;
   liveTail.latestDet = null;
+  _liveStalledSince = 0;
+  _liveLastTime = -1;
   mode.enterLive();
   player.pause();
 
@@ -1830,6 +1841,7 @@ async function startLiveTail(srcId = null) {
     const canNative = el.liveVideo.canPlayType("application/vnd.apple.mpegurl");
     console.log("HLS attach:", hlsUrl, "native:", !!canNative);
     if (canNative) {
+      if (token !== liveTail.token) return;
       // Safari — native HLS: wait for metadata before playing
       el.liveVideo.src = hlsUrl;
       el.liveVideo.load();
@@ -1846,16 +1858,26 @@ async function startLiveTail(srcId = null) {
           document.head.appendChild(s);
         });
       }
+      if (token !== liveTail.token) return;
       if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
       const hls = new Hls({
+        lowLatencyMode: false,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 6,
         manifestLoadingMaxRetry: 3,
         fragLoadingMaxRetry: 3,
+        levelLoadingMaxRetry: 3,
+        manifestLoadingRetryDelay: 1000,
+        levelLoadingRetryDelay: 1000,
+        manifestLoadingMaxRetryTimeout: 8000,
+        levelLoadingMaxRetryTimeout: 8000,
       });
       liveTail.hls = hls;
       hls.loadSource(hlsUrl);
       hls.attachMedia(el.liveVideo);
       hls.on(Hls.Events.MANIFEST_PARSED, () => el.liveVideo.play().catch(() => {}));
       hls.on(Hls.Events.ERROR, (_, data) => {
+        if (token !== liveTail.token) return;
         if (data.fatal) { console.warn("HLS fatal:", data.type, data.details); stopLiveTail(); }
       });
     }
@@ -1863,17 +1885,23 @@ async function startLiveTail(srcId = null) {
 
   try {
     await _attachHls();
+    if (token !== liveTail.token) return;
     await pollLiveTail();
+    if (token !== liveTail.token) return;
     liveTail.pollTimer = setInterval(pollLiveTail, 1500);
     liveTail.clockTimer = setInterval(updateLiveTailClock, 500);
+    liveTail.starting = false;
   } catch (err) {
+    if (token !== liveTail.token) return;
+    liveTail.starting = false;
     console.error("live HLS:", err);
     stopLiveTail();
     setStatus("OFFLINE");
   }
 }
 
-function stopLiveTail(updateMode = true) {
+function stopLiveTail(updateMode = true, invalidate = true) {
+  if (invalidate) liveTail.token++;
   clearInterval(liveTail.pollTimer);
   clearInterval(liveTail.clockTimer);
   liveTail.pollTimer = null;
@@ -1886,8 +1914,11 @@ function stopLiveTail(updateMode = true) {
   }
   if (el.liveVideo) el.liveVideo.style.display = "none";
   liveTail.active = false;
+  liveTail.starting = false;
   liveTail.srcId = null;
   liveTail.latestDet = null;
+  _liveStalledSince = 0;
+  _liveLastTime = -1;
   // Restore URL: remove live=1 and ts params
   const _p = new URLSearchParams(location.search);
   _p.delete("live"); _p.delete("ts");
@@ -1928,15 +1959,22 @@ function updateLiveTailClock() {
     el.liveVideo.play().catch(() => {});
   }
 
-  // Detect stall: currentTime not advancing for >4s while playing
+  // Detect stall: currentTime not advancing while playing. Recovery is
+  // deliberately rate-limited because reattaching HLS can amplify playlist
+  // reload loops if the browser or stream is already unhealthy.
   const ct = el.liveVideo.currentTime;
   const now = Date.now() / 1000;
   if (!el.liveVideo.paused) {
     if (ct === _liveLastTime) {
       if (_liveStalledSince === 0) _liveStalledSince = now;
-      if (now - _liveStalledSince > 4) {
-        console.warn("HLS stall detected — restarting");
+      if (now - _liveStalledSince > LIVE_STALL_SECONDS) {
+        if (now - liveTail.lastRestartAt < LIVE_RESTART_COOLDOWN_SECONDS) {
+          setStatus("BUFFERING");
+          return;
+        }
+        console.warn("HLS stall detected — restarting live tail");
         _liveStalledSince = 0; _liveLastTime = -1;
+        liveTail.lastRestartAt = now;
         const srcId = liveTail.srcId;
         stopLiveTail(false);
         startLiveTail(srcId);
