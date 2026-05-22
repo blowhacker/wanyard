@@ -22,8 +22,7 @@ async function loadStatus() {
     const row = document.createElement('div');
     row.className = 's-source-row';
     const pct = d.disk?.used ? Math.round(bytes/d.disk.total*100) : 0;
-    row.innerHTML = `<span class="s-source-name">${src}</span><span class="s-source-bytes">${fmt.bytes(bytes)}</span>
-      <div class="s-source-bar"><div class="s-source-fill" style="width:${pct}%"></div></div>`;
+    row.innerHTML = `<span class="s-source-name">${src}</span><div class="s-source-bar"><div class="s-source-fill" style="width:${pct}%"></div></div><span class="s-source-bytes">${fmt.bytes(bytes)}</span>`;
     sizes.appendChild(row);
   }
 }

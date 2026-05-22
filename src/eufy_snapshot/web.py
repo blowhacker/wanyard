@@ -516,7 +516,7 @@ def make_app(
         source_sizes = {}
         if video_dir:
             for src_dir in video_dir.iterdir():
-                if src_dir.is_dir() and not src_dir.name.startswith("."):
+                if src_dir.is_dir() and not src_dir.name.startswith(".") and src_dir.name != "live":
                     try:
                         total = sum(f.stat().st_size for f in src_dir.rglob("*.mp4"))
                         source_sizes[src_dir.name] = total
