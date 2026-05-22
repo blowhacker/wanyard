@@ -1176,13 +1176,20 @@ function navPrev() {
     mode.seekTo(evt.abs_ts, evt.source_id); pushState();
     scrollTimelineToTs(evt.abs_ts);
   } else if (ts > st.eventsLoaded.from + 300) {
-    // Shift window left and re-fetch to find earlier events
+    // Shift window left and re-fetch to find earlier events (one retry only)
     const span = st.window.to - st.window.from;
     st.window.to   = ts - 1;
     st.window.from = st.window.to - span;
     st.eventsLoaded = { from: 0, to: 0 };
     timeline.setWindow(st.window.from, st.window.to);
-    load().then(navPrev);
+    load().then(() => {
+      const e2 = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts)[0];
+      if (!e2) return;
+      if (e2.provisional) { startLiveTail(e2.source_id); scrollTimelineToTs(e2.abs_ts); return; }
+      stopLiveTail(false);
+      mode.seekTo(e2.abs_ts, e2.source_id); pushState();
+      scrollTimelineToTs(e2.abs_ts);
+    });
   }
 }
 
@@ -1197,13 +1204,20 @@ function navNext() {
     mode.seekTo(evt.abs_ts, evt.source_id); pushState();
     scrollTimelineToTs(evt.abs_ts);
   } else if (ts < st.eventsLoaded.to - 300) {
-    // Shift window right and re-fetch to find later events
+    // Shift window right and re-fetch to find later events (one retry only)
     const span = st.window.to - st.window.from;
     st.window.from = ts + 1;
     st.window.to   = st.window.from + span;
     st.eventsLoaded = { from: 0, to: 0 };
     timeline.setWindow(st.window.from, st.window.to);
-    load().then(navNext);
+    load().then(() => {
+      const e2 = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts)[0];
+      if (!e2) return;
+      if (e2.provisional) { startLiveTail(e2.source_id); scrollTimelineToTs(e2.abs_ts); return; }
+      stopLiveTail(false);
+      mode.seekTo(e2.abs_ts, e2.source_id); pushState();
+      scrollTimelineToTs(e2.abs_ts);
+    });
   }
 }
 
