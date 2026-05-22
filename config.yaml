@@ -1,40 +1,9 @@
-adb_serial: emulator-5554
-interval_seconds: 30
-output_dir: snapshots
-camera_name: Front Door
-android_screenshot_dir: /sdcard/Pictures/EufyPicDir
-eufy_package: com.oceanwing.battery.cam
-
-capture:
-  method: eufy_native
-  tap_x: 340
-  tap_y: 2210
-  wait_timeout_seconds: 10
-  debug_screencap_on_failure: true
-
-sources:
-  eufy_front_door:
-    name: Front Door Eufy App
-    type: eufy_native
-    enabled: false
-    interval_seconds: 30
-    output_subdir: eufy_front_door
-  rtsp_front_door:
-    name: Front Door RTSP
-    type: rtsp
-    enabled: true
-    interval_seconds: 30
-    output_subdir: rtsp_front_door
-    url_env: FRONT_DOOR_RTSP_URL
-    rtsp_transport: tcp
-    timeout_seconds: 20
+# Example config — copy and adapt for your deployment
+# See config.banana.yaml for a real example
 
 web:
   host: 0.0.0.0
   port: 8091
   auto_refresh_seconds: 10
-  max_index_items: 10000
 
-filenames:
-  timezone: Europe/London
-  pattern: "%Y/%m/%d/%Y-%m-%d_%H-%M-%S.jpg"
+sources: {}
