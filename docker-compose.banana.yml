@@ -15,10 +15,12 @@ services:
     environment:
       - YOLO_MODEL_PATH=/app/models/yolo11m.pt
       - VIDEO_DIR=/app/video
+      - YOLO_SOCKET=/run/yolo/yolo.sock
     volumes:
       - ./config.banana.yaml:/app/config.yaml:ro
       - ./models:/app/models
       - ./video:/app/video
+      - yolo-run:/run/yolo
     deploy:
       resources:
         reservations:
@@ -39,6 +41,7 @@ services:
       - GO2RTC_URL=http://host.docker.internal:1984
       - GO2RTC_CONFIG_DIR=/go2rtc-data
       - VIDEO_DIR=/app/video
+      - YOLO_SOCKET=/run/yolo/yolo.sock
     volumes:
       - ./config.banana.yaml:/app/config.yaml:ro
       - ./snapshots:/app/snapshots
@@ -46,7 +49,12 @@ services:
       - ./models:/app/models
       - ./go2rtc-data:/go2rtc-data
       - ./video:/app/video
+    volumes:
+      - yolo-run:/run/yolo
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       - go2rtc
+
+volumes:
+  yolo-run:
