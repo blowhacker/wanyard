@@ -590,7 +590,8 @@ const st = {
   sources:  [],
   source:   "all",
   cls:      new Set(),
-  window:   { from: 0, to: 0 },
+  window:        { from: 0, to: 0 },
+  eventsLoaded:  { from: 0, to: 0 },  // actual loaded events range (wider than window)
   speed:    parseInt(localStorage.getItem("v2speed") || "1"),
   loop:     true,
   showBoxes:localStorage.getItem("v2boxes") !== "0",
@@ -598,6 +599,7 @@ const st = {
   initDone: false,
   classSearchSeq: 0,
 };
+const EVENTS_BUFFER = 12 * 3600;  // load 12h extra on each side of visible window
 
 const liveTail = {
   hls: null,
@@ -958,16 +960,36 @@ async function load() {
   const p = new URLSearchParams();
   if (st.source !== "all") p.set("source", st.source);
 
-  const [sr, er, cr] = await Promise.all([
+  // Events are loaded for a buffered range (±12h) around the visible window.
+  // Only re-fetch if the visible window has moved outside the already-loaded range.
+  const evFrom = st.window.from - EVENTS_BUFFER;
+  const evTo   = st.window.to   + EVENTS_BUFFER;
+  const needsEventsLoad = st.window.from < st.eventsLoaded.from
+                       || st.window.to   > st.eventsLoaded.to
+                       || st.eventsLoaded.from === 0;
+
+  const [sr, evR, cr] = await Promise.all([
     fetch(`/api/video2/timeline?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
-    fetch(`/api/video/events?limit=10000&since=${Math.floor(st.window.from)}&until=${Math.ceil(st.window.to)}&${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
+    needsEventsLoad
+      ? fetch(`/api/video/events?limit=10000&since=${Math.floor(evFrom)}&until=${Math.ceil(evTo)}&${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({}))
+      : Promise.resolve(null),
     fetch(`/api/video/classes?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
   ]);
 
   st.segments = sr.segments || [];
-  st.events   = er.events   || [];
   st.classes  = cr.classes  || {};
-  timeline.setEventsWindow(st.window.from, st.window.to);
+
+  if (evR) {
+    // Merge new events into st.events (accumulate, don't replace)
+    const byId = new Map(st.events.map(e => [e.id, e]));
+    (evR.events || []).forEach(e => byId.set(e.id, e));
+    st.events = [...byId.values()].sort((a, b) => b.abs_ts - a.abs_ts);
+    st.eventsLoaded = {
+      from: Math.min(st.eventsLoaded.from || evFrom, evFrom),
+      to:   Math.max(st.eventsLoaded.to   || evTo,   evTo),
+    };
+  }
+  timeline.setEventsWindow(st.eventsLoaded.from, st.eventsLoaded.to);
 
   // Advance right-edge only when viewing recent content (within 2h of now)
   // Scrolling into history must not reset window.to to now — that causes
@@ -1016,8 +1038,9 @@ function renderSrcCtrl() {
       const wasLive = liveTail.active;
       stopLiveTail(false);
       st.source = s.id; st.initDone = false;
+      st.events = []; st.eventsLoaded = { from: 0, to: 0 };  // clear stale events
       renderSrcCtrl(); load().then(pushState);
-      if (wasLive) startLiveTail(s.id);  // stay live, switch camera
+      if (wasLive) startLiveTail(s.id);
     });
     pills.appendChild(b);
   });
