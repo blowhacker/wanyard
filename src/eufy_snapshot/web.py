@@ -543,6 +543,34 @@ def make_app(
         finally:
             out.unlink(missing_ok=True)
 
+    async def api_settings_cleanup_config(request: Request) -> JSONResponse:
+        """Get or update auto-cleanup thresholds (stored in DB, read by yolo-serve)."""
+        if not video_db:
+            return JSONResponse({"error": "video db not configured"}, status_code=501)
+        if request.method == "GET":
+            days = video_db.get_setting("cleanup_days")
+            gb   = video_db.get_setting("cleanup_max_gb")
+            return JSONResponse({"cleanup_days": days, "cleanup_max_gb": gb})
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        if "cleanup_days" in body:
+            v = body["cleanup_days"]
+            if v is None:
+                with video_db._connect() as c: c.execute("DELETE FROM app_settings WHERE key='cleanup_days'")
+            else:
+                video_db.set_setting("cleanup_days", float(v))
+        if "cleanup_max_gb" in body:
+            v = body["cleanup_max_gb"]
+            if v is None:
+                with video_db._connect() as c: c.execute("DELETE FROM app_settings WHERE key='cleanup_max_gb'")
+            else:
+                video_db.set_setting("cleanup_max_gb", float(v))
+        days = video_db.get_setting("cleanup_days")
+        gb   = video_db.get_setting("cleanup_max_gb")
+        return JSONResponse({"cleanup_days": days, "cleanup_max_gb": gb})
+
     async def api_settings_cleanup(request: Request) -> JSONResponse:
         """Delete segments (and their data) older than N days."""
         if not video_db or not video_dir:
@@ -627,6 +655,7 @@ def make_app(
         Route("/api/sources/{source_id}",        api_delete_source,       methods=["DELETE"]),
         Route("/api/settings/status",            api_settings_status),
         Route("/api/settings/camera/test",       api_settings_camera_test, methods=["POST"]),
+        Route("/api/settings/cleanup-config",    api_settings_cleanup_config, methods=["GET", "POST"]),
         Route("/api/settings/cleanup",           api_settings_cleanup,     methods=["POST"]),
         Mount("/", StaticFiles(directory=static_dir, html=True)),
     ]

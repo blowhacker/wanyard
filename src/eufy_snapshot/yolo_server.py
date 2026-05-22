@@ -116,14 +116,22 @@ def _cleanup_loop(video_db, video_dir: Path, stop_event: threading.Event):
     """Periodically delete old footage based on CLEANUP_DAYS / CLEANUP_MAX_GB."""
     import shutil as _shutil
 
-    days_str = os.environ.get("CLEANUP_DAYS", "")
-    gb_str   = os.environ.get("CLEANUP_MAX_GB", "")
-    if not days_str and not gb_str:
-        LOG.info("no CLEANUP_DAYS or CLEANUP_MAX_GB set — auto-cleanup disabled")
-        return
+    def _get_thresholds():
+        # DB overrides env vars
+        days = video_db.get_setting("cleanup_days")
+        gb   = video_db.get_setting("cleanup_max_gb")
+        if days is None:
+            d = os.environ.get("CLEANUP_DAYS", "")
+            days = float(d) if d else None
+        if gb is None:
+            g = os.environ.get("CLEANUP_MAX_GB", "")
+            gb = float(g) if g else None
+        return days, gb
 
-    cleanup_days = float(days_str) if days_str else None
-    cleanup_gb   = float(gb_str)   if gb_str   else None
+    cleanup_days, cleanup_gb = _get_thresholds()
+    if not cleanup_days and not cleanup_gb:
+        LOG.info("no cleanup thresholds set — auto-cleanup disabled")
+        return
     LOG.info("auto-cleanup: days=%s max_gb=%s", cleanup_days, cleanup_gb)
 
     while not stop_event.is_set():
@@ -172,7 +180,8 @@ def _cleanup_loop(video_db, video_dir: Path, stop_event: threading.Event):
         except Exception:
             LOG.exception("auto-cleanup error")
 
-        stop_event.wait(3600)  # run hourly
+        stop_event.wait(3600)
+        cleanup_days, cleanup_gb = _get_thresholds()  # re-read in case UI changed them
 
     LOG.info("auto-cleanup loop stopped")
 

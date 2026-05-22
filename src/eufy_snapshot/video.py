@@ -64,6 +64,11 @@ CREATE INDEX IF NOT EXISTS vevt_source_ts ON video_events(source_id, abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_class     ON video_events(class, abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_source_class_ts ON video_events(source_id, class, abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_seg       ON video_events(segment_id, class);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -257,6 +262,27 @@ class VideoSegmentDB:
                 (event_id,),
             ).fetchone()
         return dict(row) if row else None
+
+    def get_setting(self, key: str, default=None):
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+        if row is None:
+            return default
+        val = row[0]
+        try:
+            return float(val) if '.' in val else int(val)
+        except (ValueError, TypeError):
+            return val
+
+    def set_setting(self, key: str, value) -> None:
+        with self._connect() as conn:
+            conn.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES(?,?)",
+                         (key, str(value)))
+
+    def get_all_settings(self) -> dict:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
+        return {r[0]: r[1] for r in rows}
 
     def class_counts(self, source_id: str | None = None,
                      include_provisional: bool = True) -> dict[str, int]:

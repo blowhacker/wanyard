@@ -131,5 +131,37 @@ document.getElementById('cleanupBtn').addEventListener('click', async () => {
   }
 });
 
+async function loadCleanupConfig() {
+  const d = await fetch('/api/settings/cleanup-config').then(r=>r.json()).catch(()=>({}));
+  const daysEl = document.getElementById('autoDays');
+  const gbEl   = document.getElementById('autoGb');
+  if (daysEl) daysEl.value = d.cleanup_days ?? '';
+  if (gbEl)   gbEl.value   = d.cleanup_max_gb ?? '';
+}
+
+document.getElementById('autoSaveBtn')?.addEventListener('click', async () => {
+  const days = document.getElementById('autoDays').value.trim();
+  const gb   = document.getElementById('autoGb').value.trim();
+  const msg  = document.getElementById('autoMsg');
+  msg.textContent = 'saving…';
+  const r = await fetch('/api/settings/cleanup-config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      cleanup_days:   days  ? parseFloat(days)  : null,
+      cleanup_max_gb: gb    ? parseFloat(gb)    : null,
+    })
+  });
+  const d = await r.json();
+  if (r.ok) {
+    msg.textContent = `saved — ${d.cleanup_days ?? '∞'} days / ${d.cleanup_max_gb ?? '∞'} GB`;
+    msg.className = 's-test-msg s-green';
+  } else {
+    msg.textContent = '✗ ' + (d.error || r.status);
+    msg.className = 's-test-msg s-red';
+  }
+});
+
 loadStatus();
 loadCameras();
+loadCleanupConfig();

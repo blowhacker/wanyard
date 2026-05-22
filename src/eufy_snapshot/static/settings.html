@@ -74,10 +74,25 @@
 
     <!-- Storage panel -->
     <section class="s-panel">
-      <div class="s-panel-head">STORAGE</div>
+      <div class="s-panel-head">STORAGE — AUTO-CLEANUP</div>
       <div class="s-storage-grid">
         <div class="s-field-row">
-          <label>DELETE FOOTAGE OLDER THAN</label>
+          <label>MAX AGE</label>
+          <input id="autoDays" type="number" min="1" max="365" placeholder="days (blank = off)">
+        </div>
+        <div class="s-field-row">
+          <label>MAX SIZE</label>
+          <input id="autoGb" type="number" min="1" step="10" placeholder="GB (blank = off)">
+        </div>
+      </div>
+      <div class="s-cleanup-row">
+        <button id="autoSaveBtn" class="s-btn s-btn-primary">SAVE AUTO-CLEANUP</button>
+        <span id="autoMsg" class="s-test-msg"></span>
+      </div>
+      <div class="s-panel-head" style="border-top:1px solid var(--border-lo)">MANUAL DELETE</div>
+      <div class="s-storage-grid">
+        <div class="s-field-row">
+          <label>OLDER THAN</label>
           <select id="cleanupDays">
             <option value="7">7 days</option>
             <option value="14">14 days</option>
@@ -94,7 +109,7 @@
         </div>
       </div>
       <div class="s-cleanup-row">
-        <button id="cleanupBtn" class="s-btn s-btn-danger">DELETE OLD FOOTAGE</button>
+        <button id="cleanupBtn" class="s-btn s-btn-danger">DELETE NOW</button>
         <span id="cleanupMsg" class="s-test-msg"></span>
       </div>
     </section>
