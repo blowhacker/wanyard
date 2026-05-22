@@ -1170,11 +1170,20 @@ function navPrev() {
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts);
   const evt  = evts[0];
-  if (!evt) return;
-  if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
-  stopLiveTail(false);
-  mode.seekTo(evt.abs_ts, evt.source_id); pushState();
-  scrollTimelineToTs(evt.abs_ts);
+  if (evt) {
+    if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
+    stopLiveTail(false);
+    mode.seekTo(evt.abs_ts, evt.source_id); pushState();
+    scrollTimelineToTs(evt.abs_ts);
+  } else if (ts > st.eventsLoaded.from + 300) {
+    // Shift window left and re-fetch to find earlier events
+    const span = st.window.to - st.window.from;
+    st.window.to   = ts - 1;
+    st.window.from = st.window.to - span;
+    st.eventsLoaded = { from: 0, to: 0 };
+    timeline.setWindow(st.window.from, st.window.to);
+    load().then(navPrev);
+  }
 }
 
 function navNext() {
@@ -1182,11 +1191,20 @@ function navNext() {
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts);
   const evt  = evts[0];
-  if (!evt) return;
-  if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
-  stopLiveTail(false);
-  mode.seekTo(evt.abs_ts, evt.source_id); pushState();
-  scrollTimelineToTs(evt.abs_ts);
+  if (evt) {
+    if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
+    stopLiveTail(false);
+    mode.seekTo(evt.abs_ts, evt.source_id); pushState();
+    scrollTimelineToTs(evt.abs_ts);
+  } else if (ts < st.eventsLoaded.to - 300) {
+    // Shift window right and re-fetch to find later events
+    const span = st.window.to - st.window.from;
+    st.window.from = ts + 1;
+    st.window.to   = st.window.from + span;
+    st.eventsLoaded = { from: 0, to: 0 };
+    timeline.setWindow(st.window.from, st.window.to);
+    load().then(navNext);
+  }
 }
 
 // ── Live tail ──────────────────────────────────────────

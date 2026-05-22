@@ -17,6 +17,8 @@ services:
       - YOLO_MODEL_PATH=/app/models/yolo11m.pt
       - VIDEO_DIR=/app/video
       - YOLO_SOCKET=/run/yolo/yolo.sock
+      - CLEANUP_DAYS=30
+      # - CLEANUP_MAX_GB=200  # uncomment to also cap by total size
     volumes:
       - ./config.banana.yaml:/app/config.yaml:ro
       - ./models:/app/models

@@ -110,6 +110,73 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
     LOG.info("backfill loop stopped")
 
 
+# ── Auto-cleanup loop ──────────────────────────────────────────────────────────
+
+def _cleanup_loop(video_db, video_dir: Path, stop_event: threading.Event):
+    """Periodically delete old footage based on CLEANUP_DAYS / CLEANUP_MAX_GB."""
+    import shutil as _shutil
+
+    days_str = os.environ.get("CLEANUP_DAYS", "")
+    gb_str   = os.environ.get("CLEANUP_MAX_GB", "")
+    if not days_str and not gb_str:
+        LOG.info("no CLEANUP_DAYS or CLEANUP_MAX_GB set — auto-cleanup disabled")
+        return
+
+    cleanup_days = float(days_str) if days_str else None
+    cleanup_gb   = float(gb_str)   if gb_str   else None
+    LOG.info("auto-cleanup: days=%s max_gb=%s", cleanup_days, cleanup_gb)
+
+    while not stop_event.is_set():
+        try:
+            cutoff_ts = time.time() - (cleanup_days * 86400) if cleanup_days else None
+            total_used = sum(
+                f.stat().st_size for f in video_dir.rglob("*.mp4") if f.is_file()
+            ) if cleanup_gb else 0
+
+            if cutoff_ts or (cleanup_gb and total_used > cleanup_gb * 1e9):
+                with video_db._connect() as conn:
+                    where = "end_ts IS NOT NULL"
+                    params = []
+                    if cutoff_ts:
+                        where += " AND end_ts < ?"
+                        params.append(cutoff_ts)
+                    elif cleanup_gb and total_used > cleanup_gb * 1e9:
+                        # Delete oldest segments until under limit
+                        where += " AND end_ts < (SELECT AVG(end_ts) FROM segments WHERE end_ts IS NOT NULL)"
+                    segs = [dict(r) for r in conn.execute(
+                        f"SELECT id, path FROM segments WHERE {where}", params
+                    ).fetchall()]
+
+                freed = 0
+                for seg in segs:
+                    p = video_dir / seg["path"]
+                    try:
+                        if p.exists():
+                            freed += p.stat().st_size
+                            p.unlink()
+                        sprite = p.with_suffix("")
+                        if sprite.is_dir():
+                            import shutil as _sh; _sh.rmtree(sprite, ignore_errors=True)
+                    except Exception:
+                        pass
+
+                if segs:
+                    with video_db._connect() as conn:
+                        ids = [s["id"] for s in segs]
+                        pl  = ",".join("?" * len(ids))
+                        conn.execute(f"DELETE FROM video_events WHERE segment_id IN ({pl})", ids)
+                        conn.execute(f"DELETE FROM video_detections WHERE segment_id IN ({pl})", ids)
+                        conn.execute(f"DELETE FROM segments WHERE id IN ({pl})", ids)
+                    LOG.info("auto-cleanup: deleted %d segments, freed %.1f GB",
+                             len(segs), freed / 1e9)
+        except Exception:
+            LOG.exception("auto-cleanup error")
+
+        stop_event.wait(3600)  # run hourly
+
+    LOG.info("auto-cleanup loop stopped")
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def run(video_db_path: Path, video_dir: Path):
@@ -142,6 +209,13 @@ def run(video_db_path: Path, video_dir: Path):
         daemon=True, name="backfill"
     )
     backfill_thread.start()
+
+    cleanup_thread = threading.Thread(
+        target=_cleanup_loop,
+        args=(video_db, video_dir, stop_event),
+        daemon=True, name="cleanup"
+    )
+    cleanup_thread.start()
 
     srv = YoloSocketServer(SOCKET_PATH, model, video_db, video_dir)
     srv._backfill_thread = backfill_thread

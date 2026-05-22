@@ -1,3 +1,15 @@
+/* Panel settings link */
+.panel-settings-link {
+  font-size: .85rem;
+  color: var(--text-lo);
+  text-decoration: none;
+  padding: 2px 4px;
+  border-radius: var(--r);
+  line-height: 1;
+  transition: color .12s;
+}
+.panel-settings-link:hover { color: var(--amber); }
+
 /* Activity indicator */
 .v2-load-bar {
   position: fixed; top: 0; left: 0; right: 0; height: 2px;
