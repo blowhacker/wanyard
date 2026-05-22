@@ -523,6 +523,7 @@ class VideoWorker:
     def run(self) -> None:
         """Continuous recording loop — call from a daemon thread."""
         LOG.info("continuous recording started: %s", self.source.id)
+        backoff = 5.0
         while not self._stop.is_set():
             try:
                 ts = time.time()
@@ -535,10 +536,19 @@ class VideoWorker:
                             LOG.warning("ffmpeg exited early for %s", self.source.id)
                             break
                         self._stop.wait(5)
+                    elapsed = time.time() - ts
                     self._stop_segment(time.time())
+                    # Reset backoff on successful segment (ran > 30s)
+                    backoff = 5.0 if elapsed > 30 else min(backoff * 2, 300)
+                    if elapsed <= 30:
+                        LOG.warning("short segment (%.0fs) for %s — backoff %.0fs",
+                                    elapsed, self.source.id, backoff)
+                        self._stop.wait(backoff)
                 else:
-                    LOG.warning("ffmpeg failed to start for %s — retry in 30s", self.source.id)
-                    self._stop.wait(30)
+                    LOG.warning("ffmpeg failed to start for %s — backoff %.0fs",
+                                self.source.id, backoff)
+                    self._stop.wait(backoff)
+                    backoff = min(backoff * 2, 300)
             except Exception:
                 LOG.exception("recording error for %s — retry in 30s", self.source.id)
                 self._stop.wait(30)
