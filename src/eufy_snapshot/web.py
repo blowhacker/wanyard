@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -39,6 +40,80 @@ class _PathAwareGZipMiddleware:
                 await self.app(scope, receive, send)
                 return
         await self.gzip_app(scope, receive, send)
+
+
+def _parse_hls_program_date_time(raw: str) -> float | None:
+    value = raw.strip()
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    if len(value) >= 5 and value[-5] in "+-" and value[-3] != ":":
+        value = value[:-2] + ":" + value[-2:]
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except ValueError:
+        return None
+
+
+def _read_live_hls_window(video_dir: Path | None, source_id: str | None) -> dict | None:
+    if not video_dir or not source_id or ".." in source_id:
+        return None
+    playlist = video_dir / "live" / source_id / "live.m3u8"
+    try:
+        stat = playlist.stat()
+        lines = playlist.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    target_duration = 0.0
+    next_start: float | None = None
+    next_duration: float | None = None
+    inferred_start: float | None = None
+    segments: list[dict] = []
+
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#EXT-X-TARGETDURATION:"):
+            try:
+                target_duration = float(line.split(":", 1)[1])
+            except (IndexError, ValueError):
+                target_duration = 0.0
+        elif line.startswith("#EXTINF:"):
+            try:
+                next_duration = float(line.split(":", 1)[1].split(",", 1)[0])
+            except (IndexError, ValueError):
+                next_duration = None
+        elif line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
+            next_start = _parse_hls_program_date_time(line.split(":", 1)[1])
+        elif not line.startswith("#"):
+            duration = next_duration if next_duration is not None else target_duration
+            start = next_start if next_start is not None else inferred_start
+            if start is not None and duration > 0:
+                end = start + duration
+                segments.append({
+                    "uri": Path(line.split("?", 1)[0]).name,
+                    "start_ts": start,
+                    "end_ts": end,
+                    "duration": duration,
+                })
+                inferred_start = end
+            next_start = None
+            next_duration = None
+
+    if not segments:
+        return None
+    start_ts = segments[0]["start_ts"]
+    end_ts = max(s["end_ts"] for s in segments)
+    return {
+        "source_id": source_id,
+        "start_ts": start_ts,
+        "end_ts": end_ts,
+        "duration": max(0.0, end_ts - start_ts),
+        "segment_count": len(segments),
+        "playlist_age_seconds": max(0.0, time.time() - stat.st_mtime),
+        "segments": segments,
+    }
 
 
 def _generate_thumb(src: Path, dest: Path) -> bool:
@@ -520,6 +595,11 @@ def make_app(
         status = await asyncio.to_thread(video_db.live_status, source_id)
         return JSONResponse(status)
 
+    async def api_video_live_window(request: Request) -> JSONResponse:
+        source_id = request.query_params.get("source") or None
+        window = await asyncio.to_thread(_read_live_hls_window, video_dir, source_id)
+        return JSONResponse({"window": window})
+
     def _export_clip(source_id: str | None, ts: float,
                      before: float, after: float) -> tuple[Path | None, Path | None, str | None]:
         if not video_dir or not video_db:
@@ -817,6 +897,7 @@ Route("/api/video/events",          api_video_events),
         Route("/api/video/segments",        api_video_segments),
         Route("/api/video/detections",      api_video_detections),
         Route("/api/video/live",            api_video_live_status),
+        Route("/api/video/live-window",     api_video_live_window),
         Route("/api/video/source-status",   api_video_source_status),
         Route("/api/video/clip",            api_video_clip),
         Route("/video/files/{path:path}",   serve_video_file),

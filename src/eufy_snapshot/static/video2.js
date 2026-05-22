@@ -704,6 +704,8 @@ class V2Timeline {
 const V2_SPEEDS    = [{label:"0.5×",rate:.5},{label:"1×",rate:1},{label:"2×",rate:2},{label:"4×",rate:4}];
 const POST_BUFFER  = 10;
 const LIVE_OPEN_MAX_AGE = 3600;
+const LIVE_DVR_TOLERANCE_SECONDS = 1.5;
+const LIVE_DVR_EDGE_PAD_SECONDS = 0.25;
 
 // ── DOM ───────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -798,6 +800,9 @@ const liveTail = {
   pollTimer: null,
   clockTimer: null,
   latestDet: null,
+  window: null,
+  wallClockOffset: null,
+  targetTs: null,
 };
 
 // ── Derived views ─────────────────────────────────────
@@ -1022,6 +1027,63 @@ function sourceState(srcId) {
   return st.sourceStatus[srcId]?.state || "buffering";
 }
 
+async function fetchLiveWindow(srcId) {
+  const p = new URLSearchParams({ source: srcId });
+  const r = await fetch(`/api/video/live-window?${p}`, { cache:"no-store" }).catch(() => null);
+  if (!r?.ok) return null;
+  const data = await r.json().catch(() => ({}));
+  return data.window || null;
+}
+
+function liveWindowContains(win, ts) {
+  return Boolean(win
+    && ts >= win.start_ts - LIVE_DVR_TOLERANCE_SECONDS
+    && ts <= win.end_ts + LIVE_DVR_TOLERANCE_SECONDS);
+}
+
+function liveMediaOffsetForTs(win, ts) {
+  const duration = Math.max(0, win.end_ts - win.start_ts);
+  return Math.max(0, Math.min(Math.max(0, duration - LIVE_DVR_EDGE_PAD_SECONDS), ts - win.start_ts));
+}
+
+function liveSeekableTargetForTs(win, ts) {
+  const offset = liveMediaOffsetForTs(win, ts);
+  const ranges = el.liveVideo.seekable;
+  if (ranges?.length) {
+    const start = ranges.start(0);
+    const end = ranges.end(ranges.length - 1);
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      return Math.max(start, Math.min(Math.max(start, end - LIVE_DVR_EDGE_PAD_SECONDS), start + offset));
+    }
+  }
+  return offset;
+}
+
+function seekLiveVideoToTs(ts, win) {
+  if (!win || ts == null) return false;
+  const target = liveSeekableTargetForTs(win, ts);
+  try {
+    el.liveVideo.currentTime = target;
+  } catch {
+    return false;
+  }
+  liveTail.window = win;
+  liveTail.targetTs = ts;
+  liveTail.wallClockOffset = ts - target;
+  return true;
+}
+
+function liveTailCurrentTs() {
+  if (liveTail.wallClockOffset != null) {
+    return liveTail.wallClockOffset + (el.liveVideo.currentTime || 0);
+  }
+  return liveTail.latestDet?.abs_ts ?? Date.now() / 1000;
+}
+
+async function seekLiveTail(srcId, ts) {
+  return startLiveTail(srcId, { seekTs: ts });
+}
+
 function mergeEvents(events) {
   if (!events.length) return;
   const byId = new Map(st.events.map(e => [e.id, e]));
@@ -1090,7 +1152,7 @@ async function handleClassSelectionChanged(classes) {
     centerWindowOn(target.abs_ts);
     timeline.setData(allSegsForSrc(), filteredEvts());
     scrollTimelineToTs(target.abs_ts);
-    startLiveTail(target.source_id);
+    seekLiveTail(target.source_id, target.abs_ts).then(ok => { if (!ok) startLiveTail(target.source_id); });
     setStatus("LIVE");
     return;
   }
@@ -1213,7 +1275,7 @@ function _makeThumbNode(evt, baseTs) {
   btn.title = `${evt.class} ${eventLocalTime(evt.abs_ts)} ${sourceLabel(evt.source_id)}`;
   btn.addEventListener("click", () => {
     if (evt.provisional) {
-      startLiveTail(evt.source_id);
+      seekLiveTail(evt.source_id, evt.abs_ts).then(ok => { if (!ok) startLiveTail(evt.source_id); });
       scrollTimelineToTs(evt.abs_ts);
       return;
     }
@@ -1529,10 +1591,11 @@ el.tlCanvas.addEventListener("click", e => {
   if (!hit) return;
   // Delay single-click action so dblclick can cancel it
   clearTimeout(_clickTimer);
-  _clickTimer = setTimeout(() => {
+  _clickTimer = setTimeout(async () => {
     if (hit.snapEvent) {
       if (hit.snapEvent.provisional) {
-        startLiveTail(hit.snapEvent.source_id);
+        const ok = await seekLiveTail(hit.snapEvent.source_id, hit.snapEvent.abs_ts);
+        if (!ok) startLiveTail(hit.snapEvent.source_id);
         scrollTimelineToTs(hit.snapEvent.abs_ts);
         return;
       }
@@ -1542,8 +1605,13 @@ el.tlCanvas.addEventListener("click", e => {
       const nowTs = Date.now() / 1000;
       const srcSegs = st.segments.filter(s => s.source_id === hit.srcId && s.end_ts != null);
       const latestEnd = srcSegs.length ? Math.max(...srcSegs.map(s => s.end_ts)) : 0;
-      if (latestEnd > 0 && latestEnd > nowTs - 3600 && hit.ts >= latestEnd) {
-        startLiveTail(hit.srcId);
+      const openSegs = st.segments.filter(s => s.source_id === hit.srcId && s.end_ts == null);
+      const openStart = openSegs.length ? Math.max(...openSegs.map(s => s.start_ts)) : 0;
+      const liveGapStart = latestEnd || openStart;
+      if (liveGapStart > 0 && liveGapStart > nowTs - LIVE_OPEN_MAX_AGE && hit.ts >= liveGapStart) {
+        const targetTs = Math.min(hit.ts, nowTs);
+        const ok = await seekLiveTail(hit.srcId, targetTs);
+        if (!ok) startLiveTail(hit.srcId);
         return;
       }
       stopLiveTail(false);
@@ -1701,12 +1769,16 @@ function scrollTimelineToTs(ts) {
 }
 
 function navPrev() {
-  const ts = liveTail.active ? (liveTail.latestDet?.abs_ts ?? Date.now() / 1000) : player.reliableTs;
+  const ts = liveTail.active ? liveTailCurrentTs() : player.reliableTs;
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts);
   const evt  = evts[0];
   if (evt) {
-    if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
+    if (evt.provisional) {
+      seekLiveTail(evt.source_id, evt.abs_ts).then(ok => { if (!ok) startLiveTail(evt.source_id); });
+      scrollTimelineToTs(evt.abs_ts);
+      return;
+    }
     stopLiveTail(false);
     mode.seekTo(evt.abs_ts, evt.source_id); pushState();
     scrollTimelineToTs(evt.abs_ts);
@@ -1720,7 +1792,11 @@ function navPrev() {
     load().then(() => {
       const e2 = filteredEvts().filter(e => e.abs_ts < ts - 1).sort((a,b) => b.abs_ts - a.abs_ts)[0];
       if (!e2) return;
-      if (e2.provisional) { startLiveTail(e2.source_id); scrollTimelineToTs(e2.abs_ts); return; }
+      if (e2.provisional) {
+        seekLiveTail(e2.source_id, e2.abs_ts).then(ok => { if (!ok) startLiveTail(e2.source_id); });
+        scrollTimelineToTs(e2.abs_ts);
+        return;
+      }
       stopLiveTail(false);
       mode.seekTo(e2.abs_ts, e2.source_id); pushState();
       scrollTimelineToTs(e2.abs_ts);
@@ -1729,12 +1805,16 @@ function navPrev() {
 }
 
 function navNext() {
-  const ts = liveTail.active ? (liveTail.latestDet?.abs_ts ?? Date.now() / 1000) : player.reliableTs;
+  const ts = liveTail.active ? liveTailCurrentTs() : player.reliableTs;
   if (ts == null) return;
   const evts = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts);
   const evt  = evts[0];
   if (evt) {
-    if (evt.provisional) { startLiveTail(evt.source_id); scrollTimelineToTs(evt.abs_ts); return; }
+    if (evt.provisional) {
+      seekLiveTail(evt.source_id, evt.abs_ts).then(ok => { if (!ok) startLiveTail(evt.source_id); });
+      scrollTimelineToTs(evt.abs_ts);
+      return;
+    }
     stopLiveTail(false);
     mode.seekTo(evt.abs_ts, evt.source_id); pushState();
     scrollTimelineToTs(evt.abs_ts);
@@ -1748,7 +1828,11 @@ function navNext() {
     load().then(() => {
       const e2 = filteredEvts().filter(e => e.abs_ts > ts + 1).sort((a,b) => a.abs_ts - b.abs_ts)[0];
       if (!e2) return;
-      if (e2.provisional) { startLiveTail(e2.source_id); scrollTimelineToTs(e2.abs_ts); return; }
+      if (e2.provisional) {
+        seekLiveTail(e2.source_id, e2.abs_ts).then(ok => { if (!ok) startLiveTail(e2.source_id); });
+        scrollTimelineToTs(e2.abs_ts);
+        return;
+      }
       stopLiveTail(false);
       mode.seekTo(e2.abs_ts, e2.source_id); pushState();
       scrollTimelineToTs(e2.abs_ts);
@@ -1804,14 +1888,43 @@ function loadHlsJs() {
   return window.__v2HlsPromise;
 }
 
-async function startLiveTail(srcId = null) {
+function replaceLiveHistory(srcId, ts = null) {
+  const p = new URLSearchParams({ source: srcId, live: "1" });
+  if (ts != null) p.set("ts", String(Math.floor(ts)));
+  history.replaceState(null, "", `${location.pathname}?${p}`);
+}
+
+async function startLiveTail(srcId = null, options = {}) {
+  const seekTs = Number.isFinite(options.seekTs) ? options.seekTs : null;
   const requestedAll = !srcId || srcId === "all";
   const chosen = chooseLiveSource(srcId);
   if (!chosen) {
     setStatus("NONE", "NO SOURCE");
-    return;
+    return false;
   }
-  if ((liveTail.active || liveTail.starting) && liveTail.srcId === chosen) return;
+
+  if (liveTail.active && liveTail.srcId === chosen && seekTs != null) {
+    const win = await fetchLiveWindow(chosen);
+    if (!liveWindowContains(win, seekTs) || !seekLiveVideoToTs(seekTs, win)) {
+      setStatus("BUFFERING");
+      return false;
+    }
+    replaceLiveHistory(chosen, seekTs);
+    updateLiveTailClock();
+    el.liveVideo.play().catch(() => {});
+    return true;
+  }
+  if ((liveTail.active || liveTail.starting) && liveTail.srcId === chosen) return true;
+
+  let liveWindow = null;
+  if (seekTs != null) {
+    liveWindow = await fetchLiveWindow(chosen);
+    if (!liveWindowContains(liveWindow, seekTs)) {
+      setStatus("BUFFERING");
+      return false;
+    }
+  }
+
   const token = ++liveTail.token;
   liveTail.starting = true;
   liveTail.srcId = chosen;
@@ -1833,6 +1946,9 @@ async function startLiveTail(srcId = null) {
 
   liveTail.active = true;
   liveTail.latestDet = null;
+  liveTail.window = liveWindow;
+  liveTail.wallClockOffset = null;
+  liveTail.targetTs = seekTs;
   mode.enterLive();
   player.pause();
 
@@ -1842,7 +1958,7 @@ async function startLiveTail(srcId = null) {
   el.liveBtn.classList.add("active", "on");
   setPlayIcon(true);
   setStatus("LIVE");
-  history.replaceState(null, "", `${location.pathname}?source=${encodeURIComponent(chosen)}&live=1`);
+  replaceLiveHistory(chosen, seekTs);
 
   const hlsUrl = `/video/live/${encodeURIComponent(chosen)}/live.m3u8`;
 
@@ -1864,17 +1980,22 @@ async function startLiveTail(srcId = null) {
     if (canUseHlsJs) {
       if (token !== liveTail.token) return;
       if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
-      const hls = new HlsCtor({
+      const hlsConfig = {
         lowLatencyMode: false,
         // liveSyncDurationCount / liveMaxLatencyDurationCount intentionally omitted.
         // Explicit liveMaxLatencyDurationCount triggers catchup mode during init
         // (currentTime=0 → apparent latency=60s >> 12s limit → max poll rate).
         // HLS.js defaults handle live sync correctly without this bug.
-      });
+      };
+      if (seekTs != null && liveWindow) hlsConfig.startPosition = liveMediaOffsetForTs(liveWindow, seekTs);
+      const hls = new HlsCtor(hlsConfig);
       liveTail.hls = hls;
       hls.loadSource(hlsUrl);
       hls.attachMedia(el.liveVideo);
-      hls.on(HlsCtor.Events.MANIFEST_PARSED, () => el.liveVideo.play().catch(() => {}));
+      hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+        if (seekTs != null && liveWindow) seekLiveVideoToTs(seekTs, liveWindow);
+        el.liveVideo.play().catch(() => {});
+      });
       hls.on(HlsCtor.Events.ERROR, (_, data) => {
         if (token !== liveTail.token) return;
         if (data.fatal) { console.warn("HLS fatal:", data.type, data.details); stopLiveTail(); }
@@ -1886,6 +2007,7 @@ async function startLiveTail(srcId = null) {
       el.liveVideo.src = hlsUrl;
       el.liveVideo.load();
       el.liveVideo.addEventListener("loadedmetadata", () => {
+        if (seekTs != null && liveWindow) seekLiveVideoToTs(seekTs, liveWindow);
         el.liveVideo.play().catch(e => console.warn("play() failed:", e));
       }, { once: true });
     } else {
@@ -1901,12 +2023,14 @@ async function startLiveTail(srcId = null) {
     liveTail.pollTimer = setInterval(pollLiveTail, 1500);
     liveTail.clockTimer = setInterval(updateLiveTailClock, 500);
     liveTail.starting = false;
+    return true;
   } catch (err) {
     if (token !== liveTail.token) return;
     liveTail.starting = false;
     console.error("live HLS:", err);
     stopLiveTail();
     setStatus("OFFLINE");
+    return false;
   }
 }
 
@@ -1927,6 +2051,9 @@ function stopLiveTail(updateMode = true, invalidate = true) {
   liveTail.starting = false;
   liveTail.srcId = null;
   liveTail.latestDet = null;
+  liveTail.window = null;
+  liveTail.wallClockOffset = null;
+  liveTail.targetTs = null;
   // Restore URL: remove live=1 and ts params
   const _p = new URLSearchParams(location.search);
   _p.delete("live"); _p.delete("ts");
@@ -1964,9 +2091,7 @@ function updateLiveTailClock() {
     el.liveVideo.play().catch(() => {});
   }
 
-  const now = Date.now() / 1000;
-
-  const ts = liveTail.latestDet?.abs_ts ?? now;
+  const ts = liveTailCurrentTs();
   timeline.setPlayhead(ts);
   setTimestampChip(ts, liveTail.srcId, true);
   setStatus("LIVE");
@@ -1990,7 +2115,7 @@ el.prev.addEventListener("click", navPrev);
 el.next.addEventListener("click", navNext);
 el.rewind.addEventListener("click", () => {
   const wasLive = liveTail.active;
-  const ts  = wasLive ? (liveTail.latestDet?.abs_ts ?? Date.now() / 1000) : player.reliableTs;
+  const ts  = wasLive ? liveTailCurrentTs() : player.reliableTs;
   const src = wasLive ? liveTail.srcId : (player.currentSeg?.source_id ?? null);
   if (wasLive) stopLiveTail(false);
   if (ts != null) {
@@ -2023,7 +2148,7 @@ function toggleFullscreen() {
 }
 
 function downloadCurrentClip() {
-  const ts = liveTail.active ? (liveTail.latestDet?.abs_ts ?? Date.now() / 1000) : player.reliableTs;
+  const ts = liveTail.active ? liveTailCurrentTs() : player.reliableTs;
   const src = liveTail.active ? liveTail.srcId : (player.currentSeg?.source_id ?? (st.source !== "all" ? st.source : null));
   if (!ts || !src) {
     setStatus("NONE");
@@ -2180,7 +2305,10 @@ window.addEventListener("resize", () => timeline.draw());
 function pushState() {
   const p = new URLSearchParams();
   if (st.source !== "all")    p.set("source", st.source);
-  if (liveTail.active)        { p.set("live", "1"); }
+  if (liveTail.active) {
+    p.set("live", "1");
+    if (liveTail.targetTs != null) p.set("ts", String(Math.floor(liveTailCurrentTs())));
+  }
   else {
     const ts = player.reliableTs;
     if (ts)                   p.set("ts", Math.floor(ts));
@@ -2217,7 +2345,7 @@ async function init() {
   if (urlLive) {
     // Direct live URL: load data in background, immediately enter live
     load();
-    startLiveTail(st.source !== "all" ? st.source : null);
+    startLiveTail(st.source !== "all" ? st.source : null, urlTs != null ? { seekTs: urlTs } : {});
   } else if (urlTs) {
     // Fast path: start video immediately, load timeline in background
     const srcParam = st.source !== "all" ? `&source=${encodeURIComponent(st.source)}` : "";

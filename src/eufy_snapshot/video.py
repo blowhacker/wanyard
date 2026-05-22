@@ -16,7 +16,7 @@ LOG = logging.getLogger(__name__)
 
 _MAX_SEGMENT_SECONDS = 600
 _LIVE_HLS_SEGMENT_SECONDS = 2
-_LIVE_HLS_LIST_SIZE = 30
+_LIVE_HLS_LIST_SIZE = _MAX_SEGMENT_SECONDS // _LIVE_HLS_SEGMENT_SECONDS
 _LIVE_HLS_UNREFERENCED_RETENTION_SECONDS = (
     _LIVE_HLS_SEGMENT_SECONDS * (_LIVE_HLS_LIST_SIZE + 30)
 )
@@ -696,7 +696,7 @@ class VideoWorker:
                  "-hls_time", str(_LIVE_HLS_SEGMENT_SECONDS),
                  "-hls_list_size", str(_LIVE_HLS_LIST_SIZE),
                  "-hls_start_number_source", "epoch",
-                 "-hls_flags", "delete_segments+omit_endlist+temp_file",
+                 "-hls_flags", "delete_segments+omit_endlist+temp_file+program_date_time",
                  "-hls_segment_filename", str(self._live_dir / "seg_%010d.ts"),
                  str(self._live_dir / "live.m3u8"),
                 ],
