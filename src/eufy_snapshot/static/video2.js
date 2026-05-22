@@ -1204,14 +1204,22 @@ async function startLiveTail(srcId = null) {
 
   const hlsUrl = `/video/live/${encodeURIComponent(chosen)}/live.m3u8`;
 
+  el.liveVideo.onerror = e => {
+    const err = el.liveVideo.error;
+    console.error("liveVideo error:", err?.code, err?.message, hlsUrl);
+    setStatus("LIVE ERR");
+  };
+
   async function _attachHls() {
     // Clear any stale srcObject before setting src
     if (el.liveVideo.srcObject) { el.liveVideo.srcObject = null; }
-    if (el.liveVideo.canPlayType("application/vnd.apple.mpegurl")) {
+    const canNative = el.liveVideo.canPlayType("application/vnd.apple.mpegurl");
+    console.log("HLS attach:", hlsUrl, "native:", !!canNative);
+    if (canNative) {
       // Safari — native HLS
       el.liveVideo.src = hlsUrl;
       el.liveVideo.load();
-      el.liveVideo.play().catch(() => {});
+      el.liveVideo.play().catch(e => console.warn("play() failed:", e));
     } else {
       // Chrome/Firefox — load hls.js lazily
       if (!window.Hls) {
