@@ -19,7 +19,7 @@ RUN python -c 'import tomllib; print("\n".join(tomllib.load(open("pyproject.toml
   && pip install --no-cache-dir -r /tmp/project-deps.txt
 
 COPY src ./src
-RUN pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir --no-build-isolation --no-deps .
 
 COPY config.yaml ./config.yaml
 COPY healthcheck.sh ./healthcheck.sh
