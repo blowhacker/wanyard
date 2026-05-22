@@ -633,9 +633,9 @@ body {
   letter-spacing: 0;
 }
 .speed-pill.active {
-  background: var(--surf-2) !important;
-  color: var(--txt);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  background: var(--amber-soft) !important;
+  color: var(--amber) !important;
+  box-shadow: none;
 }
 .time-readout {
   display: flex;

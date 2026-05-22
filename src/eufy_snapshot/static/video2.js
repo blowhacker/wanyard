@@ -1466,6 +1466,13 @@ el.tlCanvas.addEventListener("click", e => {
     stopLiveTail(false);
     mode.seekTo(hit.snapEvent.abs_ts, hit.snapEvent.source_id); pushState();
   } else {
+    // If clicking past the last completed segment for that source, go live via HLS
+    const srcSegs = st.segments.filter(s => s.source_id === hit.srcId && s.end_ts != null);
+    const latestEnd = srcSegs.length ? Math.max(...srcSegs.map(s => s.end_ts)) : 0;
+    if (latestEnd > 0 && hit.ts > latestEnd + 30) {
+      startLiveTail(hit.srcId);
+      return;
+    }
     stopLiveTail(false);
     mode.seekTo(hit.ts, hit.srcId); pushState();
   }
