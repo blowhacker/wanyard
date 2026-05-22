@@ -235,40 +235,42 @@
 .s-cam-name { font-size: 13.5px; font-weight: 500; color: var(--txt); margin-bottom: 2px; }
 .s-cam-meta { font: 400 11px var(--font-mono); color: var(--txt-3); letter-spacing: 0.02em; }
 .s-cam-remove {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px; height: 28px;
-  border: 1px solid transparent;
-  border-radius: var(--r);
-  background: transparent;
-  color: var(--txt-3);
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 28px !important; height: 28px !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--r) !important;
+  background: transparent !important;
+  color: var(--txt-3) !important;
   cursor: pointer;
   transition: color 120ms, border-color 120ms, background 120ms;
   flex-shrink: 0;
 }
-.s-cam-remove:hover {
-  color: var(--red);
-  border-color: rgba(226, 92, 76, 0.3);
-  background: rgba(226, 92, 76, 0.08);
+.s-cam-remove:hover:not(:disabled) {
+  color: var(--red) !important;
+  border-color: rgba(226, 92, 76, 0.3) !important;
+  background: rgba(226, 92, 76, 0.08) !important;
 }
 
 /* Add camera */
 .s-btn-outline {
-  height: 32px;
-  padding: 0 14px;
-  font-size: 13px;
-  font-weight: 500;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  color: var(--txt-2);
+  height: 32px !important;
+  width: auto !important;
+  padding: 0 14px !important;
+  font-family: var(--font-ui) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  background: transparent !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--r) !important;
+  color: var(--txt-2) !important;
   cursor: pointer;
   white-space: nowrap;
   transition: color 120ms, border-color 120ms;
   flex-shrink: 0;
 }
-.s-btn-outline:hover { color: var(--txt); }
+.s-btn-outline:hover:not(:disabled) { color: var(--txt) !important; background: transparent !important; border-color: var(--line) !important; }
 
 .s-drawer { border-top: 1px solid var(--line-soft); background: var(--surf-2); }
 .s-drawer-head {
@@ -348,34 +350,28 @@
 .s-save-msg.ok  { color: var(--green); }
 .s-save-msg.err { color: var(--red); }
 
-/* Buttons */
+/* Buttons — !important needed to beat app.css button { width:32px } */
 .s-btn {
-  height: 32px;
-  padding: 0 14px;
-  font-family: var(--font-ui);
-  font-size: 13px;
-  font-weight: 500;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  color: var(--txt-2);
+  height: 32px !important;
+  width: auto !important;
+  padding: 0 14px !important;
+  font-family: var(--font-ui) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  background: transparent !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--r) !important;
+  color: var(--txt-2) !important;
   cursor: pointer;
   white-space: nowrap;
-  transition: border-color 120ms, color 120ms;
+  transition: border-color 120ms, color 120ms, background 120ms;
 }
-.s-btn:hover { color: var(--txt); }
-.s-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
-.s-btn-primary {
-  border-color: var(--amber-ring);
-  color: var(--amber);
-  background: var(--amber-soft);
-}
-.s-btn-primary:hover { border-color: var(--amber); }
-.s-btn-danger {
-  border-color: rgba(226, 92, 76, 0.35);
-  color: var(--red);
-}
-.s-btn-danger:hover { border-color: var(--red); }
+.s-btn:hover:not(:disabled) { color: var(--txt) !important; background: transparent !important; border-color: var(--line) !important; }
+.s-btn:disabled { opacity: 0.35 !important; cursor: default; pointer-events: none; filter: none !important; }
+.s-btn-primary { border-color: var(--amber-ring) !important; color: var(--amber) !important; background: var(--amber-soft) !important; }
+.s-btn-primary:hover:not(:disabled) { border-color: var(--amber) !important; background: var(--amber-soft) !important; color: var(--amber) !important; }
+.s-btn-danger  { border-color: rgba(226,92,76,0.35) !important; color: var(--red) !important; background: transparent !important; }
+.s-btn-danger:hover:not(:disabled) { border-color: var(--red) !important; background: transparent !important; color: var(--red) !important; }
 
 @media (max-width: 860px) {
   .s-page { grid-template-columns: 1fr; }
