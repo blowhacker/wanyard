@@ -607,7 +607,7 @@ class V2Timeline {
     if (this.#head != null) {
       const x = this.#tsToX(this.#head);
       if (x >= SRC_W && x <= W) {
-        ctx.fillStyle = "#e8a558";
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
         ctx.fillRect(x - 1, 0, 2, H - LABEL_H);
         ctx.beginPath();
         ctx.moveTo(x - 5, 0);
@@ -756,7 +756,7 @@ const NEAR_EVENT_REFRESH_MS = 1500;
 
 function nearbyClassSet() {
   if (st.cls.size > 0) return new Set(st.cls);
-  return new Set(Object.keys(st.summary.classes || st.classes || {}));
+  return new Set(["person"]);
 }
 
 function nearbyScopeLabel() {
@@ -1372,7 +1372,7 @@ function toggleSourceMenu() {
 // ── Class filter ──────────────────────────────────────
 function renderClsCtrl() {
   el.clsCtrl.innerHTML = "";
-  const counts = st.summary.classes || st.classes || {};
+  const counts = { ...(st.classes || {}), ...(st.summary.classes || {}) };
   const entries = Object.entries(counts)
     .filter(([cls, n]) => cls && n > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
