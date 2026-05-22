@@ -1701,6 +1701,7 @@ async function startLiveTail(srcId = null) {
 
   const hlsUrl = `/video/live/${encodeURIComponent(chosen)}/live.m3u8`;
 
+  el.liveVideo.onerror = null;  // clear before re-wiring
   el.liveVideo.onerror = e => {
     const err = el.liveVideo.error;
     console.error("liveVideo error:", err?.code, err?.message, hlsUrl);
@@ -1756,7 +1757,11 @@ function stopLiveTail(updateMode = true) {
   liveTail.pollTimer = null;
   liveTail.clockTimer = null;
   if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
-  if (el.liveVideo) { el.liveVideo.pause(); el.liveVideo.src = ""; }
+  if (el.liveVideo) {
+    el.liveVideo.onerror = null;  // prevent stale onerror → OFFLINE when clearing src
+    el.liveVideo.pause();
+    el.liveVideo.src = "";
+  }
   if (el.liveVideo) el.liveVideo.style.display = "none";
   liveTail.active = false;
   liveTail.srcId = null;
