@@ -380,12 +380,21 @@ const EVENT_COLORS = {
   person:"#4ec98a",bird:"#78b7ff",cat:"#78b7ff",dog:"#78b7ff",
   car:"#e8a558",truck:"#e8a558",bus:"#e8a558",motorcycle:"#e8a558",bicycle:"#e8a558",
 };
+const EVENT_PALETTE = ["#78b7ff", "#4ec98a", "#e8a558", "#cc9bff", "#f1788a", "#7bd7c4", "#d6ca72"];
+
+function classColor(cls) {
+  if (EVENT_COLORS[cls]) return EVENT_COLORS[cls];
+  let hash = 0;
+  String(cls || "").split("").forEach(ch => { hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0; });
+  return EVENT_PALETTE[Math.abs(hash) % EVENT_PALETTE.length];
+}
 
 class V2Timeline {
   #c; #ctx;
   #segs = []; #evts = []; #srcNames = {};
   #from = 0; #to = 0;
   #head = null;
+  #SRC_W = 78;
   #eventsFrom = 0; #eventsTo = 0;
 
   constructor(canvasEl) {
@@ -397,6 +406,10 @@ class V2Timeline {
   setEventsWindow(from, to) { this.#eventsFrom = from; this.#eventsTo = to; this.draw(); }
   setPlayhead(ts)     { this.#head = ts; this.draw(); }
   setSrcNames(map)    { this.#srcNames = map; }
+  get labelWidth() {
+    const W = this.#c?.clientWidth || this.#SRC_W;
+    return Math.min(this.#SRC_W, Math.max(52, W * 0.28));
+  }
 
   setData(segs, evts) {
     this.#segs = segs;
@@ -413,25 +426,23 @@ class V2Timeline {
   // ── Pure decode — returns null or {ts, srcId, snapEvent} ─
   decode(x, y) {
     const W = this.#c.clientWidth, H = this.#c.clientHeight;
-    if (x < 0 || x > W || y < 0 || y > H) return null;
+    if (x < this.labelWidth || x > W || y < 0 || y > H - 18) return null;
 
+    const srcIds = this.#uniqueSrcs();
+    if (!srcIds.length) return null;
+    const laneH = Math.max(1, (H - 18) / srcIds.length);
+    const row = Math.min(srcIds.length - 1, Math.max(0, Math.floor(y / laneH)));
+    const srcId = srcIds[row];
     const ts = this.#xToTs(x);
 
     const SNAP = 8;
     let snapEvent = null, best = Infinity;
-    for (const e of this.#evts) {
+    for (const e of this.#evts.filter(e => e.source_id === srcId)) {
       const ex = this.#tsToX(e.abs_ts);
       const dist = Math.abs(ex - x);
       if (dist < SNAP && dist < best) { best = dist; snapEvent = e; }
     }
 
-    const seg = snapEvent
-      ? null
-      : this.#segs
-          .filter(s => s.end_ts != null && s.start_ts <= ts && s.end_ts > ts)
-          .sort((a, b) => b.start_ts - a.start_ts)[0];
-    const srcId = snapEvent?.source_id ?? seg?.source_id ?? this.#uniqueSrcs()[0] ?? null;
-    if (!srcId) return null;
     return { ts, srcId, snapEvent };
   }
 
@@ -447,95 +458,197 @@ class V2Timeline {
     const span = this.#to - this.#from;
     if (span <= 0) return;
 
+    const srcIds = this.#uniqueSrcs();
+    const SRC_W = this.labelWidth;
+    const LABEL_H = 18;
     const nowTs = Date.now() / 1000;
-    const top = 12;
-    const bottom = H - 12;
-    const barMaxH = Math.max(8, bottom - top);
+    const plotW = Math.max(1, W - SRC_W);
 
     ctx.fillStyle = "rgba(255,255,255,0.025)";
-    ctx.fillRect(0, top, W, barMaxH);
+    ctx.fillRect(SRC_W, 0, plotW, H - LABEL_H);
 
-    // Segment coverage: faint base bars show recorded coverage even where no event exists.
-    ctx.fillStyle = "rgba(255,255,255,0.055)";
-    this.#segs.forEach(s => {
-      const x1 = Math.max(0, this.#tsToX(s.start_ts));
-      const x2 = Math.min(W, this.#tsToX(s.end_ts ?? Math.min(this.#to, nowTs)));
-      if (x2 <= 0 || x1 >= W || x2 <= x1) return;
-      ctx.fillRect(x1, bottom - 8, x2 - x1, 8);
-    });
+    const tzOffsetSec = new Date().getTimezoneOffset() * -60;
+    let midnightTs = Math.ceil((this.#from - tzOffsetSec) / 86400) * 86400 + tzOffsetSec;
+    while (midnightTs <= this.#to) {
+      const x = this.#tsToX(midnightTs);
+      if (x > SRC_W && x < W) {
+        ctx.save();
+        ctx.setLineDash([2, 5]);
+        ctx.strokeStyle = "rgba(255,255,255,0.16)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H - LABEL_H);
+        ctx.stroke();
+        ctx.restore();
+      }
+      midnightTs += 86400;
+    }
 
-    // Event density in 15-minute bins.
-    const bin = 15 * 60;
-    const firstBin = Math.floor(this.#from / bin) * bin;
-    const bins = [];
-    for (let t = firstBin; t < this.#to; t += bin) bins.push({ start: t, count: 0, live: false });
-    this.#evts.forEach(e => {
-      if (e.abs_ts < this.#from || e.abs_ts > this.#to) return;
-      const idx = Math.floor((e.abs_ts - firstBin) / bin);
-      if (bins[idx]) {
-        bins[idx].count++;
-        bins[idx].live ||= Boolean(e.provisional);
+    if (srcIds.length) {
+      const laneH = (H - LABEL_H) / srcIds.length;
+      srcIds.forEach((srcId, row) => {
+        const top = row * laneH + 2;
+        const bot = top + laneH - 4;
+        const mid = (top + bot) / 2;
+        const laneLabel = this.#srcNames[srcId] || srcId;
+
+        ctx.fillStyle = "rgba(166,174,190,0.88)";
+        ctx.font = "600 9px 'IBM Plex Mono',monospace";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        ctx.fillText(laneLabel.slice(0, 12), SRC_W - 8, mid);
+
+        if (row > 0) {
+          ctx.fillStyle = "rgba(255,255,255,0.06)";
+          ctx.fillRect(SRC_W, top - 2, plotW, 1);
+        }
+
+        ctx.fillStyle = "rgba(255,255,255,0.075)";
+        this.#segs.filter(s => s.source_id === srcId).forEach(s => {
+          const x1 = Math.max(SRC_W, this.#tsToX(s.start_ts));
+          const x2 = Math.min(W, this.#tsToX(s.end_ts ?? Math.min(this.#to, nowTs)));
+          if (x2 <= SRC_W || x1 >= W || x2 <= x1) return;
+          ctx.fillRect(x1, top + 3, x2 - x1, Math.max(2, bot - top - 6));
+        });
+
+        this.#evts.filter(e => e.source_id === srcId).forEach(e => {
+          const x = this.#tsToX(e.abs_ts);
+          if (x < SRC_W || x > W) return;
+          ctx.fillStyle = classColor(e.class);
+          ctx.globalAlpha = e.provisional ? 1 : 0.95;
+          ctx.fillRect(x - 1, top + 3, 2, Math.max(3, bot - top - 6));
+          ctx.globalAlpha = 0.22;
+          ctx.fillRect(x - 3, top + 3, 6, Math.max(3, bot - top - 6));
+          ctx.globalAlpha = 1;
+        });
+
+        const srcEvts = this.#evts.filter(e => e.source_id === srcId);
+        const nBefore = srcEvts.filter(e => e.abs_ts < this.#from).length;
+        const nAfter = srcEvts.filter(e => e.abs_ts > this.#to).length;
+        ctx.font = "600 9px 'IBM Plex Mono',monospace";
+        ctx.textBaseline = "middle";
+        if (nBefore > 0) {
+          const label = `< ${nBefore}`;
+          const tw = ctx.measureText(label).width + 8;
+          ctx.fillStyle = "rgba(232,165,88,0.18)";
+          ctx.fillRect(SRC_W, mid - 8, tw, 16);
+          ctx.fillStyle = "rgba(232,165,88,0.95)";
+          ctx.textAlign = "left";
+          ctx.fillText(label, SRC_W + 4, mid);
+        }
+        if (nAfter > 0) {
+          const label = `${nAfter} >`;
+          const tw = ctx.measureText(label).width + 8;
+          ctx.fillStyle = "rgba(232,165,88,0.18)";
+          ctx.fillRect(W - tw, mid - 8, tw, 16);
+          ctx.fillStyle = "rgba(232,165,88,0.95)";
+          ctx.textAlign = "right";
+          ctx.fillText(label, W - 4, mid);
+        }
+      });
+    }
+
+    const interval = this.#labelInterval();
+    const multiDay = span > 20 * 3600;
+    let t0 = Math.ceil(this.#from / interval) * interval;
+    ctx.font = "400 9px 'IBM Plex Mono',monospace";
+    ctx.textBaseline = "alphabetic";
+    while (t0 <= this.#to) {
+      const x = this.#tsToX(t0);
+      if (x >= SRC_W && x <= W) {
+        const d = new Date(t0 * 1000);
+        const time = d.toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit" });
+        const label = multiDay
+          ? `${d.toLocaleDateString(undefined, { day:"2-digit", month:"short" })} ${time}`
+          : time;
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(x, 0, 1, H - LABEL_H);
+        ctx.fillStyle = "rgba(166,174,190,0.78)";
+        ctx.textAlign = "center";
+        ctx.fillText(label, x, H - 4);
       }
-    });
-    const max = Math.max(1, ...bins.map(b => b.count));
-    bins.forEach(b => {
-      const x1 = Math.max(0, this.#tsToX(b.start));
-      const x2 = Math.min(W, this.#tsToX(Math.min(b.start + bin, this.#to)));
-      if (x2 <= 0 || x1 >= W || x2 <= x1) return;
-      const h = b.count ? Math.max(8, (b.count / max) * barMaxH) : 7;
-      const future = this.#head != null && b.start > this.#head;
-      const w = Math.max(1, x2 - x1 - 1);
-      if (b.live) {
-        const g = ctx.createLinearGradient(0, bottom - h, 0, bottom);
-        g.addColorStop(0, "rgba(78,201,138,0.9)");
-        g.addColorStop(1, "rgba(78,201,138,0.28)");
-        ctx.fillStyle = g;
-      } else if (b.count && !future) {
-        const g = ctx.createLinearGradient(0, bottom - h, 0, bottom);
-        g.addColorStop(0, "rgba(232,165,88,0.65)");
-        g.addColorStop(1, "rgba(232,165,88,0.25)");
-        ctx.fillStyle = g;
-      } else {
-        ctx.fillStyle = b.count ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.05)";
-      }
-      ctx.globalAlpha = future ? 0.4 : 1;
-      ctx.fillRect(x1, bottom - h, w, h);
-      ctx.globalAlpha = 1;
-    });
+      t0 += interval;
+    }
+
+    const fromDate = new Date(this.#from * 1000);
+    const toDate = new Date(this.#to * 1000);
+    const fromDay = fromDate.toLocaleDateString(undefined, { day:"numeric", month:"short" });
+    const toDay = toDate.toLocaleDateString(undefined, { day:"numeric", month:"short" });
+    const dateLabel = fromDay === toDay ? fromDay : `${fromDay} - ${toDay}`;
+    ctx.font = "600 9px 'IBM Plex Mono',monospace";
+    const dateW = ctx.measureText(dateLabel).width + 10;
+    ctx.fillStyle = "rgba(8,10,14,0.82)";
+    ctx.fillRect(SRC_W + 2, 2, dateW, 15);
+    ctx.fillStyle = "rgba(230,235,244,0.9)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(dateLabel, SRC_W + 7, 13);
 
     if (this.#eventsFrom < this.#eventsTo) {
-      const ex1 = Math.max(0, this.#tsToX(this.#eventsFrom));
+      const ex1 = Math.max(SRC_W, this.#tsToX(this.#eventsFrom));
       const ex2 = Math.min(W, this.#tsToX(this.#eventsTo));
       if (ex2 > ex1) {
-        ctx.fillStyle = "rgba(78,201,138,0.28)";
-        ctx.fillRect(ex1, H - 3, ex2 - ex1, 2);
+        ctx.fillStyle = "rgba(78,201,138,0.36)";
+        ctx.fillRect(ex1, H - LABEL_H - 2, ex2 - ex1, 2);
       }
     }
 
     if (nowTs >= this.#from && nowTs <= this.#to) {
       const nx = this.#tsToX(nowTs);
-      ctx.fillStyle = "rgba(255,255,255,0.18)";
-      ctx.fillRect(nx, 4, 1, H - 8);
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.fillRect(nx, 0, 1, H - LABEL_H);
+      ctx.fillStyle = "rgba(230,235,244,0.75)";
+      ctx.font = "600 8px 'IBM Plex Mono',monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("NOW", nx, H - LABEL_H - 4);
     }
 
     if (this.#head != null) {
       const x = this.#tsToX(this.#head);
-      if (x >= 0 && x <= W) {
+      if (x >= SRC_W && x <= W) {
         ctx.fillStyle = "#e8a558";
-        ctx.fillRect(x, 0, 1, H);
+        ctx.fillRect(x - 1, 0, 2, H - LABEL_H);
         ctx.beginPath();
-        ctx.arc(x, 6, 4, 0, Math.PI * 2);
+        ctx.moveTo(x - 5, 0);
+        ctx.lineTo(x + 5, 0);
+        ctx.lineTo(x, 8);
+        ctx.closePath();
         ctx.fill();
-        ctx.strokeStyle = "rgba(232,165,88,0.18)";
-        ctx.lineWidth = 8;
-        ctx.stroke();
       }
     }
   }
 
-  #tsToX(ts) { return ((ts - this.#from) / (this.#to - this.#from)) * this.#c.clientWidth; }
-  #xToTs(x)  { return this.#from + (x / this.#c.clientWidth) * (this.#to - this.#from); }
-  #uniqueSrcs() { return [...new Set(this.#segs.map(s => s.source_id))]; }
+  #tsToX(ts) {
+    const W = this.#c.clientWidth;
+    const SRC_W = this.labelWidth;
+    return SRC_W + ((ts - this.#from) / (this.#to - this.#from)) * Math.max(1, W - SRC_W);
+  }
+  #xToTs(x)  {
+    const W = this.#c.clientWidth;
+    const SRC_W = this.labelWidth;
+    return this.#from + ((x - SRC_W) / Math.max(1, W - SRC_W)) * (this.#to - this.#from);
+  }
+  #uniqueSrcs() {
+    const ids = [];
+    const add = id => { if (id && !ids.includes(id)) ids.push(id); };
+    Object.keys(this.#srcNames).forEach(add);
+    this.#segs.forEach(s => add(s.source_id));
+    this.#evts.forEach(e => add(e.source_id));
+    const visible = new Set([
+      ...this.#segs.map(s => s.source_id),
+      ...this.#evts.map(e => e.source_id),
+    ]);
+    return ids.filter(id => visible.has(id));
+  }
+  #labelInterval() {
+    const span = this.#to - this.#from;
+    if (span > 20 * 3600) return 4 * 3600;
+    if (span > 8 * 3600) return 2 * 3600;
+    if (span > 3 * 3600) return 3600;
+    if (span > 90 * 60) return 30 * 60;
+    return 15 * 60;
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -617,40 +730,6 @@ const liveTail = {
   clockTimer: null,
   latestDet: null,
 };
-
-const VEHICLE_CLASSES = new Set(["car", "truck", "bus", "motorcycle", "bicycle"]);
-const FILTER_GROUPS = [
-  { key: "all", label: "All", classes: null },
-  { key: "person", label: "Person", classes: ["person"] },
-  { key: "vehicle", label: "Vehicle", classes: [...VEHICLE_CLASSES] },
-  { key: "other", label: "Other", classes: null },
-];
-
-function otherClasses() {
-  return Object.keys(st.summary.classes || st.classes || {})
-    .filter(c => c !== "person" && !VEHICLE_CLASSES.has(c));
-}
-
-function filterGroupClasses(key) {
-  if (key === "all") return [];
-  if (key === "person") return ["person"];
-  if (key === "vehicle") return [...VEHICLE_CLASSES];
-  if (key === "other") {
-    const classes = otherClasses();
-    return classes.length ? classes : ["__other__"];
-  }
-  return [];
-}
-
-function currentFilterGroup() {
-  if (st.cls.size === 0) return "all";
-  const selected = [...st.cls].sort().join(",");
-  for (const g of FILTER_GROUPS.slice(1)) {
-    const classes = filterGroupClasses(g.key).sort().join(",");
-    if (classes && classes === selected) return g.key;
-  }
-  return "custom";
-}
 
 // ── Derived views ─────────────────────────────────────
 // All segments for source — used for timeline bands (always show coverage)
@@ -775,14 +854,21 @@ function setTimestampChip(ts, srcId = null, live = false) {
 function renderRuler() {
   if (!el.ruler) return;
   el.ruler.querySelectorAll(".tick").forEach(n => n.remove());
+  const grid = el.ruler.querySelector(".grid");
+  if (grid) {
+    grid.style.left = `${timeline.labelWidth}px`;
+    grid.style.right = "16px";
+  }
   const span = st.window.to - st.window.from;
   if (span <= 0) return;
   const interval = span > 20 * 3600 ? 3 * 3600 : span > 8 * 3600 ? 2 * 3600 : 3600;
+  const width = el.ruler.clientWidth || 1;
+  const labelW = timeline.labelWidth;
   let t = Math.ceil(st.window.from / interval) * interval;
   while (t <= st.window.to) {
     const tick = document.createElement("span");
     tick.className = "tick";
-    tick.style.left = `${((t - st.window.from) / span) * 100}%`;
+    tick.style.left = `${labelW + ((t - st.window.from) / span) * Math.max(1, width - labelW)}px`;
     tick.textContent = new Date(t * 1000).toLocaleTimeString(undefined, { hour:"2-digit", minute:"2-digit" });
     el.ruler.appendChild(tick);
     t += interval;
@@ -1012,15 +1098,12 @@ function renderNearestEvents() {
 
 function classLabel(cls) {
   if (!cls) return "Motion";
-  if (cls === "person") return "Person";
-  if (VEHICLE_CLASSES.has(cls)) return "Vehicle";
   return cls.slice(0, 1).toUpperCase() + cls.slice(1);
 }
 
 function eventTag(cls) {
-  if (cls === "person") return "P";
-  if (VEHICLE_CLASSES.has(cls)) return "V";
-  return "O";
+  const clean = String(cls || "motion").trim();
+  return clean.slice(0, 2).toUpperCase();
 }
 
 function eventDurationLabel(evt) {
@@ -1289,25 +1372,39 @@ function toggleSourceMenu() {
 // ── Class filter ──────────────────────────────────────
 function renderClsCtrl() {
   el.clsCtrl.innerHTML = "";
-  el.clsField.hidden = false;
   const counts = st.summary.classes || st.classes || {};
-  const active = currentFilterGroup();
-  const groupCount = key => {
-    if (key === "all") return st.summary.total || Object.values(counts).reduce((a, b) => a + b, 0);
-    return filterGroupClasses(key).reduce((sum, cls) => sum + (counts[cls] || 0), 0);
-  };
+  const entries = Object.entries(counts)
+    .filter(([cls, n]) => cls && n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (!entries.length) {
+    el.clsField.hidden = true;
+    return;
+  }
+  el.clsField.hidden = false;
 
-  FILTER_GROUPS.forEach(group => {
-    const n = groupCount(group.key);
+  const total = st.summary.total || Object.values(counts).reduce((a, b) => a + b, 0);
+  const allBtn = document.createElement("button");
+  allBtn.type = "button";
+  allBtn.className = "class-chip" + (st.cls.size === 0 ? " active" : "");
+  allBtn.innerHTML = `<span>All</span><span class="count"></span>`;
+  allBtn.querySelector(".count").textContent = String(total);
+  allBtn.addEventListener("click", () => {
+    st.cls.clear();
+    pushState();
+    handleClassSelectionChanged(new Set());
+  });
+  el.clsCtrl.appendChild(allBtn);
+
+  entries.forEach(([cls, n]) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "class-chip" + (active === group.key ? " active" : "");
+    b.className = "class-chip" + (st.cls.has(cls) ? " active" : "");
     b.innerHTML = `<span></span><span class="count"></span>`;
-    b.children[0].textContent = group.label;
+    b.children[0].textContent = classLabel(cls);
     b.children[1].textContent = String(n);
     b.addEventListener("click", () => {
-      st.cls.clear();
-      filterGroupClasses(group.key).forEach(c => st.cls.add(c));
+      if (st.cls.has(cls)) st.cls.delete(cls);
+      else st.cls.add(cls);
       pushState();
       handleClassSelectionChanged(new Set(st.cls));
     });
@@ -1329,7 +1426,7 @@ window.addEventListener("mousemove", e => {
   if (!_drag.moved) return;
   const rect = el.tlCanvas.getBoundingClientRect();
   const span = _drag.toSnap - _drag.fromSnap;
-  const pxPerSec = rect.width / span;
+  const pxPerSec = Math.max(1, rect.width - timeline.labelWidth) / span;
   const shift = -dx / pxPerSec;
   const oldest = st.segments.length
     ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
@@ -1408,7 +1505,7 @@ el.tlCanvas.addEventListener("wheel", e => {
   e.preventDefault();
   const rect     = el.tlCanvas.getBoundingClientRect();
   const span     = st.window.to - st.window.from;
-  const pxPerSec = rect.width / span;
+  const pxPerSec = Math.max(1, rect.width - timeline.labelWidth) / span;
 
   // Normalize: trackpad gives pixel deltas (deltaMode=0, small values),
   // mouse wheel gives line deltas (deltaMode=1, large discrete steps).
@@ -1524,11 +1621,17 @@ function latestOpenSegment(srcId = null) {
     .sort((a, b) => b.start_ts - a.start_ts)[0] ?? null;
 }
 
+function firstRtspSourceId() {
+  return st.sources.find(s => s.type === "rtsp")?.id
+    ?? st.sources[0]?.id
+    ?? null;
+}
+
 function chooseLiveSource(srcId = null) {
   if (srcId && srcId !== "all") return srcId;
   const selected = st.source !== "all" ? st.source : null;
-  return latestOpenSegment(selected)?.source_id
-    ?? selected
+  if (selected) return selected;
+  return firstRtspSourceId()
     ?? player.currentSeg?.source_id
     ?? latestOpenSegment()?.source_id
     ?? st.segments[0]?.source_id
@@ -1536,10 +1639,26 @@ function chooseLiveSource(srcId = null) {
 }
 
 async function startLiveTail(srcId = null) {
+  const requestedAll = !srcId || srcId === "all";
   const chosen = chooseLiveSource(srcId);
-  if (!chosen) return;
+  if (!chosen) {
+    setStatus("NONE", "NO SOURCE");
+    return;
+  }
   if (liveTail.active && liveTail.srcId === chosen) return;
   stopLiveTail(false);
+
+  if (requestedAll && st.source === "all") {
+    st.source = chosen;
+    renderSrcCtrl();
+    timeline.setData(allSegsForSrc(), filteredEvts());
+    fetchActivitySummary().then(() => {
+      updateActivityCount();
+      renderClsCtrl();
+      renderNearScope();
+      scheduleNearestEvents(true);
+    });
+  }
 
   liveTail.active = true;
   liveTail.srcId = chosen;
@@ -1829,7 +1948,7 @@ function drawBoxList(v, boxes) {
 
   boxes.forEach(box => {
     const primary = st.cls.size === 0 || st.cls.has(box.cls);
-    const color   = EVENT_COLORS[box.cls] || "#ccd8e4";
+    const color   = classColor(box.cls);
     const x = ox+box.x1*rw, y = oy+box.y1*rh;
     const w = (box.x2-box.x1)*rw, h = (box.y2-box.y1)*rh;
     ctx.globalAlpha = primary ? 1 : 0.55;

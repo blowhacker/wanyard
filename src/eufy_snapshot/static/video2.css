@@ -37,7 +37,7 @@ body {
 
 .v2-viewer {
   grid-template-columns: minmax(0, 1fr) 320px;
-  grid-template-rows: 48px minmax(0, 1fr) 96px;
+  grid-template-rows: 48px minmax(0, 1fr) 108px;
   background: var(--bg);
   color: var(--txt);
   font-family: var(--font-ui);
@@ -656,7 +656,7 @@ body {
   position: relative;
   flex: 1 1 auto;
   min-width: 140px;
-  height: 56px;
+  height: 66px;
   overflow: visible;
   border-radius: var(--r-sm);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
@@ -737,7 +737,7 @@ body {
 @media (max-width: 980px) {
   .v2-viewer {
     grid-template-columns: 1fr;
-    grid-template-rows: 48px minmax(0, 1fr) minmax(180px, 34svh) 116px;
+    grid-template-rows: 48px minmax(0, 1fr) minmax(180px, 34svh) 126px;
     height: 100svh;
   }
   .v2-stage {

@@ -9,11 +9,17 @@ RUN apt-get update \
 ENV PYTHONUNBUFFERED=1
 
 COPY pyproject.toml requirements.txt README.md ./
-COPY src ./src
-RUN pip install --no-cache-dir \
+
+# Keep heavy runtime dependencies below source copies so normal app edits only
+# rebuild the lightweight package install layer.
+RUN python -c 'import tomllib; print("\n".join(tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]))' > /tmp/project-deps.txt \
+  && pip install --no-cache-dir \
       torch torchvision \
       --index-url https://download.pytorch.org/whl/cu121 \
-  && pip install --no-cache-dir .
+  && pip install --no-cache-dir -r /tmp/project-deps.txt
+
+COPY src ./src
+RUN pip install --no-cache-dir --no-deps .
 
 COPY config.yaml ./config.yaml
 COPY healthcheck.sh ./healthcheck.sh
