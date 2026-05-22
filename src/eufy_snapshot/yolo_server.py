@@ -89,15 +89,16 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     break
                 seg = dict(row)
                 seg_path = video_dir / seg["path"]
+                _sentinel = [{"ts_offset": -1, "has_human": False, "confidence": 0.0,
+                              "boxes": [], "classes": []}]
                 if seg_path.exists():
                     n = _yolo_tag_video(model, seg_path, seg["id"], video_db)
                     LOG.info("tagged %d frames: %s", n, seg["path"][-35:])
                     if n == 0:
-                        # Unreadable/empty file — insert sentinel so it leaves the queue
-                        video_db.replace_detections(seg["id"], [
-                            {"ts_offset": -1, "has_human": False, "confidence": 0.0,
-                             "boxes": [], "classes": []}
-                        ])
+                        video_db.replace_detections(seg["id"], _sentinel)
+                else:
+                    # File missing (crash-loop orphan) — clear from queue
+                    video_db.replace_detections(seg["id"], _sentinel)
                 dets = video_db.detections_for_segment(seg["id"])
                 n_evt = extract_events(seg, dets, video_db)
                 if n_evt:
