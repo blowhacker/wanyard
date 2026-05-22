@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Settings — Monitor</title>
+  <title>Settings — Cam Viewer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -11,109 +11,176 @@
   <link rel="stylesheet" href="/settings.css">
 </head>
 <body>
-  <main class="settings-page">
-    <header class="settings-header">
-      <a href="/video2" class="s-back">← MONITOR</a>
-      <span class="settings-title">SETTINGS</span>
-    </header>
 
-    <!-- System panel -->
-    <section class="s-panel" id="sysPanel">
-      <div class="s-panel-head">SYSTEM</div>
-      <div class="s-system-grid">
-        <div class="s-stat">
-          <div class="s-stat-label">DISK FREE</div>
-          <div class="s-stat-value" id="diskFree">--</div>
-        </div>
-        <div class="s-stat">
-          <div class="s-stat-label">VIDEO</div>
-          <div class="s-stat-value" id="videoSize">--</div>
-        </div>
-        <div class="s-stat">
-          <div class="s-stat-label">SEGMENTS</div>
-          <div class="s-stat-value" id="segCount">--</div>
-        </div>
-        <div class="s-stat">
-          <div class="s-stat-label">BACKFILL</div>
-          <div class="s-stat-value" id="backfillStatus">--</div>
-        </div>
-        <div class="s-stat">
-          <div class="s-stat-label">YOLO</div>
-          <div class="s-stat-value" id="yoloStatus">--</div>
-        </div>
-        <div class="s-stat">
-          <div class="s-stat-label">LAST EVENT</div>
-          <div class="s-stat-value" id="lastEvent">--</div>
-        </div>
+  <header class="appbar s-appbar">
+    <div class="ab-left">
+      <div class="ab-logo">C</div>
+      <div class="ab-title">Cam Viewer</div>
+      <div class="ab-sep"></div>
+      <nav class="s-crumb" aria-label="Breadcrumb">
+        <a href="/">Monitor</a>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M3.5 2 L7 5 L3.5 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <b>Settings</b>
+      </nav>
+    </div>
+    <div class="ab-right">
+      <div id="pipelineChip" class="s-pipeline-chip" hidden>
+        <span class="s-pip-dot"></span>
+        <span id="pipelineText">--</span>
       </div>
-      <div class="s-source-sizes" id="sourceSizes"></div>
-    </section>
+    </div>
+  </header>
 
-    <!-- Cameras panel -->
-    <section class="s-panel" id="cameras">
-      <div class="s-panel-head">CAMERAS</div>
-      <div id="cameraList" class="s-camera-list"></div>
-      <div class="s-add-camera" id="addCameraForm">
-        <div class="s-add-head">ADD CAMERA</div>
-        <div class="s-field-row">
-          <label>NAME</label>
-          <input id="newName" type="text" placeholder="garden" autocomplete="off">
-        </div>
-        <div class="s-field-row">
-          <label>RTSP URL</label>
-          <input id="newUrl" type="text" placeholder="rtsp://user:pass@192.168.1.x/stream1" autocomplete="off">
-        </div>
-        <div class="s-test-row">
-          <button id="testBtn" class="s-btn">TEST</button>
-          <button id="addBtn" class="s-btn s-btn-primary" disabled>ADD</button>
-          <img id="testThumb" class="s-test-thumb" hidden alt="">
-          <span id="testMsg" class="s-test-msg"></span>
-        </div>
-      </div>
-    </section>
+  <div class="s-page">
+    <aside class="s-side">
+      <p class="s-side-h">Settings</p>
+      <a href="#system" class="s-side-link active">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="8" y="1.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="1.5" y="8" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.2"/><rect x="8" y="8" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.2"/></svg>
+        Cameras &amp; system
+      </a>
+      <a href="#storage" class="s-side-link">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="1.5" y="4" width="11" height="6.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M4.5 7h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M3 4V3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v1" stroke="currentColor" stroke-width="1.2"/></svg>
+        Storage
+      </a>
+    </aside>
 
-    <!-- Storage panel -->
-    <section class="s-panel">
-      <div class="s-panel-head">STORAGE — AUTO-CLEANUP</div>
-      <div class="s-storage-grid">
-        <div class="s-field-row">
-          <label>MAX AGE</label>
-          <input id="autoDays" type="number" min="1" max="365" placeholder="days (blank = off)">
+    <main class="s-content">
+
+      <!-- System -->
+      <section class="s-sec" id="system">
+        <div class="s-sec-head">
+          <h2 class="s-sec-title">Cameras &amp; system</h2>
+          <p class="s-sec-sub">RTSP sources, storage usage, and pipeline health.</p>
         </div>
-        <div class="s-field-row">
-          <label>MAX SIZE</label>
-          <input id="autoGb" type="number" min="1" step="10" placeholder="GB (blank = off)">
+
+        <div class="s-card">
+          <div class="s-kpis">
+            <div class="s-kpi">
+              <div class="s-kpi-label">Disk free</div>
+              <div class="s-kpi-value" id="diskFree">--</div>
+              <div class="s-kpi-sub" id="diskUsedPct">of -- total</div>
+            </div>
+            <div class="s-kpi">
+              <div class="s-kpi-label">Footage</div>
+              <div class="s-kpi-value" id="videoSize">--</div>
+              <div class="s-kpi-sub"><span id="segCount">--</span> clips</div>
+            </div>
+            <div class="s-kpi">
+              <div class="s-kpi-label">Pipeline</div>
+              <div class="s-kpi-value" id="pipelineHealth">--</div>
+              <div class="s-kpi-sub" id="pipelineSub">--</div>
+            </div>
+          </div>
+          <div class="s-source-sizes" id="sourceSizes"></div>
         </div>
-      </div>
-      <div class="s-cleanup-row">
-        <button id="autoSaveBtn" class="s-btn s-btn-primary">SAVE AUTO-CLEANUP</button>
-        <span id="autoMsg" class="s-test-msg"></span>
-      </div>
-      <div class="s-panel-head" style="border-top:1px solid var(--line-soft)">MANUAL DELETE</div>
-      <div class="s-storage-grid">
-        <div class="s-field-row">
-          <label>OLDER THAN</label>
-          <select id="cleanupDays">
-            <option value="7">7 days</option>
-            <option value="14">14 days</option>
-            <option value="30" selected>30 days</option>
-            <option value="60">60 days</option>
-            <option value="90">90 days</option>
-          </select>
+      </section>
+
+      <!-- Cameras -->
+      <section class="s-sec" id="cameras">
+        <div class="s-sec-head s-sec-head-row">
+          <div>
+            <h2 class="s-sec-title">Cameras</h2>
+            <p class="s-sec-sub">Manage RTSP sources.</p>
+          </div>
+          <button id="showAddBtn" class="s-btn-outline" type="button">+ Add camera</button>
         </div>
-        <div class="s-field-row">
-          <label>CAMERA</label>
-          <select id="cleanupSource">
-            <option value="">All cameras</option>
-          </select>
+
+        <div class="s-card">
+          <div id="cameraList"></div>
+
+          <div id="addCameraDrawer" class="s-drawer" hidden>
+            <div class="s-drawer-head">New camera</div>
+            <div class="s-drawer-body">
+              <div class="s-field-row">
+                <label for="newName">Name</label>
+                <input id="newName" type="text" placeholder="garden" autocomplete="off">
+                <span class="s-field-hint">Shown in the source switcher.</span>
+              </div>
+              <div class="s-field-row">
+                <label for="newUrl">RTSP URL</label>
+                <input id="newUrl" type="text" placeholder="rtsp://user:pass@192.168.1.x/stream1" autocomplete="off">
+                <span class="s-field-hint">Connection is tested before saving.</span>
+              </div>
+              <div class="s-drawer-actions">
+                <div class="s-test-result">
+                  <img id="testThumb" class="s-test-thumb" hidden alt="">
+                  <span id="testMsg" class="s-test-msg"></span>
+                </div>
+                <div class="s-drawer-btns">
+                  <button id="cancelAddBtn" class="s-btn" type="button">Cancel</button>
+                  <button id="testBtn" class="s-btn" type="button">Test connection</button>
+                  <button id="addBtn" class="s-btn s-btn-primary" disabled type="button">Add camera</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="s-cleanup-row">
-        <button id="cleanupBtn" class="s-btn s-btn-danger">DELETE NOW</button>
-        <span id="cleanupMsg" class="s-test-msg"></span>
-      </div>
-    </section>
-  </main>
+      </section>
+
+      <!-- Storage -->
+      <section class="s-sec" id="storage">
+        <div class="s-sec-head">
+          <h2 class="s-sec-title">Storage</h2>
+          <p class="s-sec-sub">Manage disk usage. Blank fields disable that rule.</p>
+        </div>
+
+        <div class="s-card">
+          <div class="s-card-section">
+            <div class="s-card-section-head">Auto-cleanup</div>
+            <div class="s-auto-grid">
+              <div class="s-field-row">
+                <label for="autoDays">Max age</label>
+                <input id="autoDays" type="number" min="1" max="365" placeholder="days">
+                <span class="s-field-hint">Footage older than this is deleted.</span>
+              </div>
+              <div class="s-field-row">
+                <label for="autoGb">Max size</label>
+                <input id="autoGb" type="number" min="1" step="10" placeholder="GB">
+                <span class="s-field-hint">Oldest footage deleted to stay under limit.</span>
+              </div>
+            </div>
+            <div class="s-card-footer">
+              <button id="autoSaveBtn" class="s-btn s-btn-primary" type="button">Save</button>
+              <span id="autoMsg" class="s-save-msg"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="s-danger-head">Danger zone</div>
+        <div class="s-card s-card-danger">
+          <div class="s-card-section">
+            <div class="s-card-section-head">Manual delete</div>
+            <div class="s-auto-grid">
+              <div class="s-field-row">
+                <label for="cleanupDays">Older than</label>
+                <select id="cleanupDays">
+                  <option value="7">7 days</option>
+                  <option value="14">14 days</option>
+                  <option value="30" selected>30 days</option>
+                  <option value="60">60 days</option>
+                  <option value="90">90 days</option>
+                </select>
+                <span class="s-field-hint"></span>
+              </div>
+              <div class="s-field-row">
+                <label for="cleanupSource">Camera</label>
+                <select id="cleanupSource">
+                  <option value="">All cameras</option>
+                </select>
+                <span class="s-field-hint"></span>
+              </div>
+            </div>
+            <div class="s-card-footer">
+              <button id="cleanupBtn" class="s-btn s-btn-danger" type="button">Delete now</button>
+              <span id="cleanupMsg" class="s-save-msg"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
   <script src="/settings.js"></script>
 </body>
 </html>
