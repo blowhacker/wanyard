@@ -1216,10 +1216,12 @@ async function startLiveTail(srcId = null) {
     const canNative = el.liveVideo.canPlayType("application/vnd.apple.mpegurl");
     console.log("HLS attach:", hlsUrl, "native:", !!canNative);
     if (canNative) {
-      // Safari — native HLS
+      // Safari — native HLS: wait for metadata before playing
       el.liveVideo.src = hlsUrl;
       el.liveVideo.load();
-      el.liveVideo.play().catch(e => console.warn("play() failed:", e));
+      el.liveVideo.addEventListener("loadedmetadata", () => {
+        el.liveVideo.play().catch(e => console.warn("play() failed:", e));
+      }, { once: true });
     } else {
       // Chrome/Firefox — load hls.js lazily
       if (!window.Hls) {
