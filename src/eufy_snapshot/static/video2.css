@@ -36,8 +36,11 @@ body {
 }
 
 .v2-viewer {
+  display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   grid-template-rows: 48px minmax(0, 1fr) 108px;
+  height: 100vh;
+  overflow: hidden;
   background: var(--bg);
   color: var(--txt);
   font-family: var(--font-ui);
