@@ -1784,6 +1784,29 @@ function chooseLiveSource(srcId = null) {
     ?? null;
 }
 
+function shouldUseNativeHls() {
+  const ua = navigator.userAgent || "";
+  const isiOS = /iPad|iPhone|iPod/.test(ua)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isSafari = /Safari/i.test(ua)
+    && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Android/i.test(ua);
+  return isiOS || isSafari;
+}
+
+function loadHlsJs() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (!window.__v2HlsPromise) {
+    window.__v2HlsPromise = new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
+      s.onload = () => res(window.Hls);
+      s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+  return window.__v2HlsPromise;
+}
+
 async function startLiveTail(srcId = null) {
   const requestedAll = !srcId || srcId === "all";
   const chosen = chooseLiveSource(srcId);
@@ -1839,28 +1862,14 @@ async function startLiveTail(srcId = null) {
     // Clear any stale srcObject before setting src
     if (el.liveVideo.srcObject) { el.liveVideo.srcObject = null; }
     const canNative = el.liveVideo.canPlayType("application/vnd.apple.mpegurl");
-    console.log("HLS attach:", hlsUrl, "native:", !!canNative);
-    if (canNative) {
-      if (token !== liveTail.token) return;
-      // Safari — native HLS: wait for metadata before playing
-      el.liveVideo.src = hlsUrl;
-      el.liveVideo.load();
-      el.liveVideo.addEventListener("loadedmetadata", () => {
-        el.liveVideo.play().catch(e => console.warn("play() failed:", e));
-      }, { once: true });
-    } else {
-      // Chrome/Firefox — load hls.js lazily
-      if (!window.Hls) {
-        await new Promise((res, rej) => {
-          const s = document.createElement("script");
-          s.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
-          s.onload = res; s.onerror = rej;
-          document.head.appendChild(s);
-        });
-      }
+    const preferNative = Boolean(canNative && shouldUseNativeHls());
+    const HlsCtor = preferNative ? null : await loadHlsJs().catch(() => null);
+    const canUseHlsJs = Boolean(HlsCtor?.isSupported?.());
+    console.log("HLS attach:", hlsUrl, "hls.js:", canUseHlsJs, "native:", !!canNative, "preferNative:", preferNative);
+    if (canUseHlsJs) {
       if (token !== liveTail.token) return;
       if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
-      const hls = new Hls({
+      const hls = new HlsCtor({
         lowLatencyMode: false,
         // liveSyncDurationCount / liveMaxLatencyDurationCount intentionally omitted.
         // Explicit liveMaxLatencyDurationCount triggers catchup mode during init
@@ -1877,11 +1886,22 @@ async function startLiveTail(srcId = null) {
       liveTail.hls = hls;
       hls.loadSource(hlsUrl);
       hls.attachMedia(el.liveVideo);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => el.liveVideo.play().catch(() => {}));
-      hls.on(Hls.Events.ERROR, (_, data) => {
+      hls.on(HlsCtor.Events.MANIFEST_PARSED, () => el.liveVideo.play().catch(() => {}));
+      hls.on(HlsCtor.Events.ERROR, (_, data) => {
         if (token !== liveTail.token) return;
         if (data.fatal) { console.warn("HLS fatal:", data.type, data.details); stopLiveTail(); }
       });
+    } else if (canNative) {
+      if (token !== liveTail.token) return;
+      // Safari/iOS native HLS fallback. Desktop Chromium is kept on hls.js
+      // because its native media loader requests live manifests as ranges.
+      el.liveVideo.src = hlsUrl;
+      el.liveVideo.load();
+      el.liveVideo.addEventListener("loadedmetadata", () => {
+        el.liveVideo.play().catch(e => console.warn("play() failed:", e));
+      }, { once: true });
+    } else {
+      throw new Error("HLS playback is not supported in this browser");
     }
   }
 
