@@ -1492,8 +1492,11 @@ window.addEventListener("resize", () => timeline.draw());
 function pushState() {
   const p = new URLSearchParams();
   if (st.source !== "all")    p.set("source", st.source);
-  const ts = liveTail.active ? liveTail.latestDet?.abs_ts : player.reliableTs;
-  if (ts)                     p.set("ts",     Math.floor(ts));
+  if (liveTail.active)        { p.set("live", "1"); }
+  else {
+    const ts = player.reliableTs;
+    if (ts)                   p.set("ts", Math.floor(ts));
+  }
   if (st.cls.size > 0)        p.set("cls",    [...st.cls].join(","));
   history.replaceState(null, "", `${location.pathname}${p.size ? "?" + p : ""}`);
 }
