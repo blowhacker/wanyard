@@ -1475,8 +1475,13 @@ function fmtTs(ts) {
 // ── Auto-refresh ──────────────────────────────────────
 setInterval(async () => {
   el.status.textContent = liveTail.active ? "LIVE" : "SYNC";
-  st.window.to = Date.now() / 1000;
-  timeline.setWindow(st.window.from, st.window.to);
+  const nowTs = Date.now() / 1000;
+  // Only advance right edge when viewing recent content — never override
+  // manual scroll into history (would corrupt the events window range)
+  if (st.window.to > nowTs - 7200) {
+    st.window.to = nowTs;
+    timeline.setWindow(st.window.from, st.window.to);
+  }
   await load();
   el.status.textContent = liveTail.active ? "LIVE" : "AUTO";
 }, 15000);
