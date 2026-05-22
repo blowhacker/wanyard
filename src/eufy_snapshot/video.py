@@ -588,6 +588,15 @@ class VideoWorker:
         self._live_dir  = video_dir / "live" / source.id
         self._live_dir.mkdir(parents=True, exist_ok=True)
 
+    def _prune_live_dir(self, max_age_seconds: int = 900) -> None:
+        cutoff = time.time() - max_age_seconds
+        for path in self._live_dir.glob("*.ts"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError:
+                pass
+
     def run(self) -> None:
         """Continuous recording loop — call from a daemon thread."""
         LOG.info("continuous recording started: %s", self.source.id)
@@ -636,6 +645,7 @@ class VideoWorker:
         dt       = datetime.fromtimestamp(ts, tz=timezone.utc)
         date_dir = self.video_dir / self.source.id / dt.strftime("%Y/%m/%d")
         date_dir.mkdir(parents=True, exist_ok=True)
+        self._prune_live_dir()
         seg_path = date_dir / dt.strftime("%Y-%m-%d_%H-%M-%S.mp4")
         rel_path = seg_path.relative_to(self.video_dir).as_posix()
         try:
@@ -650,8 +660,9 @@ class VideoWorker:
                  # Live: rolling 60s HLS, segments auto-deleted
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
                  "-f", "hls", "-hls_time", "2", "-hls_list_size", "30",
+                 "-hls_start_number_source", "epoch",
                  "-hls_flags", "delete_segments+omit_endlist",
-                 "-hls_segment_filename", str(self._live_dir / "seg_%06d.ts"),
+                 "-hls_segment_filename", str(self._live_dir / "seg_%010d.ts"),
                  str(self._live_dir / "live.m3u8"),
                 ],
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,

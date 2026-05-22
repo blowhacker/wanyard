@@ -1784,6 +1784,48 @@ function chooseLiveSource(srcId = null) {
     ?? null;
 }
 
+function makeRateLimitedHlsLoader(HlsCtor) {
+  const BaseLoader = HlsCtor?.DefaultConfig?.loader;
+  if (!BaseLoader) return null;
+
+  return class RateLimitedHlsLoader extends BaseLoader {
+    static nextPlaylistAt = 0;
+
+    load(context, config, callbacks) {
+      const url = String(context?.url || "");
+      const isLivePlaylist = url.includes("/video/live/") && url.includes(".m3u8");
+      if (!isLivePlaylist) {
+        super.load(context, config, callbacks);
+        return;
+      }
+
+      const now = performance.now();
+      const due = Math.max(now, RateLimitedHlsLoader.nextPlaylistAt);
+      RateLimitedHlsLoader.nextPlaylistAt = due + 1000;
+      this._playlistTimer = window.setTimeout(() => {
+        this._playlistTimer = null;
+        super.load(context, config, callbacks);
+      }, Math.max(0, due - now));
+    }
+
+    abort() {
+      if (this._playlistTimer) {
+        clearTimeout(this._playlistTimer);
+        this._playlistTimer = null;
+      }
+      super.abort?.();
+    }
+
+    destroy() {
+      if (this._playlistTimer) {
+        clearTimeout(this._playlistTimer);
+        this._playlistTimer = null;
+      }
+      super.destroy?.();
+    }
+  };
+}
+
 async function startLiveTail(srcId = null) {
   const requestedAll = !srcId || srcId === "all";
   const chosen = chooseLiveSource(srcId);
@@ -1860,8 +1902,10 @@ async function startLiveTail(srcId = null) {
       }
       if (token !== liveTail.token) return;
       if (liveTail.hls) { liveTail.hls.destroy(); liveTail.hls = null; }
+      const RateLimitedHlsLoader = makeRateLimitedHlsLoader(Hls);
       const hls = new Hls({
         lowLatencyMode: false,
+        ...(RateLimitedHlsLoader ? { loader: RateLimitedHlsLoader } : {}),
         // liveSyncDurationCount / liveMaxLatencyDurationCount intentionally omitted.
         // Explicit liveMaxLatencyDurationCount triggers catchup mode during init
         // (currentTime=0 → apparent latency=60s >> 12s limit → max poll rate).
