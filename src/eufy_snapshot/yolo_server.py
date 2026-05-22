@@ -43,9 +43,10 @@ class _YoloHandler(socketserver.StreamRequestHandler):
 
 class YoloSocketServer(socketserver.ThreadingUnixStreamServer):
     def __init__(self, socket_path: str, model, video_db, video_dir):
-        self.model      = model
-        self.video_db   = video_db
-        self.video_dir  = video_dir
+        self.model            = model
+        self.video_db         = video_db
+        self.video_dir        = video_dir
+        self._backfill_thread: threading.Thread | None = None
         if Path(socket_path).exists():
             Path(socket_path).unlink()
         super().__init__(socket_path, _YoloHandler)
@@ -53,9 +54,13 @@ class YoloSocketServer(socketserver.ThreadingUnixStreamServer):
     def dispatch(self, req: dict) -> dict:
         t = req.get("type")
         if t == "ping":
-            return {"status": "ok"}
+            bt = self._backfill_thread
+            return {"status": "ok", "backfill_alive": bool(bt and bt.is_alive())}
         if t == "status":
-            return {"status": "ok", "model": str(self.model.model_name if self.model else None)}
+            bt = self._backfill_thread
+            return {"status": "ok",
+                    "model": str(getattr(self.model, "model_name", None)),
+                    "backfill_alive": bool(bt and bt.is_alive())}
         # Future: detect_frame for live RTSP
         return {"status": "error", "error": f"unknown type: {t}"}
 
@@ -67,29 +72,33 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
 
     LOG.info("backfill loop started")
     while not stop_event.is_set():
-        with video_db._connect() as conn:
-            segs = conn.execute(
-                "SELECT s.* FROM segments s WHERE s.end_ts IS NOT NULL"
-                " AND NOT EXISTS (SELECT 1 FROM video_detections WHERE segment_id=s.id)"
-                " LIMIT 5"
-            ).fetchall()
+        try:
+            with video_db._connect() as conn:
+                segs = conn.execute(
+                    "SELECT s.* FROM segments s WHERE s.end_ts IS NOT NULL"
+                    " AND NOT EXISTS (SELECT 1 FROM video_detections WHERE segment_id=s.id)"
+                    " LIMIT 5"
+                ).fetchall()
 
-        if not segs:
-            stop_event.wait(15)
-            continue
+            if not segs:
+                stop_event.wait(15)
+                continue
 
-        for row in segs:
-            if stop_event.is_set():
-                break
-            seg = dict(row)
-            seg_path = video_dir / seg["path"]
-            if seg_path.exists():
-                n = _yolo_tag_video(model, seg_path, seg["id"], video_db)
-                LOG.info("tagged %d frames: %s", n, seg["path"][-35:])
-            dets = video_db.detections_for_segment(seg["id"])
-            n_evt = extract_events(seg, dets, video_db)
-            if n_evt:
-                LOG.info("extracted %d events: %s", n_evt, seg["path"][-35:])
+            for row in segs:
+                if stop_event.is_set():
+                    break
+                seg = dict(row)
+                seg_path = video_dir / seg["path"]
+                if seg_path.exists():
+                    n = _yolo_tag_video(model, seg_path, seg["id"], video_db)
+                    LOG.info("tagged %d frames: %s", n, seg["path"][-35:])
+                dets = video_db.detections_for_segment(seg["id"])
+                n_evt = extract_events(seg, dets, video_db)
+                if n_evt:
+                    LOG.info("extracted %d events: %s", n_evt, seg["path"][-35:])
+        except Exception:
+            LOG.exception("backfill error — retrying in 30s")
+            stop_event.wait(30)
 
     LOG.info("backfill loop stopped")
 
@@ -122,6 +131,7 @@ def run(video_db_path: Path, video_dir: Path):
     backfill_thread.start()
 
     srv = YoloSocketServer(SOCKET_PATH, model, video_db, video_dir)
+    srv._backfill_thread = backfill_thread
     srv.socket.settimeout(1.0)
     LOG.info("YOLO server listening on %s", SOCKET_PATH)
 

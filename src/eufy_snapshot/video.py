@@ -524,13 +524,17 @@ class VideoWorker:
         """Continuous recording loop — call from a daemon thread."""
         LOG.info("continuous recording started: %s", self.source.id)
         while not self._stop.is_set():
-            ts = time.time()
-            self._start_segment(ts)
-            if self._proc:
-                self._stop.wait(_MAX_SEGMENT_SECONDS)
-                self._stop_segment(time.time())
-            else:
-                LOG.warning("ffmpeg failed for %s — retry in 30s", self.source.id)
+            try:
+                ts = time.time()
+                self._start_segment(ts)
+                if self._proc:
+                    self._stop.wait(_MAX_SEGMENT_SECONDS)
+                    self._stop_segment(time.time())
+                else:
+                    LOG.warning("ffmpeg failed for %s — retry in 30s", self.source.id)
+                    self._stop.wait(30)
+            except Exception:
+                LOG.exception("recording error for %s — retry in 30s", self.source.id)
                 self._stop.wait(30)
         LOG.info("continuous recording stopped: %s", self.source.id)
 

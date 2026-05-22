@@ -474,15 +474,17 @@ def make_app(
                 latest_event_ts = row[0] if row else None
         # Check yolo-serve socket
         yolo_ok = False
+        backfill_alive = False
         try:
             import socket as _sock, json as _json
             s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
             s.settimeout(1.0)
             s.connect(os.environ.get("YOLO_SOCKET", "/tmp/yolo.sock"))
             s.sendall(b'{"type":"ping"}\n')
-            resp = s.recv(256)
+            resp = _json.loads(s.recv(256).decode())
             s.close()
-            yolo_ok = b'"ok"' in resp
+            yolo_ok = resp.get("status") == "ok"
+            backfill_alive = bool(resp.get("backfill_alive"))
         except Exception:
             pass
         # Disk usage per source
@@ -495,6 +497,7 @@ def make_app(
                         source_sizes[src_dir.name] = total
                     except Exception:
                         pass
+        recording_threads = capture_worker.thread_health() if capture_worker else {}
         return JSONResponse({
             "disk": {"total": disk.total, "used": disk.used, "free": disk.free},
             "video_dir": str(video_dir) if video_dir else None,
@@ -502,6 +505,8 @@ def make_app(
             "segments": total_segs,
             "backfill_pending": pending,
             "yolo_connected": yolo_ok,
+            "backfill_alive": backfill_alive,
+            "recording_threads": recording_threads,
             "latest_event_ts": latest_event_ts,
         })
 

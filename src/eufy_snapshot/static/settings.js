@@ -11,9 +11,18 @@ async function loadStatus() {
     document.getElementById('videoSize').textContent = fmt.bytes(total);
   }
   document.getElementById('segCount').textContent      = (d.segments||0).toLocaleString();
-  document.getElementById('backfillStatus').textContent = d.backfill_pending > 0 ? d.backfill_pending+' pending' : 'done';
-  document.getElementById('yoloStatus').textContent    = d.yolo_connected ? '● connected' : '○ offline';
-  document.getElementById('yoloStatus').className      = 's-stat-value '+(d.yolo_connected?'s-green':'s-dim');
+  // Backfill: show pending count + thread alive status
+  const bfPending = d.backfill_pending > 0 ? d.backfill_pending+' pending' : 'done';
+  const bfAlive   = d.backfill_alive === false ? ' ⚠ stopped' : '';
+  document.getElementById('backfillStatus').textContent = bfPending + bfAlive;
+  document.getElementById('backfillStatus').className   = 's-stat-value'+(bfAlive?' s-red':'');
+  // YOLO: connected + recording threads
+  const threads = d.recording_threads || {};
+  const deadCams = Object.entries(threads).filter(([,alive])=>!alive).map(([id])=>id);
+  const yoloText = d.yolo_connected ? '● connected' : '○ offline';
+  const recText  = deadCams.length ? ` ⚠ ${deadCams.join(',')} dead` : '';
+  document.getElementById('yoloStatus').textContent    = yoloText + recText;
+  document.getElementById('yoloStatus').className      = 's-stat-value '+(d.yolo_connected&&!deadCams.length?'s-green':deadCams.length?'s-red':'s-dim');
   document.getElementById('lastEvent').textContent     = fmt.ts(d.latest_event_ts);
 
   const sizes = document.getElementById('sourceSizes');
