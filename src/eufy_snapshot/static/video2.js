@@ -599,7 +599,7 @@ const st = {
   initDone: false,
   classSearchSeq: 0,
 };
-const EVENTS_BUFFER = 12 * 3600;  // load 12h extra on each side of visible window
+const EVENTS_BUFFER = 3 * 3600;   // load 3h extra on each side of visible window
 
 const liveTail = {
   hls: null,
@@ -971,7 +971,7 @@ async function load() {
   const [sr, evR, cr] = await Promise.all([
     fetch(`/api/video2/timeline?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
     needsEventsLoad
-      ? fetch(`/api/video/events?limit=10000&since=${Math.floor(evFrom)}&until=${Math.ceil(evTo)}&${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({}))
+      ? fetch(`/api/video/events?limit=20000&since=${Math.floor(evFrom)}&until=${Math.ceil(evTo)}&${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({}))
       : Promise.resolve(null),
     fetch(`/api/video/classes?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
   ]);
