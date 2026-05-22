@@ -1850,10 +1850,8 @@ async function startLiveTail(srcId = null) {
       const hls = new Hls({
         liveSyncDurationCount: 3,
         liveMaxLatencyDurationCount: 6,
-        maxBufferLength: 8,          // keep buffer short — live, not VOD
-        maxMaxBufferLength: 12,
-        manifestLoadingMaxRetry: 2,
-        fragLoadingMaxRetry: 2,
+        manifestLoadingMaxRetry: 3,
+        fragLoadingMaxRetry: 3,
       });
       liveTail.hls = hls;
       hls.loadSource(hlsUrl);
