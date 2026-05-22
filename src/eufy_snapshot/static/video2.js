@@ -1917,9 +1917,38 @@ async function pollLiveTail() {
   updateLiveTailClock();
 }
 
+let _liveStalledSince = 0;
+let _liveLastTime = -1;
+
 function updateLiveTailClock() {
   if (!liveTail.active) return;
-  const ts = liveTail.latestDet?.abs_ts ?? Date.now() / 1000;
+
+  // Recover from paused state (tab hidden, autoplay policy, etc.)
+  if (el.liveVideo.paused && !el.liveVideo.ended) {
+    el.liveVideo.play().catch(() => {});
+  }
+
+  // Detect stall: currentTime not advancing for >4s while playing
+  const ct = el.liveVideo.currentTime;
+  const now = Date.now() / 1000;
+  if (!el.liveVideo.paused) {
+    if (ct === _liveLastTime) {
+      if (_liveStalledSince === 0) _liveStalledSince = now;
+      if (now - _liveStalledSince > 4) {
+        console.warn("HLS stall detected — restarting");
+        _liveStalledSince = 0; _liveLastTime = -1;
+        const srcId = liveTail.srcId;
+        stopLiveTail(false);
+        startLiveTail(srcId);
+        return;
+      }
+    } else {
+      _liveStalledSince = 0;
+      _liveLastTime = ct;
+    }
+  }
+
+  const ts = liveTail.latestDet?.abs_ts ?? now;
   timeline.setPlayhead(ts);
   setTimestampChip(ts, liveTail.srcId, true);
   setStatus("LIVE");
