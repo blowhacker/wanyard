@@ -969,10 +969,12 @@ async function load() {
   st.classes  = cr.classes  || {};
   timeline.setEventsWindow(st.window.from, st.window.to);
 
-  // Keep window right-edge at now+10min so ongoing recordings are reachable
+  // Advance right-edge only when viewing recent content (within 2h of now)
+  // Scrolling into history must not reset window.to to now — that causes
+  // the events since/until to span days and hit the 10k limit, losing old events
   const nowTs = Date.now() / 1000;
-  if (nowTs > st.window.to - 60) {
-    st.window.to = nowTs + 600; // 10 min headroom
+  if (nowTs > st.window.to - 60 && st.window.to > nowTs - 7200) {
+    st.window.to = nowTs + 600;
     timeline.setWindow(st.window.from, st.window.to);
   }
 
