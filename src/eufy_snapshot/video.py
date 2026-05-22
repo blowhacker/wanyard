@@ -559,6 +559,7 @@ class VideoWorker:
                 [ffmpeg, "-y", "-hide_banner", "-loglevel", "warning",
                  "-use_wallclock_as_timestamps", "1",
                  "-rtsp_transport", self.source.rtsp_transport,
+                 "-stimeout", "5000000",   # 5s socket timeout — fail fast on drop
                  "-i", url,
                  # Archive: MP4 with faststart
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",

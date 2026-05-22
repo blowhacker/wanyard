@@ -3,6 +3,9 @@ services:
     image: eufy-snapshot:latest
     container_name: eufy-yolo
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}
     command: ["-c", "/app/config.yaml", "yolo-serve"]
     environment:
       - YOLO_MODEL_PATH=/app/models/yolo11m.pt
@@ -25,6 +28,9 @@ services:
     image: eufy-snapshot:latest
     container_name: eufy-snapshot
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}
     command: ["-c", "/app/config.yaml", "serve"]
     ports:
       - "8091:8091"

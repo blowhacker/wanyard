@@ -113,7 +113,13 @@ def run(video_db_path: Path, video_dir: Path):
     LOG.info("loading YOLO model: %s", model_path)
     model = YOLO(model_path)
 
-    video_db   = VideoSegmentDB(video_db_path)
+    video_db = VideoSegmentDB(video_db_path)
+    with video_db._connect() as conn:
+        result = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        if result != "ok":
+            LOG.error("DB integrity check FAILED: %s — aborting", result)
+            return
+        LOG.info("DB integrity check passed")
     stop_event = threading.Event()
 
     def _shutdown(sig, frame):
