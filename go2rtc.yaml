@@ -1,6 +1,0 @@
-api:
-  origin: '*'
-
-webrtc:
-  candidates:
-    - stun:8555
