@@ -512,12 +512,8 @@ class VideoWorker:
 
     def stop(self) -> None:
         self._stop.set()
-        if self._proc and self._proc.poll() is None:
-            try:
-                self._proc.send_signal(signal.SIGTERM)
-                self._proc.wait(timeout=10)
-            except Exception:
-                self._proc.kill()
+        if self._seg_id or self._proc:
+            self._stop_segment(time.time())
 
     def _start_segment(self, ts: float) -> None:
         from .capture import resolve_rtsp_url
