@@ -767,32 +767,38 @@ def make_app(
             "freed_bytes": deleted_bytes,
         })
 
-    _hls_req_times: dict = {}
+    _m3u8_cache: dict = {}   # source_id -> (bytes, serve_time)
 
     async def serve_live_hls(request: Request) -> Response:
         import time as _time
         source_id = request.path_params.get("source_id", "")
         filename  = request.path_params.get("filename", "")
-        now = _time.monotonic()
-        key = f"{source_id}/{filename}"
-        times = _hls_req_times.setdefault(key, [])
-        times.append(now)
-        _hls_req_times[key] = [t for t in times if now - t < 5]
-        rate = len(_hls_req_times[key]) / 5
-        if rate > 2:
-            import logging as _logging
-            _logging.getLogger(__name__).warning("HLS %.0f/s: %s", rate, key)
         if not video_dir or not source_id or ".." in source_id or ".." in filename:
             return Response(status_code=404)
+        # Playlist throttle: serve cached bytes for requests arriving faster than 2/s.
+        # Prevents HLS client misbehaviour from hammering disk + logging.
+        if filename.endswith(".m3u8"):
+            now = _time.monotonic()
+            cached_bytes, cached_at = _m3u8_cache.get(source_id, (None, 0.0))
+            if cached_bytes is not None and now - cached_at < 0.5:
+                return Response(content=cached_bytes,
+                                media_type="application/vnd.apple.mpegurl",
+                                headers={"Cache-Control": "no-cache, no-store",
+                                         "Content-Encoding": "identity"})
         path = video_dir / "live" / source_id / filename
         if not path.exists():
-            if filename.endswith(".ts"):
-                import logging as _logging
-                _logging.getLogger(__name__).warning("404 segment: %s/%s", source_id, filename)
             return Response(status_code=404)
-        media = "application/vnd.apple.mpegurl" if filename.endswith(".m3u8") else "video/mp2t"
+        is_m3u8 = filename.endswith(".m3u8")
+        media = "application/vnd.apple.mpegurl" if is_m3u8 else "video/mp2t"
         # Content-Encoding: identity prevents GZipMiddleware from compressing
         # video data which would confuse the browser's HLS player
+        if is_m3u8:
+            # Read into memory to populate cache for rate-limiting
+            content = path.read_bytes()
+            _m3u8_cache[source_id] = (content, _time.monotonic())
+            return Response(content=content, media_type=media,
+                            headers={"Cache-Control": "no-cache, no-store",
+                                     "Content-Encoding": "identity"})
         return FileResponse(path, media_type=media,
                             headers={"Cache-Control": "no-cache, no-store",
                                      "Content-Encoding": "identity"})
