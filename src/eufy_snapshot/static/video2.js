@@ -706,6 +706,7 @@ const POST_BUFFER  = 10;
 const LIVE_OPEN_MAX_AGE = 3600;
 const LIVE_DVR_TOLERANCE_SECONDS = 1.5;
 const LIVE_DVR_EDGE_PAD_SECONDS = 0.25;
+const LIVE_TIMELINE_FUTURE_PAD_SECONDS = 600;
 
 // ── DOM ───────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -951,7 +952,7 @@ function setTimelineWindow(from, to) {
   timeline.setWindow(from, to);
   renderRuler();
   // Events only exist in the past — cap check at now so the live-gap
-  // (window.to = nowTs+600) never triggers perpetual re-loads.
+  // (window.to = nowTs + LIVE_TIMELINE_FUTURE_PAD_SECONDS) never triggers perpetual re-loads.
   const nowTs = Date.now() / 1000;
   const checkTo = Math.min(to, nowTs);
   const needsLoad = checkTo > from && !_eventsRangesCovers(from, checkTo);
@@ -1434,7 +1435,7 @@ async function load() {
   // the events since/until to span days and hit the 10k limit, losing old events
   const nowTs = Date.now() / 1000;
   if (nowTs > st.window.to - 60 && st.window.to > nowTs - 7200) {
-    st.window.to = nowTs + 600;
+    st.window.to = nowTs + LIVE_TIMELINE_FUTURE_PAD_SECONDS;
     setTimelineWindow(st.window.from, st.window.to);
   }
 
@@ -1563,7 +1564,7 @@ window.addEventListener("mousemove", e => {
   const oldest = st.segments.length
     ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
     : st.window.from;
-  const newest = Date.now() / 1000 + 600;
+  const newest = Date.now() / 1000 + LIVE_TIMELINE_FUTURE_PAD_SECONDS;
   let nf = _drag.fromSnap + shift, nt = _drag.toSnap + shift;
   if (nf < oldest) { nf = oldest; nt = oldest + span; }
   if (nt > newest) { nt = newest; nf = newest - span; }
@@ -1636,7 +1637,7 @@ function _windowBounds() {
     oldest: st.segments.length
       ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
       : st.window.from,
-    newest: Date.now() / 1000 + 600,
+    newest: Date.now() / 1000 + LIVE_TIMELINE_FUTURE_PAD_SECONDS,
   };
 }
 
@@ -2292,7 +2293,7 @@ setInterval(async () => {
   // Only advance right edge when viewing recent content — never override
   // manual scroll into history (would corrupt the events window range)
   if (st.window.to > nowTs - 7200) {
-    st.window.to = nowTs;
+    st.window.to = nowTs + LIVE_TIMELINE_FUTURE_PAD_SECONDS;
     setTimelineWindow(st.window.from, st.window.to);
   }
   await load();
@@ -2339,7 +2340,7 @@ async function init() {
   const now = Date.now() / 1000;
   const anchor = urlTs ?? now;
   st.window.from = anchor - 3 * 3600;
-  st.window.to   = anchor + 3 * 3600 + 600;
+  st.window.to   = anchor + 3 * 3600 + LIVE_TIMELINE_FUTURE_PAD_SECONDS;
   setTimelineWindow(st.window.from, st.window.to);
 
   if (urlLive) {
