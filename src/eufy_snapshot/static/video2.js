@@ -395,7 +395,9 @@ class V2Timeline {
   #from = 0; #to = 0;
   #head = null;
   #SRC_W = 78;
-  #eventsFrom = 0; #eventsTo = 0;
+  #eventsRanges = [];
+  #fetchFrom = 0; #fetchTo = 0;
+  #fetchRaf = null;
 
   constructor(canvasEl) {
     this.#c   = canvasEl;
@@ -403,8 +405,24 @@ class V2Timeline {
   }
 
   setWindow(from, to) { this.#from = from; this.#to = to; this.draw(); }
-  setEventsWindow(from, to) { this.#eventsFrom = from; this.#eventsTo = to; this.draw(); }
-  setPlayhead(ts)     { this.#head = ts; this.draw(); }
+  setEventsRanges(ranges) { this.#eventsRanges = ranges; this.draw(); }
+  setFetchingRange(from, to) {
+    this.#fetchFrom = from; this.#fetchTo = to;
+    if (!this.#fetchRaf) this.#animateFetch();
+  }
+  clearFetchingRange() {
+    this.#fetchFrom = 0; this.#fetchTo = 0;
+    if (this.#fetchRaf) { cancelAnimationFrame(this.#fetchRaf); this.#fetchRaf = null; }
+    this.draw();
+  }
+  #animateFetch() {
+    this.draw();
+    this.#fetchRaf = requestAnimationFrame(() => {
+      if (this.#fetchTo > this.#fetchFrom) this.#animateFetch();
+      else this.#fetchRaf = null;
+    });
+  }
+  setPlayhead(ts) { this.#head = ts; this.draw(); }
   setSrcNames(map)    { this.#srcNames = map; }
   get labelWidth() {
     const W = this.#c?.clientWidth || this.#SRC_W;
@@ -585,12 +603,41 @@ class V2Timeline {
     ctx.textBaseline = "alphabetic";
     ctx.fillText(dateLabel, SRC_W + 7, 13);
 
-    if (this.#eventsFrom < this.#eventsTo) {
-      const ex1 = Math.max(SRC_W, this.#tsToX(this.#eventsFrom));
-      const ex2 = Math.min(W, this.#tsToX(this.#eventsTo));
+    // Events loaded: one green tick per loaded interval
+    const BAR_Y = H - LABEL_H - 2;
+    for (const r of this.#eventsRanges) {
+      const ex1 = Math.max(SRC_W, this.#tsToX(r.from));
+      const ex2 = Math.min(W, this.#tsToX(r.to));
       if (ex2 > ex1) {
-        ctx.fillStyle = "rgba(78,201,138,0.36)";
-        ctx.fillRect(ex1, H - LABEL_H - 2, ex2 - ex1, 2);
+        ctx.fillStyle = "rgba(78,201,138,0.5)";
+        ctx.fillRect(ex1, BAR_Y, ex2 - ex1, 2);
+      }
+    }
+    // In-flight fetch: pulsing amber bar
+    if (this.#fetchTo > this.#fetchFrom) {
+      const fx1 = Math.max(SRC_W, this.#tsToX(this.#fetchFrom));
+      const fx2 = Math.min(W, this.#tsToX(this.#fetchTo));
+      if (fx2 > fx1) {
+        const pulse = 0.35 + 0.3 * Math.sin(Date.now() / 280);
+        ctx.fillStyle = `rgba(232,165,88,${pulse.toFixed(2)})`;
+        ctx.fillRect(fx1, BAR_Y, fx2 - fx1, 2);
+      }
+    }
+    // Missing footage: gaps between segments in historical window (>5min ago)
+    const gapCutoff = nowTs - 300;
+    if (this.#segs.length > 0 && this.#from < gapCutoff) {
+      const sorted = [...this.#segs].sort((a, b) => a.start_ts - b.start_ts);
+      let cursor = this.#from;
+      for (const s of sorted) {
+        if (s.start_ts > cursor + 30 && cursor < gapCutoff) {
+          const gx1 = Math.max(SRC_W, this.#tsToX(cursor));
+          const gx2 = Math.min(W, this.#tsToX(Math.min(s.start_ts, gapCutoff)));
+          if (gx2 > gx1) {
+            ctx.fillStyle = "rgba(226,92,76,0.35)";
+            ctx.fillRect(gx1, BAR_Y, gx2 - gx1, 2);
+          }
+        }
+        cursor = Math.max(cursor, s.end_ts ?? s.start_ts);
       }
     }
 
@@ -1292,6 +1339,7 @@ async function load() {
   const evFrom = st.window.from - EVENTS_BUFFER;
   const evTo   = st.window.to   + EVENTS_BUFFER;
   const needsEventsLoad = !_eventsRangesCovers(st.window.from, st.window.to);
+  if (needsEventsLoad) timeline.setFetchingRange(evFrom, evTo);
 
   const [sr, evR, cr] = await Promise.all([
     fetch(`/api/video2/timeline?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
@@ -1311,8 +1359,8 @@ async function load() {
     st.events = [...byId.values()].sort((a, b) => b.abs_ts - a.abs_ts);
     _eventsRangesAdd(evFrom, evTo);
   }
-  const _elb = _eventsLoadedBounds();
-  timeline.setEventsWindow(_elb.from, _elb.to);
+  timeline.clearFetchingRange();
+  timeline.setEventsRanges(st.eventsLoaded.ranges);
 
   // Advance right-edge only when viewing recent content (within 2h of now)
   // Scrolling into history must not reset window.to to now — that causes
