@@ -16,7 +16,10 @@ RUN pip install --no-cache-dir \
   && pip install --no-cache-dir .
 
 COPY config.yaml ./config.yaml
+COPY healthcheck.sh ./healthcheck.sh
 
 EXPOSE 8091
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD sh /app/healthcheck.sh
 ENTRYPOINT ["eufy-snapshot"]
 CMD ["serve"]
