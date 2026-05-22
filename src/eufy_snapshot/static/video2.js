@@ -718,10 +718,6 @@ const el = {
   tsTime:  $("v2TsTime"),
   tsDate:  $("v2TsDate"),
   srcCtrl: $("v2SourceCtrl"),
-  srcButton:$("v2SourceButton"),
-  srcLabel:$("v2SourceLabel"),
-  srcDot:  $("v2SourceDot"),
-  srcMenu: $("v2SourceMenu"),
   clsField:$("v2ClassField"),
   clsCtrl: $("v2ClassCtrl"),
   nearScope:$("v2NearScope"),
@@ -883,10 +879,6 @@ function setStatus(state, detail = "") {
   el.status.classList.remove("live", "buffering", "offline", "replay");
   el.status.classList.add(cls);
   textEl.textContent = text;
-  if (el.srcDot) {
-    el.srcDot.classList.toggle("offline", cls === "offline");
-    el.srcDot.classList.toggle("buffering", cls === "buffering");
-  }
 }
 
 function setPlayIcon(playing) {
@@ -1404,56 +1396,38 @@ async function load() {
 
 // ── Source control ────────────────────────────────────
 function renderSrcCtrl() {
-  if (!el.srcMenu || !el.srcLabel) return;
-  el.srcMenu.innerHTML = "";
+  if (!el.srcCtrl) return;
+  el.srcCtrl.innerHTML = "";
   const rtsp = st.sources.filter(s => s.type === "rtsp");
-  if (!rtsp.length) {
-    el.srcLabel.textContent = "No sources";
-    return;
-  }
-  const current = st.source === "all"
-    ? { id:"all", name:"All sources" }
-    : rtsp.find(s => s.id === st.source) || rtsp[0];
-  el.srcLabel.textContent = current.name || current.id;
-  const currentState = sourceState(current.id);
-  el.srcDot?.classList.toggle("offline", currentState === "offline");
-  el.srcDot?.classList.toggle("buffering", currentState === "buffering");
+  if (!rtsp.length) return;
 
-  [{ id:"all", name:"ALL" }, ...rtsp].forEach(s => {
+  const items = rtsp.length > 1 ? [{ id:"all", name:"All" }, ...rtsp] : rtsp;
+  items.forEach(s => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "ab-menu-item" + (st.source === s.id ? " active" : "");
-    b.role = "menuitem";
-    b.innerHTML = `<span class="dot"></span><span class="name"></span>`;
-    b.querySelector(".name").textContent = s.name || s.id;
-    const dot = b.querySelector(".dot");
-    const state = sourceState(s.id);
-    dot.classList.toggle("offline", state === "offline");
-    dot.classList.toggle("buffering", state === "buffering");
+    b.className = "ab-src-pill" + (st.source === s.id ? " active" : "");
+    if (s.id !== "all") {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      const state = sourceState(s.id);
+      dot.classList.toggle("offline",   state === "offline");
+      dot.classList.toggle("buffering", state === "buffering");
+      b.appendChild(dot);
+    }
+    const label = document.createElement("span");
+    label.textContent = s.name || s.id;
+    b.appendChild(label);
     b.addEventListener("click", () => {
+      if (st.source === s.id) return;
       const wasLive = liveTail.active;
       stopLiveTail(false);
       st.source = s.id; st.initDone = false;
-      st.events = []; _eventsRangesClear();  // clear stale events
-      closeSourceMenu();
+      st.events = []; _eventsRangesClear();
       renderSrcCtrl(); load().then(pushState);
       if (wasLive) startLiveTail(s.id);
     });
-    el.srcMenu.appendChild(b);
+    el.srcCtrl.appendChild(b);
   });
-}
-
-function closeSourceMenu() {
-  el.srcMenu.hidden = true;
-  el.srcCtrl?.classList.remove("open");
-  el.srcButton?.setAttribute("aria-expanded", "false");
-}
-
-function toggleSourceMenu() {
-  const open = el.srcMenu.hidden;
-  el.srcMenu.hidden = !open;
-  el.srcCtrl?.classList.toggle("open", open);
-  el.srcButton?.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 // ── Class filter ──────────────────────────────────────
@@ -1980,13 +1954,6 @@ el.liveBtn.addEventListener("click", () => {
   if (liveTail.active) { stopLiveTail(); return; }
   startLiveTail(st.source !== "all" ? st.source : null);
   scrollTimelineToTs(Date.now() / 1000);
-});
-el.srcButton?.addEventListener("click", e => {
-  e.stopPropagation();
-  toggleSourceMenu();
-});
-document.addEventListener("click", e => {
-  if (!el.srcCtrl?.contains(e.target)) closeSourceMenu();
 });
 
 function toggleFullscreen() {
