@@ -1,12 +1,4 @@
 services:
-  go2rtc:
-    image: alexxit/go2rtc
-    container_name: go2rtc
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ./go2rtc-data:/config
-
   yolo:
     image: eufy-snapshot:latest
     container_name: eufy-yolo
@@ -37,23 +29,13 @@ services:
     ports:
       - "8091:8091"
     environment:
-      - YOLO_MODEL_PATH=/app/models/yolo11m.pt
-      - GO2RTC_URL=http://host.docker.internal:1984
-      - GO2RTC_CONFIG_DIR=/go2rtc-data
       - VIDEO_DIR=/app/video
       - YOLO_SOCKET=/run/yolo/yolo.sock
     volumes:
       - ./config.banana.yaml:/app/config.yaml:ro
-      - ./snapshots:/app/snapshots
       - ./data:/app/data
-      - ./models:/app/models
-      - ./go2rtc-data:/go2rtc-data
       - ./video:/app/video
       - yolo-run:/run/yolo
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    depends_on:
-      - go2rtc
 
 volumes:
   yolo-run:
