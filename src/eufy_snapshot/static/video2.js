@@ -497,16 +497,14 @@ class V2Timeline {
         ctx.fillRect(Math.max(SRC_W, x1), top + 2, Math.min(W, x2) - Math.max(SRC_W, x1), bot - top - 4);
       });
 
-      // Event dots (in-range)
+      // Event lines (vertical bars, merge nicely when dense)
       const srcEvts = this.#evts.filter(e => e.source_id === srcId);
       srcEvts.forEach(e => {
         const x = this.#tsToX(e.abs_ts);
         if (x < SRC_W || x > W) return;
         ctx.fillStyle = EVENT_COLORS[e.class] || "#ccd8e4";
-        ctx.globalAlpha = 0.9;
-        ctx.beginPath();
-        ctx.arc(x, mid, 3.5, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.globalAlpha = 0.75;
+        ctx.fillRect(x - 0.75, top + 4, 1.5, bot - top - 8);
       });
       ctx.globalAlpha = 1;
 
@@ -1158,8 +1156,47 @@ function renderClsCtrl() {
   });
 }
 
+// ── Timeline drag-to-scroll ───────────────────────────
+let _drag = null, _wasDrag = false;
+el.tlCanvas.addEventListener("mousedown", e => {
+  if (e.button !== 0) return;
+  _drag = { startX: e.clientX, fromSnap: st.window.from, toSnap: st.window.to, moved: false };
+  el.tlCanvas.style.cursor = "grabbing";
+});
+window.addEventListener("mousemove", e => {
+  if (!_drag) return;
+  const dx = e.clientX - _drag.startX;
+  if (Math.abs(dx) > 4) _drag.moved = true;
+  if (!_drag.moved) return;
+  const rect = el.tlCanvas.getBoundingClientRect();
+  const span = _drag.toSnap - _drag.fromSnap;
+  const pxPerSec = (rect.width - 64) / span;
+  const shift = -dx / pxPerSec;
+  const oldest = st.segments.length
+    ? st.segments.reduce((m,s) => Math.min(m, s.start_ts), Infinity) - 1800
+    : st.window.from;
+  const newest = Date.now() / 1000 + 600;
+  let nf = _drag.fromSnap + shift, nt = _drag.toSnap + shift;
+  if (nf < oldest) { nf = oldest; nt = oldest + span; }
+  if (nt > newest) { nt = newest; nf = newest - span; }
+  if (nf < oldest) nf = oldest;
+  st.window.from = nf; st.window.to = nt;
+  timeline.setWindow(nf, nt);
+});
+window.addEventListener("mouseup", e => {
+  if (!_drag) return;
+  el.tlCanvas.style.cursor = "";
+  _wasDrag = _drag.moved;
+  if (_drag.moved) {
+    clearTimeout(_fetchDebounce);
+    _fetchDebounce = setTimeout(() => load(), 400);
+  }
+  _drag = null;
+});
+
 // ── Timeline interactions ─────────────────────────────
 el.tlCanvas.addEventListener("click", e => {
+  if (_wasDrag) { _wasDrag = false; return; }  // ignore click after drag
   const rect = el.tlCanvas.getBoundingClientRect();
   const hit  = timeline.decode(e.clientX - rect.left, e.clientY - rect.top);
   if (!hit) return;
