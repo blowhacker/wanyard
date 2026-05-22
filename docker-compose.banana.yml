@@ -49,7 +49,6 @@ services:
       - ./models:/app/models
       - ./go2rtc-data:/go2rtc-data
       - ./video:/app/video
-    volumes:
       - yolo-run:/run/yolo
     extra_hosts:
       - "host.docker.internal:host-gateway"
