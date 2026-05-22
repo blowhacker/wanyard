@@ -943,8 +943,11 @@ function setTimelineWindow(from, to) {
   st.window.to = to;
   timeline.setWindow(from, to);
   renderRuler();
-  // Load events if window has drifted outside the already-loaded range
-  const needsLoad = !_eventsRangesCovers(from, to);
+  // Events only exist in the past — cap check at now so the live-gap
+  // (window.to = nowTs+600) never triggers perpetual re-loads.
+  const nowTs = Date.now() / 1000;
+  const checkTo = Math.min(to, nowTs);
+  const needsLoad = checkTo > from && !_eventsRangesCovers(from, checkTo);
   if (needsLoad) {
     clearTimeout(_fetchDebounce);
     _fetchDebounce = setTimeout(() => load(), 350);
@@ -1330,7 +1333,8 @@ async function load() {
   // Only re-fetch if the visible window has moved outside the already-loaded range.
   const evFrom = st.window.from - EVENTS_BUFFER;
   const evTo   = st.window.to   + EVENTS_BUFFER;
-  const needsEventsLoad = !_eventsRangesCovers(st.window.from, st.window.to);
+  const _loadCheckTo = Math.min(st.window.to, Date.now() / 1000);
+  const needsEventsLoad = _loadCheckTo > st.window.from && !_eventsRangesCovers(st.window.from, _loadCheckTo);
   if (needsEventsLoad) timeline.setFetchingRange(evFrom, evTo);
 
   const [sr, evR, cr] = await Promise.all([
@@ -1349,14 +1353,17 @@ async function load() {
     const byId = new Map(st.events.map(e => [e.id, e]));
     (evR.events || []).forEach(e => byId.set(e.id, e));
     st.events = [...byId.values()].sort((a, b) => b.abs_ts - a.abs_ts);
-    // Cap at last completed segment: live gap has no YOLO-tagged events yet.
-    // When the segment closes and gets tagged, latestSegEnd advances and the
-    // 15s refresh re-fetches (since loaded range won't cover the new region).
-    const latestSegEnd = st.segments.reduce((m, s) => s.end_ts ? Math.max(m, s.end_ts) : m, 0);
-    _eventsRangesAdd(evFrom, latestSegEnd > 0 ? Math.min(evTo, latestSegEnd) : evTo);
+    // Coverage tracking: cap at now (events can't exist in the future).
+    // This stops the live-window perpetual reload loop.
+    _eventsRangesAdd(evFrom, Math.min(evTo, Date.now() / 1000));
   }
   timeline.clearFetchingRange();
-  timeline.setEventsRanges(st.eventsLoaded.ranges);
+  // Green bar: show only up to last YOLO-tagged segment, not the live gap.
+  const latestSegEnd = st.segments.reduce((m, s) => s.end_ts ? Math.max(m, s.end_ts) : m, 0);
+  const visRanges = latestSegEnd > 0
+    ? st.eventsLoaded.ranges.map(r => ({ from: r.from, to: Math.min(r.to, latestSegEnd) })).filter(r => r.to > r.from)
+    : st.eventsLoaded.ranges;
+  timeline.setEventsRanges(visRanges);
 
   // Advance right-edge only when viewing recent content (within 2h of now)
   // Scrolling into history must not reset window.to to now — that causes
@@ -1845,6 +1852,9 @@ async function startLiveTail(srcId = null) {
       hls.loadSource(hlsUrl);
       hls.attachMedia(el.liveVideo);
       hls.on(Hls.Events.MANIFEST_PARSED, () => el.liveVideo.play().catch(() => {}));
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) { console.warn("HLS fatal:", data.type, data.details); stopLiveTail(); }
+      });
     }
   }
 
