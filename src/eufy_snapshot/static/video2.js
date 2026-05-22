@@ -1470,7 +1470,7 @@ el.tlCanvas.addEventListener("click", e => {
     const nowTs = Date.now() / 1000;
     const srcSegs = st.segments.filter(s => s.source_id === hit.srcId && s.end_ts != null);
     const latestEnd = srcSegs.length ? Math.max(...srcSegs.map(s => s.end_ts)) : 0;
-    if (latestEnd > 0 && latestEnd > nowTs - 3600 && hit.ts > latestEnd - 15) {
+    if (latestEnd > 0 && latestEnd > nowTs - 3600 && hit.ts >= latestEnd) {
       startLiveTail(hit.srcId);
       return;
     }
