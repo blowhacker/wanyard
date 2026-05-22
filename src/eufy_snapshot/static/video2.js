@@ -1406,6 +1406,9 @@ function renderSrcCtrl() {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "ab-src-pill" + (st.source === s.id ? " active" : "");
+    const label = document.createElement("span");
+    label.textContent = s.name || s.id;
+    b.appendChild(label);
     if (s.id !== "all") {
       const dot = document.createElement("span");
       dot.className = "dot";
@@ -1414,9 +1417,6 @@ function renderSrcCtrl() {
       dot.classList.toggle("buffering", state === "buffering");
       b.appendChild(dot);
     }
-    const label = document.createElement("span");
-    label.textContent = s.name || s.id;
-    b.appendChild(label);
     b.addEventListener("click", () => {
       if (st.source === s.id) return;
       const wasLive = liveTail.active;
