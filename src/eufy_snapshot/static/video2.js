@@ -526,25 +526,25 @@ class V2Timeline {
         const srcEvts = this.#evts.filter(e => e.source_id === srcId);
         const nBefore = srcEvts.filter(e => e.abs_ts < this.#from).length;
         const nAfter = srcEvts.filter(e => e.abs_ts > this.#to).length;
-        ctx.font = "600 9px 'IBM Plex Mono',monospace";
+        ctx.font = "600 11px 'IBM Plex Mono',monospace";
         ctx.textBaseline = "middle";
         if (nBefore > 0) {
-          const label = `< ${nBefore}`;
-          const tw = ctx.measureText(label).width + 8;
-          ctx.fillStyle = "rgba(232,165,88,0.18)";
-          ctx.fillRect(SRC_W, mid - 8, tw, 16);
-          ctx.fillStyle = "rgba(232,165,88,0.95)";
+          const label = `◄ ${nBefore}`;
+          const tw = ctx.measureText(label).width + 10;
+          ctx.fillStyle = "rgba(232,165,88,0.32)";
+          ctx.fillRect(SRC_W, mid - 10, tw, 20);
+          ctx.fillStyle = "#e8a558";
           ctx.textAlign = "left";
-          ctx.fillText(label, SRC_W + 4, mid);
+          ctx.fillText(label, SRC_W + 5, mid);
         }
         if (nAfter > 0) {
-          const label = `${nAfter} >`;
-          const tw = ctx.measureText(label).width + 8;
-          ctx.fillStyle = "rgba(232,165,88,0.18)";
-          ctx.fillRect(W - tw, mid - 8, tw, 16);
-          ctx.fillStyle = "rgba(232,165,88,0.95)";
+          const label = `${nAfter} ►`;
+          const tw = ctx.measureText(label).width + 10;
+          ctx.fillStyle = "rgba(232,165,88,0.32)";
+          ctx.fillRect(W - tw, mid - 10, tw, 20);
+          ctx.fillStyle = "#e8a558";
           ctx.textAlign = "right";
-          ctx.fillText(label, W - 4, mid);
+          ctx.fillText(label, W - 5, mid);
         }
       });
     }
@@ -1466,10 +1466,11 @@ el.tlCanvas.addEventListener("click", e => {
     stopLiveTail(false);
     mode.seekTo(hit.snapEvent.abs_ts, hit.snapEvent.source_id); pushState();
   } else {
-    // If clicking past the last completed segment for that source, go live via HLS
+    // If clicking near/past the last completed segment, go live via HLS
+    const nowTs = Date.now() / 1000;
     const srcSegs = st.segments.filter(s => s.source_id === hit.srcId && s.end_ts != null);
     const latestEnd = srcSegs.length ? Math.max(...srcSegs.map(s => s.end_ts)) : 0;
-    if (latestEnd > 0 && hit.ts > latestEnd + 30) {
+    if (latestEnd > 0 && latestEnd > nowTs - 3600 && hit.ts > latestEnd - 15) {
       startLiveTail(hit.srcId);
       return;
     }
@@ -1819,8 +1820,9 @@ el.boxes.addEventListener("click",  () => {
 el.boxes.classList.toggle("active", st.showBoxes);
 el.loop.classList.toggle("on", st.loop);
 el.liveBtn.addEventListener("click", () => {
-  if (liveTail.active) stopLiveTail();
-  else startLiveTail(st.source !== "all" ? st.source : null);
+  if (liveTail.active) { stopLiveTail(); return; }
+  startLiveTail(st.source !== "all" ? st.source : null);
+  scrollTimelineToTs(Date.now() / 1000);
 });
 el.srcButton?.addEventListener("click", e => {
   e.stopPropagation();

@@ -35,21 +35,21 @@ async function loadStatus() {
 
   let healthClass, healthText, subText, chipClass;
   if (anyDead) {
-    healthClass = 'dead'; healthText = `${deadCams.length} cam dead`;
+    healthClass = 'dead'; healthText = `${deadCams.length} cam offline`;
     subText = deadCams.join(', ');
     chipClass = 'dead'; chipTxt.textContent = `${deadCams.length} cam offline`;
   } else if (!yoloOk) {
-    healthClass = 'warn'; healthText = 'YOLO offline';
-    subText = 'Detection paused';
-    chipClass = 'warn'; chipTxt.textContent = 'YOLO offline';
+    healthClass = 'warn'; healthText = 'Detection offline';
+    subText = 'AI detection paused — check logs';
+    chipClass = 'warn'; chipTxt.textContent = 'Detection offline';
   } else if (!bfDone && d.backfill_pending > 0) {
-    healthClass = 'warn'; healthText = 'Backfilling';
-    subText = `${d.backfill_pending} clips pending · last event ${fmt.ts(d.latest_event_ts)}`;
-    chipClass = 'warn'; chipTxt.textContent = `Backfill: ${d.backfill_pending}`;
+    healthClass = 'warn'; healthText = 'Processing';
+    subText = `${d.backfill_pending} clips queued for detection · last event ${fmt.ts(d.latest_event_ts)}`;
+    chipClass = 'warn'; chipTxt.textContent = `Processing: ${d.backfill_pending} clips`;
   } else {
     healthClass = 'ok'; healthText = 'Healthy';
-    subText = `YOLO · backfill done · last event ${fmt.ts(d.latest_event_ts)}`;
-    chipClass = ''; chipTxt.textContent = 'Pipeline healthy';
+    subText = `Detection active · all clips tagged · last event ${fmt.ts(d.latest_event_ts)}`;
+    chipClass = ''; chipTxt.textContent = 'All systems healthy';
   }
 
   healthEl.textContent = healthText;
