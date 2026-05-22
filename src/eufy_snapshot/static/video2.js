@@ -707,6 +707,7 @@ const LIVE_OPEN_MAX_AGE = 3600;
 const LIVE_DVR_TOLERANCE_SECONDS = 1.5;
 const LIVE_DVR_EDGE_PAD_SECONDS = 0.25;
 const LIVE_TIMELINE_FUTURE_PAD_SECONDS = 600;
+const LIVE_EDGE_RATE_RESET_SECONDS = 4;
 
 // ── DOM ───────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -1079,6 +1080,29 @@ function liveTailCurrentTs() {
     return liveTail.wallClockOffset + (el.liveVideo.currentTime || 0);
   }
   return liveTail.latestDet?.abs_ts ?? Date.now() / 1000;
+}
+
+function selectedPlaybackRate() {
+  return V2_SPEEDS[st.speed]?.rate ?? 1;
+}
+
+function setLivePlaybackRate(rate) {
+  if (!el.liveVideo) return;
+  if (Math.abs((el.liveVideo.playbackRate || 1) - rate) < 0.01) return;
+  el.liveVideo.defaultPlaybackRate = rate;
+  el.liveVideo.playbackRate = rate;
+}
+
+function updateLivePlaybackRate(ts = liveTailCurrentTs()) {
+  if (!liveTail.active) return;
+  const selected = selectedPlaybackRate();
+  let rate = selected;
+  if (selected > 1) {
+    const lag = Date.now() / 1000 - ts;
+    const isDvrCatchup = liveTail.wallClockOffset != null && lag > LIVE_EDGE_RATE_RESET_SECONDS;
+    rate = isDvrCatchup ? selected : 1;
+  }
+  setLivePlaybackRate(rate);
 }
 
 async function seekLiveTail(srcId, ts) {
@@ -1912,6 +1936,7 @@ async function startLiveTail(srcId = null, options = {}) {
     }
     replaceLiveHistory(chosen, seekTs);
     updateLiveTailClock();
+    updateLivePlaybackRate();
     el.liveVideo.play().catch(() => {});
     return true;
   }
@@ -1995,6 +2020,7 @@ async function startLiveTail(srcId = null, options = {}) {
       hls.attachMedia(el.liveVideo);
       hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
         if (seekTs != null && liveWindow) seekLiveVideoToTs(seekTs, liveWindow);
+        updateLivePlaybackRate();
         el.liveVideo.play().catch(() => {});
       });
       hls.on(HlsCtor.Events.ERROR, (_, data) => {
@@ -2009,6 +2035,7 @@ async function startLiveTail(srcId = null, options = {}) {
       el.liveVideo.load();
       el.liveVideo.addEventListener("loadedmetadata", () => {
         if (seekTs != null && liveWindow) seekLiveVideoToTs(seekTs, liveWindow);
+        updateLivePlaybackRate();
         el.liveVideo.play().catch(e => console.warn("play() failed:", e));
       }, { once: true });
     } else {
@@ -2024,6 +2051,7 @@ async function startLiveTail(srcId = null, options = {}) {
     liveTail.pollTimer = setInterval(pollLiveTail, 1500);
     liveTail.clockTimer = setInterval(updateLiveTailClock, 500);
     liveTail.starting = false;
+    updateLivePlaybackRate();
     return true;
   } catch (err) {
     if (token !== liveTail.token) return;
@@ -2045,6 +2073,7 @@ function stopLiveTail(updateMode = true, invalidate = true) {
   if (el.liveVideo) {
     el.liveVideo.onerror = null;  // prevent stale onerror → OFFLINE when clearing src
     el.liveVideo.pause();
+    setLivePlaybackRate(1);
     el.liveVideo.src = "";
   }
   if (el.liveVideo) el.liveVideo.style.display = "none";
@@ -2093,6 +2122,7 @@ function updateLiveTailClock() {
   }
 
   const ts = liveTailCurrentTs();
+  updateLivePlaybackRate(ts);
   timeline.setPlayhead(ts);
   setTimestampChip(ts, liveTail.srcId, true);
   setStatus("LIVE");
@@ -2102,7 +2132,10 @@ function updateLiveTailClock() {
 // ── Player controls ───────────────────────────────────
 function togglePlayback() {
   if (liveTail.active) {
-    if (el.liveVideo.paused) el.liveVideo.play().catch(() => {});
+    if (el.liveVideo.paused) {
+      updateLivePlaybackRate();
+      el.liveVideo.play().catch(() => {});
+    }
     else el.liveVideo.pause();
     setPlayIcon(!el.liveVideo.paused);
     return;
@@ -2176,9 +2209,19 @@ function buildSpeedPills() {
     b.type = "button";
     b.className = "speed-pill" + (i === st.speed ? " active" : "");
     b.textContent = s.label;
-    b.addEventListener("click", () => { st.speed = i; localStorage.setItem("v2speed", i); player.setRate(s.rate); buildSpeedPills(); });
+    b.addEventListener("click", () => { setPlaybackSpeed(i); });
     el.speeds.appendChild(b);
   });
+}
+
+function setPlaybackSpeed(idx) {
+  const speed = V2_SPEEDS[idx];
+  if (!speed) return;
+  st.speed = idx;
+  localStorage.setItem("v2speed", idx);
+  player.setRate(speed.rate);
+  updateLivePlaybackRate();
+  buildSpeedPills();
 }
 
 // Keyboard
@@ -2197,13 +2240,7 @@ document.addEventListener("keydown", e => {
   if (["1", "2", "3", "4"].includes(e.key)) {
     e.preventDefault();
     const idx = Number(e.key) - 1;
-    const speed = V2_SPEEDS[idx];
-    if (speed) {
-      st.speed = idx;
-      localStorage.setItem("v2speed", idx);
-      player.setRate(speed.rate);
-      buildSpeedPills();
-    }
+    setPlaybackSpeed(idx);
   }
 });
 el.video.addEventListener("click",    togglePlayback);
@@ -2330,8 +2367,9 @@ async function init() {
   const r = await fetch("/api/sources", { cache:"no-store" });
   if (r.ok) st.sources = (await r.json()).sources || [];
   await fetchSourceStatus();
+  if (!V2_SPEEDS[st.speed]) st.speed = 1;
   buildSpeedPills();
-  player.setRate(V2_SPEEDS[st.speed].rate);
+  player.setRate(selectedPlaybackRate());
 
   const { ts: urlTs, live: urlLive } = readState();
   if (urlTs || urlLive) st.initDone = true;
