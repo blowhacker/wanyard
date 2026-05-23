@@ -1513,14 +1513,13 @@ async function _fillNextGap() {
   if (ranges.length < 2) return;
 
   const nowTs = Date.now() / 1000;
-  const cutoff = nowTs - 24 * 3600;
   const p = new URLSearchParams();
   if (st.source !== "all") p.set("source", st.source);
 
   for (let i = 0; i < ranges.length - 1; i++) {
     const gapFrom = ranges[i].to;
     const gapTo   = Math.min(ranges[i + 1].from, nowTs);
-    if (gapFrom < cutoff || gapTo - gapFrom < 30) continue;
+    if (gapTo - gapFrom < 30) continue;
 
     const evR = await fetch(
       `/api/video/events?since=${Math.floor(gapFrom)}&until=${Math.ceil(gapTo)}&${p}`,
