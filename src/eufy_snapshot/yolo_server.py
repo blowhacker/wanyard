@@ -237,32 +237,11 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     until=seg["end_ts"],
                 )
                 if hls_evts:
-                    # Promote HLS events to real video_events, skip YOLO rerun.
-                    # Group by abs_ts to rebuild proper detection rows with all
-                    # boxes from that frame so the video player can draw them.
-                    from collections import defaultdict
-                    by_ts: dict = defaultdict(lambda: {"boxes": [], "classes": [], "confidence": 0.0})
-                    for e in hls_evts:
-                        ts = e["abs_ts"]
-                        boxes = json.loads(e["boxes_json"]) if e["boxes_json"] else []
-                        by_ts[ts]["boxes"].extend(boxes)
-                        by_ts[ts]["classes"].append(e["class"])
-                        by_ts[ts]["confidence"] = max(by_ts[ts]["confidence"], e["confidence"])
-
-                    dets_from_hls = [
-                        {
-                            "ts_offset":   ts - seg["start_ts"],
-                            "has_human":   "person" in data["classes"],
-                            "confidence":  data["confidence"],
-                            "boxes":       data["boxes"],
-                            "classes":     data["classes"],
-                        }
-                        for ts, data in sorted(by_ts.items())
-                    ]
-                    # Sentinel marks segment as processed so backfill skips it
-                    dets_from_hls.append(_sentinel[0])
-                    video_db.replace_detections(seg["id"], dets_from_hls)
-
+                    # HLS already provided provisional events — promote them to
+                    # real video_events. But still run YOLO on the MP4 for
+                    # accurate detection ts_offsets: the HLS abs_ts has a
+                    # systematic ~200-500ms offset vs MP4 PTS (Python records
+                    # start_ts before ffmpeg's first frame arrives).
                     promoted = [
                         {
                             "segment_id": seg["id"],
@@ -283,8 +262,16 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     video_db.delete_hls_events(
                         seg["source_id"], seg["start_ts"], seg["end_ts"]
                     )
-                    LOG.info("promoted %d HLS events + %d det rows: %s",
-                             len(promoted), len(dets_from_hls), seg["path"][-35:])
+                    # Run YOLO on MP4 for accurate detection positions (boxes)
+                    # but skip extract_events — events already stored above.
+                    if seg_path.exists():
+                        n = _yolo_tag_video(model, seg_path, seg["id"], video_db)
+                        LOG.info("HLS events kept, YOLO accurate dets (%d frames): %s",
+                                 n, seg["path"][-35:])
+                        if n == 0:
+                            video_db.replace_detections(seg["id"], _sentinel)
+                    else:
+                        video_db.replace_detections(seg["id"], _sentinel)
                     continue
 
                 if seg_path.exists():
