@@ -2301,11 +2301,18 @@ function drawBoxes(ts) {
     Math.abs(d.ts_offset - off) < Math.abs((best?.ts_offset ?? Infinity) - off) ? d : best, null);
   if (!nearest || Math.abs(nearest.ts_offset - off) > 1.5) { drawBoxList(v, []); return; }
 
-  drawBoxList(v, nearest.boxes || []);
+  drawBoxList(v, _filterBoxes(nearest.boxes));
 }
 
 function drawLiveBoxes() {
-  drawBoxList(el.liveVideo, liveTail.latestDet?.boxes || []);
+  drawBoxList(el.liveVideo, _filterBoxes(liveTail.latestDet?.boxes));
+}
+
+function _filterBoxes(boxes) {
+  let b = boxes || [];
+  if (st.xls.size > 0) b = b.filter(x => !st.xls.has(x.cls));
+  if (st.cls.size > 0) b = b.filter(x =>  st.cls.has(x.cls));
+  return b;
 }
 
 function drawBoxList(v, boxes) {
