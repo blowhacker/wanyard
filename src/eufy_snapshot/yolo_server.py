@@ -153,6 +153,14 @@ def _hls_tag_loop(model, video_db, video_dir: Path, stop_event: threading.Event)
                         if not boxes:
                             continue
                         classes = list({b["cls"] for b in boxes})
+
+                        # Encode thumbnail once per frame (shared across class events)
+                        thumb_h = 90
+                        thumb_w = int(frame.shape[1] * thumb_h / frame.shape[0])
+                        small = cv2.resize(frame, (thumb_w, thumb_h))
+                        ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                        thumb_bytes = buf.tobytes() if ok else None
+
                         events = [
                             {
                                 "source_id":  source_id,
@@ -165,6 +173,7 @@ def _hls_tag_loop(model, video_db, video_dir: Path, stop_event: threading.Event)
                                 "boxes_json": json.dumps(
                                     [b for b in boxes if b["cls"] == cls]
                                 ),
+                                "thumb_jpeg": thumb_bytes,
                             }
                             for cls in classes
                         ]

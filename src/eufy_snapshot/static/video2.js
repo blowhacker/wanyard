@@ -1312,7 +1312,7 @@ function _makeThumbNode(evt, baseTs) {
   const thumb = document.createElement("div");
   thumb.className = "ev-thumb";
   let media;
-  if (evt.provisional) {
+  if (evt.provisional && !evt.hls_id) {
     media = document.createElement("div");
     media.className = "ev-thumb-live";
     media.textContent = "LIVE";
@@ -1320,7 +1320,9 @@ function _makeThumbNode(evt, baseTs) {
     media = document.createElement("img");
     media.loading = "lazy";
     media.alt = "";
-    media.src = `/api/video/event-thumb/${evt.id}`;
+    media.src = evt.hls_id
+      ? `/api/video/hls-thumb/${evt.hls_id}`
+      : `/api/video/event-thumb/${evt.id}`;
   }
   const tag = document.createElement("div");
   tag.className = "ev-thumb-tag";

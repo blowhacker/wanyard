@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS hls_events (
     class       TEXT    NOT NULL,
     confidence  REAL    NOT NULL DEFAULT 0,
     boxes_json  TEXT,
+    thumb_jpeg  BLOB,
     created_at  REAL    NOT NULL DEFAULT (unixepoch('now'))
 );
 CREATE INDEX IF NOT EXISTS hevt_source_ts ON hls_events(source_id, abs_ts);
@@ -107,6 +108,14 @@ class VideoSegmentDB:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_DDL)
+            # Additive migrations — safe to re-run, fail silently if column exists
+            for migration in [
+                "ALTER TABLE hls_events ADD COLUMN thumb_jpeg BLOB",
+            ]:
+                try:
+                    conn.execute(migration)
+                except Exception:
+                    pass
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._path), timeout=10)
@@ -419,10 +428,17 @@ class VideoSegmentDB:
         """Store provisional events detected from live HLS .ts segments."""
         with self._connect() as conn:
             conn.executemany(
-                "INSERT INTO hls_events(source_id, abs_ts, class, confidence, boxes_json)"
-                " VALUES(:source_id,:abs_ts,:class,:confidence,:boxes_json)",
+                "INSERT INTO hls_events(source_id, abs_ts, class, confidence, boxes_json, thumb_jpeg)"
+                " VALUES(:source_id,:abs_ts,:class,:confidence,:boxes_json,:thumb_jpeg)",
                 events,
             )
+
+    def get_hls_thumb(self, hls_event_id: int) -> bytes | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT thumb_jpeg FROM hls_events WHERE id=?", (hls_event_id,)
+            ).fetchone()
+        return bytes(row["thumb_jpeg"]) if row and row["thumb_jpeg"] else None
 
     def get_hls_events(self, source_id: str | None = None,
                        since: float | None = None,
@@ -443,6 +459,7 @@ class VideoSegmentDB:
             ).fetchall()
         return [{
             "id":          f"h:{r['source_id']}:{r['abs_ts']:.2f}",
+            "hls_id":      r["id"],
             "source_id":   r["source_id"],
             "abs_ts":      r["abs_ts"],
             "class":       r["class"],
