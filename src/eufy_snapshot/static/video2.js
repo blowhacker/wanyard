@@ -823,8 +823,8 @@ function filteredSegs() {
 function filteredEvts() {
   let e = st.events;
   if (st.source !== "all") e = e.filter(x => x.source_id === st.source);
-  if (st.cls.size > 0)     e = e.filter(x => st.cls.has(x.class));
-  else if (st.xls.size > 0) e = e.filter(x => !st.xls.has(x.class));
+  if (st.xls.size > 0)     e = e.filter(x => !st.xls.has(x["class"]));
+  if (st.cls.size > 0)     e = e.filter(x => st.cls.has(x["class"]));
   return e;
 }
 
