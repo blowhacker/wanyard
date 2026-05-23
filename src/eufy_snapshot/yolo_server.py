@@ -254,70 +254,12 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     since=seg["start_ts"],
                     until=seg["end_ts"],
                 )
-                # Determine the camera-accurate base time. actual_start_ts is
-                # set by _hls_tag_loop from the earliest .ts abs_ts seen for
-                # the segment — RTP-driven, frame-accurate. Validated within
-                # 10s of start_ts as a sanity check.
-                base_ts = seg["start_ts"]
-                hls_covered_start = False
-                a_start = seg.get("actual_start_ts")
-                if a_start is not None and abs(a_start - seg["start_ts"]) < 10:
-                    base_ts = a_start
-                    hls_covered_start = True
-
-                if hls_evts and hls_covered_start:
-                    # HLS coverage is reliable — promote events to video_events
-                    # AND build accurate detection rows from HLS boxes (with
-                    # correct ts_offset relative to first frame). Skip MP4 YOLO.
-                    from collections import defaultdict
-                    by_ts: dict = defaultdict(lambda: {"boxes": [], "classes": [], "confidence": 0.0})
-                    for e in hls_evts:
-                        ts = e["abs_ts"]
-                        boxes = json.loads(e["boxes_json"]) if e["boxes_json"] else []
-                        by_ts[ts]["boxes"].extend(boxes)
-                        by_ts[ts]["classes"].append(e["class"])
-                        by_ts[ts]["confidence"] = max(by_ts[ts]["confidence"], e["confidence"])
-
-                    dets_from_hls = [
-                        {
-                            "ts_offset":  max(0.0, ts - base_ts),
-                            "has_human":  "person" in data["classes"],
-                            "confidence": data["confidence"],
-                            "boxes":      data["boxes"],
-                            "classes":    data["classes"],
-                        }
-                        for ts, data in sorted(by_ts.items())
-                    ]
-                    dets_from_hls.append(_sentinel[0])
-                    video_db.replace_detections(seg["id"], dets_from_hls)
-
-                    promoted = [
-                        {
-                            "segment_id": seg["id"],
-                            "source_id":  e["source_id"],
-                            "abs_ts":     e["abs_ts"],
-                            "class":      e["class"],
-                            "start_off":  max(0.0, e["abs_ts"] - base_ts),
-                            "end_off":    min(
-                                seg["end_ts"] - base_ts,
-                                e["abs_ts"] - base_ts + 2.0,
-                            ),
-                            "confidence": e["confidence"],
-                            "boxes_json": e["boxes_json"],
-                        }
-                        for e in hls_evts
-                    ]
-                    video_db.insert_events(promoted)
-                    video_db.delete_hls_events(
-                        seg["source_id"], seg["start_ts"], seg["end_ts"]
-                    )
-                    LOG.info("HLS-only: %d events, %d dets (base=actual_start_ts): %s",
-                             len(promoted), len(dets_from_hls) - 1, seg["path"][-35:])
-                    continue
-
                 if hls_evts:
-                    # HLS partial coverage (no actual_start_ts, or it disagrees).
-                    # Promote events but also run MP4 YOLO for box accuracy.
+                    # HLS events go straight to video_events for fast provisional
+                    # display. But always run MP4 YOLO for accurate detection
+                    # ts_offsets — cv2.CAP_PROP_POS_MSEC on MP4 gives exact PTS,
+                    # whereas TS PROGRAM-DATE-TIME is approximate (rounding,
+                    # keyframe alignment) and causes box trail.
                     promoted = [
                         {
                             "segment_id": seg["id"],
@@ -340,7 +282,7 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     )
                     if seg_path.exists():
                         n = _yolo_tag_video(model, seg_path, seg["id"], video_db)
-                        LOG.info("HLS partial + YOLO fallback (%d frames): %s",
+                        LOG.info("HLS events + MP4 YOLO (%d frames): %s",
                                  n, seg["path"][-35:])
                         if n == 0:
                             video_db.replace_detections(seg["id"], _sentinel)
