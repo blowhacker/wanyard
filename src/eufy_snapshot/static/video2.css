@@ -380,6 +380,13 @@ body {
   color: var(--amber);
   opacity: 0.82;
 }
+.class-chip.excluded {
+  border-color: rgba(226,92,76,0.4) !important;
+  background: rgba(226,92,76,0.08) !important;
+  color: var(--red) !important;
+}
+.class-chip.excluded:hover { background: rgba(226,92,76,0.15) !important; }
+.class-chip.excluded .count { color: var(--red); opacity: 0.7; }
 .events {
   flex: 1;
   min-height: 0;

@@ -756,7 +756,8 @@ const st = {
   sources:  [],
   sourceStatus: {},
   source:   "all",
-  cls:      new Set(),
+  cls:      new Set(),   // included classes (amber)
+  xls:      new Set(),   // excluded classes (red)
   window:        { from: 0, to: 0 },
   eventsLoaded:  { ranges: [] },  // list of {from,to} intervals, merged on insert
   speed:    parseInt(localStorage.getItem("v2speed") || "1"),
@@ -823,6 +824,7 @@ function filteredEvts() {
   let e = st.events;
   if (st.source !== "all") e = e.filter(x => x.source_id === st.source);
   if (st.cls.size > 0)     e = e.filter(x => st.cls.has(x.class));
+  else if (st.xls.size > 0) e = e.filter(x => !st.xls.has(x.class));
   return e;
 }
 
@@ -832,7 +834,10 @@ const NEAR_EVENT_REFRESH_MS = 1500;
 
 function nearbyClassSet() {
   if (st.cls.size > 0) return new Set(st.cls);
-  return new Set(["person"]);
+  // Default to person, but respect exclusions
+  const def = new Set(["person"]);
+  st.xls.forEach(c => def.delete(c));
+  return def.size > 0 ? def : new Set(["person"]);
 }
 
 function nearbyScopeLabel() {
@@ -1544,11 +1549,11 @@ function renderClsCtrl() {
   const total = st.summary.total || Object.values(counts).reduce((a, b) => a + b, 0);
   const allBtn = document.createElement("button");
   allBtn.type = "button";
-  allBtn.className = "class-chip" + (st.cls.size === 0 ? " active" : "");
+  allBtn.className = "class-chip" + (st.cls.size === 0 && st.xls.size === 0 ? " active" : "");
   allBtn.innerHTML = `<span>All</span><span class="count"></span>`;
   allBtn.querySelector(".count").textContent = String(total);
   allBtn.addEventListener("click", () => {
-    st.cls.clear();
+    st.cls.clear(); st.xls.clear();
     pushState();
     handleClassSelectionChanged(new Set());
   });
@@ -1557,13 +1562,23 @@ function renderClsCtrl() {
   entries.forEach(([cls, n]) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "class-chip" + (st.cls.has(cls) ? " active" : "");
+    const included = st.cls.has(cls);
+    const excluded = st.xls.has(cls);
+    b.className = "class-chip" + (included ? " active" : excluded ? " excluded" : "");
     b.innerHTML = `<span></span><span class="count"></span>`;
-    b.children[0].textContent = classLabel(cls);
+    b.children[0].textContent = (excluded ? "✕ " : "") + classLabel(cls);
     b.children[1].textContent = String(n);
     b.addEventListener("click", () => {
-      if (st.cls.has(cls)) st.cls.delete(cls);
-      else st.cls.add(cls);
+      if (st.cls.has(cls)) {
+        // included → excluded
+        st.cls.delete(cls); st.xls.add(cls);
+      } else if (st.xls.has(cls)) {
+        // excluded → neutral
+        st.xls.delete(cls);
+      } else {
+        // neutral → included
+        st.cls.add(cls); st.xls.delete(cls);
+      }
       pushState();
       handleClassSelectionChanged(new Set(st.cls));
     });
@@ -2354,14 +2369,16 @@ function pushState() {
     const ts = player.reliableTs;
     if (ts)                   p.set("ts", Math.floor(ts));
   }
-  if (st.cls.size > 0)        p.set("cls",    [...st.cls].join(","));
+  if (st.cls.size > 0)        p.set("cls",  [...st.cls].join(","));
+  if (st.xls.size > 0)        p.set("xcls", [...st.xls].join(","));
   history.replaceState(null, "", `${location.pathname}${p.size ? "?" + p : ""}`);
 }
 
 function readState() {
   const p = new URLSearchParams(location.search);
   if (p.has("source")) st.source = p.get("source");
-  if (p.has("cls"))    p.get("cls").split(",").filter(Boolean).forEach(c => st.cls.add(c));
+  if (p.has("cls"))  p.get("cls").split(",").filter(Boolean).forEach(c => st.cls.add(c));
+  if (p.has("xcls")) p.get("xcls").split(",").filter(Boolean).forEach(c => st.xls.add(c));
   return { ts: p.has("ts") ? parseFloat(p.get("ts")) : null, live: p.get("live") === "1" };
 }
 
