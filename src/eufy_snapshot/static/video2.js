@@ -1495,6 +1495,54 @@ async function load() {
     }
   }
   _loadEnd();
+  _scheduleGapFill();
+}
+
+// ── Background gap filler ─────────────────────────────
+// After each load, find gaps in loaded ranges and fill them one at a time.
+// Fills only gaps within the last 24h — no point fetching ancient history.
+let _gapFillTimer = null;
+
+function _scheduleGapFill() {
+  clearTimeout(_gapFillTimer);
+  _gapFillTimer = setTimeout(_fillNextGap, 100);
+}
+
+async function _fillNextGap() {
+  const ranges = st.eventsLoaded.ranges;
+  if (ranges.length < 2) return;
+
+  const nowTs = Date.now() / 1000;
+  const cutoff = nowTs - 24 * 3600;
+  const p = new URLSearchParams();
+  if (st.source !== "all") p.set("source", st.source);
+
+  for (let i = 0; i < ranges.length - 1; i++) {
+    const gapFrom = ranges[i].to;
+    const gapTo   = Math.min(ranges[i + 1].from, nowTs);
+    if (gapFrom < cutoff || gapTo - gapFrom < 30) continue;
+
+    const evR = await fetch(
+      `/api/video/events?since=${Math.floor(gapFrom)}&until=${Math.ceil(gapTo)}&${p}`,
+      { cache: "no-store" }
+    ).then(r => r.json()).catch(() => ({}));
+
+    const byId = new Map(st.events.map(e => [e.id, e]));
+    (evR.events || []).forEach(e => byId.set(e.id, e));
+    st.events = [...byId.values()].sort((a, b) => b.abs_ts - a.abs_ts);
+    _eventsRangesAdd(gapFrom, Math.min(gapTo, nowTs));
+
+    const latestSegEnd = st.segments.reduce((m, s) => s.end_ts ? Math.max(m, s.end_ts) : m, 0);
+    const vis = latestSegEnd > 0
+      ? st.eventsLoaded.ranges.map(r => ({ from: r.from, to: Math.min(r.to, latestSegEnd) })).filter(r => r.to > r.from)
+      : st.eventsLoaded.ranges;
+    timeline.setEventsRanges(vis);
+    timeline.setData(allSegsForSrc(), filteredEvts());
+    scheduleNearestEvents(true);
+
+    if (st.eventsLoaded.ranges.length >= 2) _scheduleGapFill();
+    return;
+  }
 }
 
 // ── Source control ────────────────────────────────────
