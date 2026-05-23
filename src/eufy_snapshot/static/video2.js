@@ -378,7 +378,7 @@ class AppMode {
 // ═══════════════════════════════════════════════════════
 const EVENT_COLORS = {
   person:"#4ec98a",bird:"#78b7ff",cat:"#78b7ff",dog:"#78b7ff",
-  car:"#e8a558",truck:"#e8a558",bus:"#e8a558",motorcycle:"#e8a558",bicycle:"#e8a558",
+  car:"#e8a558",truck:"#f1788a",bus:"#cc9bff",motorcycle:"#7bd7c4",bicycle:"#d6ca72",
 };
 const EVENT_PALETTE = ["#78b7ff", "#4ec98a", "#e8a558", "#cc9bff", "#f1788a", "#7bd7c4", "#d6ca72"];
 
