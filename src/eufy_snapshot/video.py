@@ -551,22 +551,23 @@ class VideoSegmentDB:
                 hls_params,
             ).fetchall()
 
-        # Group by source_id, pick the most recent timestamp, merge all boxes
-        hls_by_src: dict[str, dict] = {}
+        # Group by (source_id, abs_ts) — each frame is one detection with all
+        # its boxes merged across class rows. Return ALL recent frames so the
+        # client can pick the detection matching the displayed video time
+        # (HLS player typically buffers 3-6s behind live edge).
+        by_frame: dict[tuple, dict] = {}
         for r in hls_rows:
-            sid = r["source_id"]
-            if sid not in hls_by_src:
-                hls_by_src[sid] = {
-                    "source_id": sid,
+            key = (r["source_id"], round(r["abs_ts"], 2))
+            if key not in by_frame:
+                by_frame[key] = {
+                    "source_id": r["source_id"],
                     "abs_ts": r["abs_ts"],
                     "has_human": False,
                     "confidence": 0.0,
                     "boxes": [],
                     "classes": [],
                 }
-            det = hls_by_src[sid]
-            if r["abs_ts"] < det["abs_ts"] - 0.1:
-                continue  # only merge events from the same (latest) frame
+            det = by_frame[key]
             boxes = json.loads(r["boxes_json"]) if r["boxes_json"] else []
             det["boxes"].extend(boxes)
             det["classes"].append(r["class"])
@@ -574,14 +575,18 @@ class VideoSegmentDB:
             if r["class"] == "person":
                 det["has_human"] = True
 
-        # Prefer HLS detections (more recent); fall back to video_detections
-        for sid, hls_det in hls_by_src.items():
-            vd = latest.get(sid)
-            if vd is None or hls_det["abs_ts"] > vd["abs_ts"]:
-                latest[sid] = hls_det
+        recent = sorted(by_frame.values(), key=lambda d: d["abs_ts"])
+
+        # Latest-per-source for backward compatibility (used by client when no
+        # HLS player timing is available)
+        for det in recent:
+            sid = det["source_id"]
+            if sid not in latest or det["abs_ts"] > latest[sid]["abs_ts"]:
+                latest[sid] = det
 
         return {
             "segments": segs,
+            "recent_detections": recent,
             "events": self.provisional_events(source_id),
             "detections": list(latest.values()),
         }

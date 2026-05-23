@@ -803,6 +803,7 @@ const liveTail = {
   pollTimer: null,
   clockTimer: null,
   latestDet: null,
+  recentDets: [],   // recent detections buffer (sorted by abs_ts asc)
   window: null,
   wallClockOffset: null,
   targetTs: null,
@@ -2037,6 +2038,7 @@ async function startLiveTail(srcId = null, options = {}) {
 
   liveTail.active = true;
   liveTail.latestDet = null;
+  liveTail.recentDets = [];
   liveTail.window = liveWindow;
   liveTail.wallClockOffset = null;
   liveTail.targetTs = seekTs;
@@ -2146,6 +2148,7 @@ function stopLiveTail(updateMode = true, invalidate = true) {
   liveTail.starting = false;
   liveTail.srcId = null;
   liveTail.latestDet = null;
+  liveTail.recentDets = [];
   liveTail.window = null;
   liveTail.wallClockOffset = null;
   liveTail.targetTs = null;
@@ -2172,6 +2175,7 @@ async function pollLiveTail() {
   replaceProvisionalEvents(data.events || [], liveTail.srcId);
   mergeClassCounts(data.events || []);
   liveTail.latestDet = (data.detections || []).find(d => d.source_id === liveTail.srcId) ?? liveTail.latestDet;
+  liveTail.recentDets = (data.recent_detections || []).filter(d => d.source_id === liveTail.srcId);
   renderClsCtrl();
   timeline.setData(allSegsForSrc(), filteredEvts());
   scheduleNearestEvents(true);
@@ -2352,7 +2356,23 @@ function drawBoxes(ts) {
 }
 
 function drawLiveBoxes() {
-  drawBoxList(el.liveVideo, _filterBoxes(liveTail.latestDet?.boxes));
+  // Pick the detection matching the displayed video frame's wall-clock time.
+  // HLS.js's playingDate gives the camera-time of the currently displayed
+  // frame. Detection arrives at the server ~2-3s before the video player
+  // shows that camera frame (due to HLS player buffering).
+  const displayDate = liveTail.hls?.playingDate;
+  let det = liveTail.latestDet;
+  if (displayDate && liveTail.recentDets.length) {
+    const target = displayDate.getTime() / 1000;
+    let best = null, bestDist = Infinity;
+    for (const d of liveTail.recentDets) {
+      const dist = Math.abs(d.abs_ts - target);
+      if (dist < bestDist) { best = d; bestDist = dist; }
+    }
+    if (best && bestDist < 1.5) det = best;
+    else if (bestDist >= 1.5) det = null;
+  }
+  drawBoxList(el.liveVideo, _filterBoxes(det?.boxes));
 }
 
 function _filterBoxes(boxes) {
