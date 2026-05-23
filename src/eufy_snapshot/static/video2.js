@@ -1570,16 +1570,17 @@ function renderClsCtrl() {
     b.children[1].textContent = String(n);
     b.addEventListener("click", () => {
       if (st.cls.has(cls)) {
-        // included → excluded
-        st.cls.delete(cls); st.xls.add(cls);
+        st.cls.delete(cls); st.xls.add(cls);      // included → excluded
       } else if (st.xls.has(cls)) {
-        // excluded → neutral
-        st.xls.delete(cls);
+        st.xls.delete(cls);                        // excluded → neutral
       } else {
-        // neutral → included
-        st.cls.add(cls); st.xls.delete(cls);
+        st.cls.add(cls); st.xls.delete(cls);      // neutral → included
       }
       pushState();
+      // Synchronous visual update first — before the async playlist search
+      renderClsCtrl();
+      timeline.setData(allSegsForSrc(), filteredEvts());
+      scheduleNearestEvents(true);
       handleClassSelectionChanged(new Set(st.cls));
     });
     el.clsCtrl.appendChild(b);
