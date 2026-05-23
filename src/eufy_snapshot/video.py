@@ -506,6 +506,7 @@ class VideoSegmentDB:
                 params,
             ).fetchall()
 
+        # Latest detection from video_detections (backfill, usually absent for live)
         latest: dict[str, dict] = {}
         for r in latest_rows:
             if r["source_id"] in latest:
@@ -520,6 +521,50 @@ class VideoSegmentDB:
                 "boxes": json.loads(r["boxes_json"]) if r["boxes_json"] else [],
                 "classes": json.loads(r["classes_json"]) if r["classes_json"] else [],
             }
+
+        # Latest HLS real-time detections (primary source while MP4 is open)
+        hls_cutoff = time.time() - 30  # only last 30s of HLS events are "live"
+        with self._connect() as conn:
+            hls_where = ["abs_ts >= ?"]
+            hls_params: list = [hls_cutoff]
+            if source_id and source_id != "all":
+                hls_where.append("source_id=?"); hls_params.append(source_id)
+            hls_rows = conn.execute(
+                f"SELECT source_id, abs_ts, class, confidence, boxes_json"
+                f" FROM hls_events WHERE {' AND '.join(hls_where)}"
+                " ORDER BY abs_ts DESC",
+                hls_params,
+            ).fetchall()
+
+        # Group by source_id, pick the most recent timestamp, merge all boxes
+        hls_by_src: dict[str, dict] = {}
+        for r in hls_rows:
+            sid = r["source_id"]
+            if sid not in hls_by_src:
+                hls_by_src[sid] = {
+                    "source_id": sid,
+                    "abs_ts": r["abs_ts"],
+                    "has_human": False,
+                    "confidence": 0.0,
+                    "boxes": [],
+                    "classes": [],
+                }
+            det = hls_by_src[sid]
+            if r["abs_ts"] < det["abs_ts"] - 0.1:
+                continue  # only merge events from the same (latest) frame
+            boxes = json.loads(r["boxes_json"]) if r["boxes_json"] else []
+            det["boxes"].extend(boxes)
+            det["classes"].append(r["class"])
+            det["confidence"] = max(det["confidence"], r["confidence"])
+            if r["class"] == "person":
+                det["has_human"] = True
+
+        # Prefer HLS detections (more recent); fall back to video_detections
+        for sid, hls_det in hls_by_src.items():
+            vd = latest.get(sid)
+            if vd is None or hls_det["abs_ts"] > vd["abs_ts"]:
+                latest[sid] = hls_det
+
         return {
             "segments": segs,
             "events": self.provisional_events(source_id),
