@@ -92,6 +92,61 @@ def _parse_hls_segments(m3u8_path: Path) -> list[tuple[str, float]]:
     return results
 
 
+# ── Per-class thumb crop (matches MP4 _select_event_box + _crop_from_box) ─────
+
+def _crop_thumb(frame, cls_boxes: list, cls: str,
+                thumb_w: int = 176, thumb_h: int = 132,
+                aspect: float = 4 / 3) -> bytes | None:
+    """Crop the frame around the best box for this class, resize to thumb_w×thumb_h."""
+    import cv2
+    if not cls_boxes:
+        return None
+
+    # Pick best box by (confidence, area)
+    def score(b):
+        try:
+            area = max(0.0, float(b["x2"]) - float(b["x1"])) * \
+                   max(0.0, float(b["y2"]) - float(b["y1"]))
+            conf = float(b.get("conf", 0.0))
+        except (KeyError, TypeError, ValueError):
+            return (0.0, 0.0)
+        return (conf, area)
+    box = max(cls_boxes, key=score)
+
+    fh, fw = frame.shape[:2]
+    try:
+        x1 = max(0.0, min(1.0, float(box["x1"]))) * fw
+        y1 = max(0.0, min(1.0, float(box["y1"]))) * fh
+        x2 = max(0.0, min(1.0, float(box["x2"]))) * fw
+        y2 = max(0.0, min(1.0, float(box["y2"]))) * fh
+    except (KeyError, TypeError, ValueError):
+        return None
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    bw, bh = x2 - x1, y2 - y1
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    pad = max(24.0, max(bw, bh) * 0.45)
+    cw, ch = bw + pad * 2, bh + pad * 2
+    if cw / ch < aspect: cw = ch * aspect
+    else:                ch = cw / aspect
+    cw = min(float(fw), max(96.0, cw))
+    ch = min(float(fh), max(72.0, ch))
+    if cw / ch < aspect: cw = min(float(fw), ch * aspect)
+    else:                ch = min(float(fh), cw / aspect)
+    rw = min(fw, max(2, round(cw)))
+    rh = min(fh, max(2, round(ch)))
+    x = int(max(0.0, min(float(fw - rw), cx - rw / 2)))
+    y = int(max(0.0, min(float(fh - rh), cy - rh / 2)))
+
+    cropped = frame[y:y+rh, x:x+rw]
+    if cropped.size == 0:
+        return None
+    small = cv2.resize(cropped, (thumb_w, thumb_h))
+    ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    return buf.tobytes() if ok else None
+
+
 # ── HLS real-time tag loop ──────────────────────────────────────────────────────
 
 def _hls_tag_loop(model, video_db, video_dir: Path, stop_event: threading.Event):
@@ -173,39 +228,18 @@ def _hls_tag_loop(model, video_db, video_dir: Path, stop_event: threading.Event)
                                 continue
                             classes = list({b["cls"] for b in boxes})
 
-                            # Draw boxes then encode thumbnail
-                            thumb_h = 90
-                            thumb_w = int(frame.shape[1] * thumb_h / frame.shape[0])
-                            small = cv2.resize(frame, (thumb_w, thumb_h))
-                            fh, fw = small.shape[:2]
-                            for box in boxes:
-                                try:
-                                    x1 = int(float(box["x1"]) * fw)
-                                    y1 = int(float(box["y1"]) * fh)
-                                    x2 = int(float(box["x2"]) * fw)
-                                    y2 = int(float(box["y2"]) * fh)
-                                    cv2.rectangle(small, (x1, y1), (x2, y2), (0, 220, 100), 1)
-                                except (KeyError, ValueError, TypeError):
-                                    pass
-                            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 60])
-                            thumb_bytes = buf.tobytes() if ok else None
-
-                            events = [
-                                {
+                            events = []
+                            for cls in classes:
+                                cls_boxes = [b for b in boxes if b["cls"] == cls]
+                                thumb_bytes = _crop_thumb(frame, cls_boxes, cls)
+                                events.append({
                                     "source_id":  source_id,
                                     "abs_ts":     sample_abs_ts,
                                     "class":      cls,
-                                    "confidence": max(
-                                        (b["conf"] for b in boxes if b["cls"] == cls),
-                                        default=0.0,
-                                    ),
-                                    "boxes_json": json.dumps(
-                                        [b for b in boxes if b["cls"] == cls]
-                                    ),
+                                    "confidence": max((b["conf"] for b in cls_boxes), default=0.0),
+                                    "boxes_json": json.dumps(cls_boxes),
                                     "thumb_jpeg": thumb_bytes,
-                                }
-                                for cls in classes
-                            ]
+                                })
                             video_db.insert_hls_events(events)
                         except Exception:
                             LOG.exception("HLS tag error: %s", filename)
