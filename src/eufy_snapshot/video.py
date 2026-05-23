@@ -75,6 +75,20 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Real-time detections from HLS .ts segments, pending MP4 backfill.
+-- Rows here make events appear in the UI within seconds of detection.
+-- Consumed and deleted by _backfill_loop when the MP4 segment closes.
+CREATE TABLE IF NOT EXISTS hls_events (
+    id          INTEGER PRIMARY KEY,
+    source_id   TEXT    NOT NULL,
+    abs_ts      REAL    NOT NULL,
+    class       TEXT    NOT NULL,
+    confidence  REAL    NOT NULL DEFAULT 0,
+    boxes_json  TEXT,
+    created_at  REAL    NOT NULL DEFAULT (unixepoch('now'))
+);
+CREATE INDEX IF NOT EXISTS hevt_source_ts ON hls_events(source_id, abs_ts);
 """
 
 
@@ -394,8 +408,64 @@ class VideoSegmentDB:
                 row["spritesheet"] = seg.get("spritesheet")
                 row["seg_start_ts"] = seg["start_ts"]
                 events.append(row)
+        # Merge real-time HLS events (tagged within seconds of capture)
+        hls = self.get_hls_events(source_id=source_id, since=since)
+        events.extend(hls)
         events.sort(key=lambda r: r["abs_ts"], reverse=True)
         return events
+
+    # ── HLS real-time event store ──────────────────────────────────────────
+    def insert_hls_events(self, events: list[dict]) -> None:
+        """Store provisional events detected from live HLS .ts segments."""
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO hls_events(source_id, abs_ts, class, confidence, boxes_json)"
+                " VALUES(:source_id,:abs_ts,:class,:confidence,:boxes_json)",
+                events,
+            )
+
+    def get_hls_events(self, source_id: str | None = None,
+                       since: float | None = None,
+                       until: float | None = None) -> list[dict]:
+        cutoff = time.time() - _PROVISIONAL_GRACE_SECONDS
+        where, params = ["abs_ts>=?"], [cutoff]
+        if source_id and source_id != "all":
+            where.append("source_id=?"); params.append(source_id)
+        if since is not None:
+            where.append("abs_ts>=?"); params.append(since)
+        if until is not None:
+            where.append("abs_ts<=?"); params.append(until)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM hls_events WHERE {' AND '.join(where)}"
+                " ORDER BY abs_ts DESC",
+                params,
+            ).fetchall()
+        return [{
+            "id":          f"h:{r['source_id']}:{r['abs_ts']:.2f}",
+            "source_id":   r["source_id"],
+            "abs_ts":      r["abs_ts"],
+            "class":       r["class"],
+            "confidence":  r["confidence"],
+            "boxes_json":  r["boxes_json"],
+            "provisional": True,
+            "start_off":   0.0,
+            "end_off":     _LIVE_HLS_SEGMENT_SECONDS,
+            "segment_id":  None,
+        } for r in rows]
+
+    def delete_hls_events(self, source_id: str, since: float, until: float) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM hls_events WHERE source_id=? AND abs_ts>=? AND abs_ts<=?",
+                (source_id, since, until),
+            )
+            return cur.rowcount
+
+    def prune_hls_events(self, max_age_seconds: float = _PROVISIONAL_GRACE_SECONDS) -> None:
+        cutoff = time.time() - max_age_seconds
+        with self._connect() as conn:
+            conn.execute("DELETE FROM hls_events WHERE abs_ts<?", (cutoff,))
 
     def live_status(self, source_id: str | None = None) -> dict:
         with self._connect() as conn:

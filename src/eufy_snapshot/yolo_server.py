@@ -65,6 +65,125 @@ class YoloSocketServer(socketserver.ThreadingUnixStreamServer):
         return {"status": "error", "error": f"unknown type: {t}"}
 
 
+# ── M3U8 parser ────────────────────────────────────────────────────────────────
+
+def _parse_hls_segments(m3u8_path: Path) -> list[tuple[str, float]]:
+    """Return [(filename, abs_ts_unix)] from a live m3u8 with EXT-X-PROGRAM-DATE-TIME."""
+    from datetime import datetime, timezone
+    results = []
+    pending_dt: float | None = None
+    try:
+        lines = m3u8_path.read_text().splitlines()
+    except OSError:
+        return results
+    for line in lines:
+        line = line.strip()
+        if line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
+            dt_str = line[len("#EXT-X-PROGRAM-DATE-TIME:"):]
+            try:
+                pending_dt = datetime.fromisoformat(
+                    dt_str.replace("+0000", "+00:00")
+                ).timestamp()
+            except ValueError:
+                pending_dt = None
+        elif not line.startswith("#") and line.endswith(".ts") and pending_dt is not None:
+            results.append((line, pending_dt))
+            pending_dt = None
+    return results
+
+
+# ── HLS real-time tag loop ──────────────────────────────────────────────────────
+
+def _hls_tag_loop(model, video_db, video_dir: Path, stop_event: threading.Event):
+    """Tag incoming HLS .ts segments in near-real-time (<5s latency)."""
+    import cv2
+    from .video import _parse_results, _CCTV_CLASS_IDS, _CONF_THRESHOLD
+
+    LOG.info("HLS tag loop started")
+    seen: dict[str, set[str]] = {}   # source_id -> set of seen filenames
+
+    while not stop_event.is_set():
+        try:
+            live_root = video_dir / "live"
+            if not live_root.exists():
+                stop_event.wait(5)
+                continue
+
+            for source_dir in live_root.iterdir():
+                if not source_dir.is_dir():
+                    continue
+                source_id = source_dir.name
+                m3u8 = source_dir / "live.m3u8"
+                if not m3u8.exists():
+                    continue
+
+                segments = _parse_hls_segments(m3u8)
+                if not segments:
+                    continue
+
+                # Evict filenames no longer in the playlist from seen set
+                current = {fn for fn, _ in segments}
+                seen.setdefault(source_id, set())
+                seen[source_id] &= current
+
+                new_segs = [(fn, ts) for fn, ts in segments
+                            if fn not in seen[source_id]]
+
+                for filename, abs_ts in new_segs:
+                    if stop_event.is_set():
+                        break
+                    ts_path = source_dir / filename
+                    if not ts_path.exists():
+                        continue
+                    seen[source_id].add(filename)
+
+                    # Sample 1 frame from the segment
+                    cap = cv2.VideoCapture(str(ts_path))
+                    ret, frame = cap.read()
+                    cap.release()
+                    if not ret:
+                        continue
+
+                    try:
+                        results = model.predict(
+                            frame, classes=_CCTV_CLASS_IDS,
+                            conf=_CONF_THRESHOLD, verbose=False,
+                        )
+                        _, _, boxes = _parse_results(results)
+                        if not boxes:
+                            continue
+                        classes = list({b["cls"] for b in boxes})
+                        events = [
+                            {
+                                "source_id":  source_id,
+                                "abs_ts":     abs_ts,
+                                "class":      cls,
+                                "confidence": max(
+                                    (b["conf"] for b in boxes if b["cls"] == cls),
+                                    default=0.0,
+                                ),
+                                "boxes_json": json.dumps(
+                                    [b for b in boxes if b["cls"] == cls]
+                                ),
+                            }
+                            for cls in classes
+                        ]
+                        video_db.insert_hls_events(events)
+                        LOG.debug("HLS tagged %s at %.1f: %s", filename, abs_ts, classes)
+                    except Exception:
+                        LOG.exception("HLS tag error: %s", filename)
+
+            # Prune stale hls_events older than 2h
+            video_db.prune_hls_events(max_age_seconds=7200)
+
+        except Exception:
+            LOG.exception("HLS tag loop error — continuing")
+
+        stop_event.wait(1)   # check for new segments every 1s
+
+    LOG.info("HLS tag loop stopped")
+
+
 # ── Backfill loop ──────────────────────────────────────────────────────────────
 
 def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event):
@@ -91,13 +210,45 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                 seg_path = video_dir / seg["path"]
                 _sentinel = [{"ts_offset": -1, "has_human": False, "confidence": 0.0,
                               "boxes": [], "classes": []}]
+
+                # Check if HLS real-time tagging already covered this segment
+                hls_evts = video_db.get_hls_events(
+                    source_id=seg["source_id"],
+                    since=seg["start_ts"],
+                    until=seg["end_ts"],
+                )
+                if hls_evts:
+                    # Promote HLS events to real video_events, skip YOLO rerun
+                    promoted = [
+                        {
+                            "segment_id": seg["id"],
+                            "source_id":  e["source_id"],
+                            "abs_ts":     e["abs_ts"],
+                            "class":      e["class"],
+                            "start_off":  max(0.0, e["abs_ts"] - seg["start_ts"]),
+                            "end_off":    min(
+                                seg["end_ts"] - seg["start_ts"],
+                                e["abs_ts"] - seg["start_ts"] + 2.0,
+                            ),
+                            "confidence": e["confidence"],
+                            "boxes_json": e["boxes_json"],
+                        }
+                        for e in hls_evts
+                    ]
+                    video_db.insert_events(promoted)
+                    video_db.delete_hls_events(
+                        seg["source_id"], seg["start_ts"], seg["end_ts"]
+                    )
+                    video_db.replace_detections(seg["id"], _sentinel)
+                    LOG.info("promoted %d HLS events: %s", len(promoted), seg["path"][-35:])
+                    continue
+
                 if seg_path.exists():
                     n = _yolo_tag_video(model, seg_path, seg["id"], video_db)
                     LOG.info("tagged %d frames: %s", n, seg["path"][-35:])
                     if n == 0:
                         video_db.replace_detections(seg["id"], _sentinel)
                 else:
-                    # File missing (crash-loop orphan) — clear from queue
                     video_db.replace_detections(seg["id"], _sentinel)
                 dets = video_db.detections_for_segment(seg["id"])
                 n_evt = extract_events(seg, dets, video_db)
@@ -218,6 +369,13 @@ def run(video_db_path: Path, video_dir: Path):
         daemon=True, name="backfill"
     )
     backfill_thread.start()
+
+    hls_tag_thread = threading.Thread(
+        target=_hls_tag_loop,
+        args=(model, video_db, video_dir, stop_event),
+        daemon=True, name="hls-tag"
+    )
+    hls_tag_thread.start()
 
     cleanup_thread = threading.Thread(
         target=_cleanup_loop,
