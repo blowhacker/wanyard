@@ -154,10 +154,20 @@ def _hls_tag_loop(model, video_db, video_dir: Path, stop_event: threading.Event)
                             continue
                         classes = list({b["cls"] for b in boxes})
 
-                        # Encode thumbnail once per frame (shared across class events)
+                        # Draw boxes then encode thumbnail
                         thumb_h = 90
                         thumb_w = int(frame.shape[1] * thumb_h / frame.shape[0])
                         small = cv2.resize(frame, (thumb_w, thumb_h))
+                        fh, fw = small.shape[:2]
+                        for box in boxes:
+                            try:
+                                x1 = int(float(box["x1"]) * fw)
+                                y1 = int(float(box["y1"]) * fh)
+                                x2 = int(float(box["x2"]) * fw)
+                                y2 = int(float(box["y2"]) * fh)
+                                cv2.rectangle(small, (x1, y1), (x2, y2), (0, 220, 100), 1)
+                            except (KeyError, ValueError, TypeError):
+                                pass
                         ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 60])
                         thumb_bytes = buf.tobytes() if ok else None
 
