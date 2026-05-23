@@ -237,7 +237,32 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     until=seg["end_ts"],
                 )
                 if hls_evts:
-                    # Promote HLS events to real video_events, skip YOLO rerun
+                    # Promote HLS events to real video_events, skip YOLO rerun.
+                    # Group by abs_ts to rebuild proper detection rows with all
+                    # boxes from that frame so the video player can draw them.
+                    from collections import defaultdict
+                    by_ts: dict = defaultdict(lambda: {"boxes": [], "classes": [], "confidence": 0.0})
+                    for e in hls_evts:
+                        ts = e["abs_ts"]
+                        boxes = json.loads(e["boxes_json"]) if e["boxes_json"] else []
+                        by_ts[ts]["boxes"].extend(boxes)
+                        by_ts[ts]["classes"].append(e["class"])
+                        by_ts[ts]["confidence"] = max(by_ts[ts]["confidence"], e["confidence"])
+
+                    dets_from_hls = [
+                        {
+                            "ts_offset":   ts - seg["start_ts"],
+                            "has_human":   "person" in data["classes"],
+                            "confidence":  data["confidence"],
+                            "boxes":       data["boxes"],
+                            "classes":     data["classes"],
+                        }
+                        for ts, data in sorted(by_ts.items())
+                    ]
+                    # Sentinel marks segment as processed so backfill skips it
+                    dets_from_hls.append(_sentinel[0])
+                    video_db.replace_detections(seg["id"], dets_from_hls)
+
                     promoted = [
                         {
                             "segment_id": seg["id"],
@@ -258,8 +283,8 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     video_db.delete_hls_events(
                         seg["source_id"], seg["start_ts"], seg["end_ts"]
                     )
-                    video_db.replace_detections(seg["id"], _sentinel)
-                    LOG.info("promoted %d HLS events: %s", len(promoted), seg["path"][-35:])
+                    LOG.info("promoted %d HLS events + %d det rows: %s",
+                             len(promoted), len(dets_from_hls), seg["path"][-35:])
                     continue
 
                 if seg_path.exists():
