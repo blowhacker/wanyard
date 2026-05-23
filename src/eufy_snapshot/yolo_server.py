@@ -137,60 +137,78 @@ def _hls_tag_loop(model, video_db, video_dir: Path, stop_event: threading.Event)
                         continue
                     seen[source_id].add(filename)
 
-                    # Sample 1 frame from the segment
+                    # Record first-frame time of the open MP4 segment if not yet known.
+                    # The earliest .ts abs_ts == camera-accurate first frame of MP4.
+                    try:
+                        video_db.observe_frame_time(source_id, abs_ts)
+                    except Exception:
+                        LOG.exception("observe_frame_time failed")
+
+                    # Sample 2 frames from the segment (0s and ~1s) → 1fps coverage
                     cap = cv2.VideoCapture(str(ts_path))
-                    ret, frame = cap.read()
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                    mid_frame_idx = max(1, int(round(fps)))   # ~1s into the segment
+                    frame_samples: list[tuple[float, "any"]] = []
+                    ret, frame0 = cap.read()
+                    if ret:
+                        frame_samples.append((abs_ts, frame0))
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, mid_frame_idx)
+                        ret2, frame1 = cap.read()
+                        if ret2:
+                            ts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+                            offset = (ts_ms / 1000.0) if ts_ms > 0 else 1.0
+                            frame_samples.append((abs_ts + offset, frame1))
                     cap.release()
-                    if not ret:
+                    if not frame_samples:
                         continue
 
-                    try:
-                        results = model.predict(
-                            frame, classes=_CCTV_CLASS_IDS,
-                            conf=_CONF_THRESHOLD, verbose=False,
-                        )
-                        _, _, boxes = _parse_results(results)
-                        if not boxes:
-                            continue
-                        classes = list({b["cls"] for b in boxes})
+                    for sample_abs_ts, frame in frame_samples:
+                        try:
+                            results = model.predict(
+                                frame, classes=_CCTV_CLASS_IDS,
+                                conf=_CONF_THRESHOLD, verbose=False,
+                            )
+                            _, _, boxes = _parse_results(results)
+                            if not boxes:
+                                continue
+                            classes = list({b["cls"] for b in boxes})
 
-                        # Draw boxes then encode thumbnail
-                        thumb_h = 90
-                        thumb_w = int(frame.shape[1] * thumb_h / frame.shape[0])
-                        small = cv2.resize(frame, (thumb_w, thumb_h))
-                        fh, fw = small.shape[:2]
-                        for box in boxes:
-                            try:
-                                x1 = int(float(box["x1"]) * fw)
-                                y1 = int(float(box["y1"]) * fh)
-                                x2 = int(float(box["x2"]) * fw)
-                                y2 = int(float(box["y2"]) * fh)
-                                cv2.rectangle(small, (x1, y1), (x2, y2), (0, 220, 100), 1)
-                            except (KeyError, ValueError, TypeError):
-                                pass
-                        ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 60])
-                        thumb_bytes = buf.tobytes() if ok else None
+                            # Draw boxes then encode thumbnail
+                            thumb_h = 90
+                            thumb_w = int(frame.shape[1] * thumb_h / frame.shape[0])
+                            small = cv2.resize(frame, (thumb_w, thumb_h))
+                            fh, fw = small.shape[:2]
+                            for box in boxes:
+                                try:
+                                    x1 = int(float(box["x1"]) * fw)
+                                    y1 = int(float(box["y1"]) * fh)
+                                    x2 = int(float(box["x2"]) * fw)
+                                    y2 = int(float(box["y2"]) * fh)
+                                    cv2.rectangle(small, (x1, y1), (x2, y2), (0, 220, 100), 1)
+                                except (KeyError, ValueError, TypeError):
+                                    pass
+                            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                            thumb_bytes = buf.tobytes() if ok else None
 
-                        events = [
-                            {
-                                "source_id":  source_id,
-                                "abs_ts":     abs_ts,
-                                "class":      cls,
-                                "confidence": max(
-                                    (b["conf"] for b in boxes if b["cls"] == cls),
-                                    default=0.0,
-                                ),
-                                "boxes_json": json.dumps(
-                                    [b for b in boxes if b["cls"] == cls]
-                                ),
-                                "thumb_jpeg": thumb_bytes,
-                            }
-                            for cls in classes
-                        ]
-                        video_db.insert_hls_events(events)
-                        LOG.debug("HLS tagged %s at %.1f: %s", filename, abs_ts, classes)
-                    except Exception:
-                        LOG.exception("HLS tag error: %s", filename)
+                            events = [
+                                {
+                                    "source_id":  source_id,
+                                    "abs_ts":     sample_abs_ts,
+                                    "class":      cls,
+                                    "confidence": max(
+                                        (b["conf"] for b in boxes if b["cls"] == cls),
+                                        default=0.0,
+                                    ),
+                                    "boxes_json": json.dumps(
+                                        [b for b in boxes if b["cls"] == cls]
+                                    ),
+                                    "thumb_jpeg": thumb_bytes,
+                                }
+                                for cls in classes
+                            ]
+                            video_db.insert_hls_events(events)
+                        except Exception:
+                            LOG.exception("HLS tag error: %s", filename)
 
             # Prune stale hls_events older than 2h
             video_db.prune_hls_events(max_age_seconds=7200)
@@ -236,12 +254,70 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     since=seg["start_ts"],
                     until=seg["end_ts"],
                 )
+                # Determine the camera-accurate base time. actual_start_ts is
+                # set by _hls_tag_loop from the earliest .ts abs_ts seen for
+                # the segment — RTP-driven, frame-accurate. Validated within
+                # 10s of start_ts as a sanity check.
+                base_ts = seg["start_ts"]
+                hls_covered_start = False
+                a_start = seg.get("actual_start_ts")
+                if a_start is not None and abs(a_start - seg["start_ts"]) < 10:
+                    base_ts = a_start
+                    hls_covered_start = True
+
+                if hls_evts and hls_covered_start:
+                    # HLS coverage is reliable — promote events to video_events
+                    # AND build accurate detection rows from HLS boxes (with
+                    # correct ts_offset relative to first frame). Skip MP4 YOLO.
+                    from collections import defaultdict
+                    by_ts: dict = defaultdict(lambda: {"boxes": [], "classes": [], "confidence": 0.0})
+                    for e in hls_evts:
+                        ts = e["abs_ts"]
+                        boxes = json.loads(e["boxes_json"]) if e["boxes_json"] else []
+                        by_ts[ts]["boxes"].extend(boxes)
+                        by_ts[ts]["classes"].append(e["class"])
+                        by_ts[ts]["confidence"] = max(by_ts[ts]["confidence"], e["confidence"])
+
+                    dets_from_hls = [
+                        {
+                            "ts_offset":  max(0.0, ts - base_ts),
+                            "has_human":  "person" in data["classes"],
+                            "confidence": data["confidence"],
+                            "boxes":      data["boxes"],
+                            "classes":    data["classes"],
+                        }
+                        for ts, data in sorted(by_ts.items())
+                    ]
+                    dets_from_hls.append(_sentinel[0])
+                    video_db.replace_detections(seg["id"], dets_from_hls)
+
+                    promoted = [
+                        {
+                            "segment_id": seg["id"],
+                            "source_id":  e["source_id"],
+                            "abs_ts":     e["abs_ts"],
+                            "class":      e["class"],
+                            "start_off":  max(0.0, e["abs_ts"] - base_ts),
+                            "end_off":    min(
+                                seg["end_ts"] - base_ts,
+                                e["abs_ts"] - base_ts + 2.0,
+                            ),
+                            "confidence": e["confidence"],
+                            "boxes_json": e["boxes_json"],
+                        }
+                        for e in hls_evts
+                    ]
+                    video_db.insert_events(promoted)
+                    video_db.delete_hls_events(
+                        seg["source_id"], seg["start_ts"], seg["end_ts"]
+                    )
+                    LOG.info("HLS-only: %d events, %d dets (base=actual_start_ts): %s",
+                             len(promoted), len(dets_from_hls) - 1, seg["path"][-35:])
+                    continue
+
                 if hls_evts:
-                    # HLS already provided provisional events — promote them to
-                    # real video_events. But still run YOLO on the MP4 for
-                    # accurate detection ts_offsets: the HLS abs_ts has a
-                    # systematic ~200-500ms offset vs MP4 PTS (Python records
-                    # start_ts before ffmpeg's first frame arrives).
+                    # HLS partial coverage (no actual_start_ts, or it disagrees).
+                    # Promote events but also run MP4 YOLO for box accuracy.
                     promoted = [
                         {
                             "segment_id": seg["id"],
@@ -262,11 +338,9 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     video_db.delete_hls_events(
                         seg["source_id"], seg["start_ts"], seg["end_ts"]
                     )
-                    # Run YOLO on MP4 for accurate detection positions (boxes)
-                    # but skip extract_events — events already stored above.
                     if seg_path.exists():
                         n = _yolo_tag_video(model, seg_path, seg["id"], video_db)
-                        LOG.info("HLS events kept, YOLO accurate dets (%d frames): %s",
+                        LOG.info("HLS partial + YOLO fallback (%d frames): %s",
                                  n, seg["path"][-35:])
                         if n == 0:
                             video_db.replace_detections(seg["id"], _sentinel)

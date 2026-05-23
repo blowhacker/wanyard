@@ -33,13 +33,14 @@ _CLASS_PRIORITY      = ["person", "bird", "cat", "dog",
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS segments (
-    id          INTEGER PRIMARY KEY,
-    source_id   TEXT    NOT NULL,
-    path        TEXT    NOT NULL UNIQUE,
-    start_ts    REAL    NOT NULL,
-    end_ts      REAL,
-    spritesheet TEXT,
-    webvtt      TEXT
+    id              INTEGER PRIMARY KEY,
+    source_id       TEXT    NOT NULL,
+    path            TEXT    NOT NULL UNIQUE,
+    start_ts        REAL    NOT NULL,
+    end_ts          REAL,
+    actual_start_ts REAL,        -- camera-accurate first-frame time (from HLS)
+    spritesheet     TEXT,
+    webvtt          TEXT
 );
 CREATE INDEX IF NOT EXISTS seg_source_ts ON segments(source_id, start_ts);
 CREATE INDEX IF NOT EXISTS seg_source_end_ts ON segments(source_id, end_ts, start_ts);
@@ -111,6 +112,7 @@ class VideoSegmentDB:
             # Additive migrations — safe to re-run, fail silently if column exists
             for migration in [
                 "ALTER TABLE hls_events ADD COLUMN thumb_jpeg BLOB",
+                "ALTER TABLE segments  ADD COLUMN actual_start_ts REAL",
             ]:
                 try:
                     conn.execute(migration)
@@ -483,6 +485,19 @@ class VideoSegmentDB:
         cutoff = time.time() - max_age_seconds
         with self._connect() as conn:
             conn.execute("DELETE FROM hls_events WHERE abs_ts<?", (cutoff,))
+
+    def observe_frame_time(self, source_id: str, abs_ts: float) -> None:
+        """Update the open segment's actual_start_ts to MIN(existing, abs_ts).
+        Called for each HLS .ts frame seen — earliest abs_ts ≈ MP4 first frame time.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE segments"
+                " SET actual_start_ts = MIN(COALESCE(actual_start_ts, ?), ?)"
+                " WHERE source_id=? AND end_ts IS NULL"
+                "   AND start_ts <= ? + 5 AND start_ts >= ? - 30",
+                (abs_ts, abs_ts, source_id, abs_ts, abs_ts),
+            )
 
     def live_status(self, source_id: str | None = None) -> dict:
         with self._connect() as conn:
