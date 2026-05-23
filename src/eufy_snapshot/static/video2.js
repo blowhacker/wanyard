@@ -2227,6 +2227,7 @@ function setPlaybackSpeed(idx) {
 // Keyboard
 document.addEventListener("keydown", e => {
   if (["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;  // don't steal browser/OS shortcuts
   if (e.key === " ")           { e.preventDefault(); togglePlayback(); }
   if (e.key === "ArrowLeft" && e.shiftKey) {
     e.preventDefault();
