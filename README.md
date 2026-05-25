@@ -41,26 +41,7 @@ wanyard serve        # web server + RTSP recording
 wanyard yolo-serve   # YOLO inference + backfill (separate process/container)
 ```
 
-## Configuration
-
-`config.yaml` — cameras can be added via the web UI or in the config file:
-
-```yaml
-sources:
-  front_door:
-    name: Front Door
-    type: rtsp
-    enabled: true
-    url_env: FRONT_DOOR_RTSP_URL
-```
-
-Set RTSP URLs in `.env`:
-
-```
-FRONT_DOOR_RTSP_URL=rtsp://user:password@camera-ip:554/stream1
-```
-
 ## Web UI
 
 - `http://localhost:8091` — timeline viewer with live streams and event feed
-- `http://localhost:8091/settings` — system status, camera management, cleanup config
+- `http://localhost:8091/settings` — add/remove cameras, system status, cleanup config
