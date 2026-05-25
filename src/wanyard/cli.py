@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_serve(config: AppConfig) -> int:
     source_db   = SourceDB(config.db_path) if config.db_path else None
-    all_sources = config.sources + (source_db.to_source_configs() if source_db else ())
+    all_sources = source_db.to_source_configs() if source_db else ()
 
     video_dir    = Path(os.environ.get("VIDEO_DIR", "video"))
     video_db     = VideoSegmentDB(video_dir / "video.db")

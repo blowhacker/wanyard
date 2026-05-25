@@ -3,5 +3,3 @@ db_path: data/sources.db
 web:
   host: 0.0.0.0
   port: 8091
-
-sources:

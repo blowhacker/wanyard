@@ -299,7 +299,7 @@ def make_app(
             return JSONResponse({"error": "url must start with rtsp:// or rtsps://"}, status_code=400)
 
         from .db import RtspSourceRow, make_id
-        existing_ids = {s.id for s in config.sources} | source_db.ids()
+        existing_ids = source_db.ids()
         source_id = make_id(name, existing_ids)
         interval_raw = body.get("interval_seconds")
         transport = str(body.get("rtsp_transport", "tcp"))
@@ -935,17 +935,13 @@ Route("/api/video/events",          api_video_events),
 
 
 def _sources_list(config: AppConfig, source_db=None) -> list:
-    from .db import SourceDB
-    cfg = list(config.enabled_sources())
-    db_sources = source_db.to_source_configs() if source_db else []
-    cfg_ids = {s.id for s in cfg}
-    all_sources = cfg + [s for s in db_sources if s.id not in cfg_ids]
+    sources = source_db.to_source_configs() if source_db else []
     return [
         {
             "id": s.id, "name": s.name or s.id, "type": s.type,
             "enabled": s.enabled,
             "interval_seconds": s.interval_seconds,
-            "mutable": s.id not in cfg_ids,
+            "mutable": True,
         }
-        for s in all_sources if s.type == "rtsp"
+        for s in sources if s.type == "rtsp"
     ]
