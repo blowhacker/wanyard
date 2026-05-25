@@ -21,7 +21,7 @@ RUN python -c 'import tomllib; print("\n".join(tomllib.load(open("pyproject.toml
 COPY src ./src
 RUN pip install --no-cache-dir --no-build-isolation --no-deps .
 
-COPY config.yaml ./config.yaml
+COPY config.example.yaml ./config.yaml
 COPY healthcheck.sh ./healthcheck.sh
 
 EXPOSE 8091

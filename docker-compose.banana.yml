@@ -20,7 +20,7 @@ services:
       - CLEANUP_DAYS=30
       # - CLEANUP_MAX_GB=200  # uncomment to also cap by total size
     volumes:
-      - ./config.banana.yaml:/app/config.yaml:ro
+      - ./config.yaml:/app/config.yaml:ro
       - ./models:/app/models
       - ./video:/app/video
       - yolo-run:/run/yolo
@@ -46,7 +46,7 @@ services:
       - VIDEO_DIR=/app/video
       - YOLO_SOCKET=/run/yolo/yolo.sock
     volumes:
-      - ./config.banana.yaml:/app/config.yaml:ro
+      - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
       - ./video:/app/video
       - yolo-run:/run/yolo

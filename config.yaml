@@ -1,9 +1,0 @@
-# Example config — copy and adapt for your deployment
-# See config.banana.yaml for a real example
-
-web:
-  host: 0.0.0.0
-  port: 8091
-  auto_refresh_seconds: 10
-
-sources: {}
