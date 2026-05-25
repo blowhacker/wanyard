@@ -246,6 +246,14 @@ body {
   font: 400 13px var(--font-ui);
   letter-spacing: 0;
 }
+.empty-cta {
+  margin-top: 4px;
+  color: var(--green);
+  font: 500 12px var(--font-ui);
+  text-decoration: none;
+  opacity: 0.85;
+}
+.empty-cta:hover { opacity: 1; text-decoration: underline; }
 .stage-overlay {
   position: absolute;
   left: 24px;

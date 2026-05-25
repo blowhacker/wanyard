@@ -718,6 +718,8 @@ const el = {
   tlCanvas:$("v2Timeline"),
   thumb:   $("v2ThumbPreview"),
   empty:   $("v2Empty"),
+  emptyText: $("v2EmptyText"),
+  emptyCta: $("v2EmptyCta"),
   tsDisp:  $("v2Timestamp"),
   tsTime:  $("v2TsTime"),
   tsDate:  $("v2TsDate"),
@@ -1550,6 +1552,8 @@ function renderSrcCtrl() {
   if (!el.srcCtrl) return;
   el.srcCtrl.innerHTML = "";
   const rtsp = st.sources.filter(s => s.type === "rtsp");
+  if (el.emptyText) el.emptyText.textContent = rtsp.length ? "Choose a source to start" : "No cameras added yet";
+  if (el.emptyCta)  el.emptyCta.hidden = !!rtsp.length;
   if (!rtsp.length) return;
 
   const items = rtsp.length > 1 ? [{ id:"all", name:"All" }, ...rtsp] : rtsp;
