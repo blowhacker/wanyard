@@ -10,7 +10,6 @@ data/
 apk/*.apk
 apk/*.apkm
 apk/*.xapk
-config.yaml
 .env
 test-env/
 yolo11m.pt

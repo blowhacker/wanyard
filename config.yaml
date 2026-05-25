@@ -1,5 +1,3 @@
-# Example config — copy to config.yaml and adapt for your deployment
-
 db_path: data/sources.db
 
 web:
