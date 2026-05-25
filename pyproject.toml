@@ -22,4 +22,4 @@ wanyard = "wanyard.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-wanyard = ["static/*"]
+wanyard = ["static/*", "static/assets/*"]
