@@ -61,13 +61,13 @@ docker run --rm -p 8091:8091 \
 
 ## Docker Compose (production)
 
-`docker-compose.banana.yml` runs two services:
+`docker-compose.yml` runs two services:
 
 - **yolo** — GPU container running `wanyard yolo-serve` (YOLO model, backfill loop, HLS tagging)
 - **app** — web server running `wanyard serve` (recording, web UI, API)
 
 ```bash
-docker compose -f docker-compose.banana.yml up -d
+docker compose up -d
 ```
 
 Requires NVIDIA GPU runtime for the yolo service.

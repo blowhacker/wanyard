@@ -33,7 +33,6 @@ class SourceConfig:
 class WebConfig:
     host: str = "0.0.0.0"
     port: int = 8080
-    auto_refresh_seconds: int = 10
     ssl_certfile: str | None = None
     ssl_keyfile: str | None = None
 
@@ -63,7 +62,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
                 raise ValueError(f"{config_path} must contain a YAML mapping")
             data = loaded
 
-    _web_known = {"host", "port", "auto_refresh_seconds", "ssl_certfile", "ssl_keyfile"}
+    _web_known = {"host", "port", "ssl_certfile", "ssl_keyfile"}
     web = WebConfig(**{k: v for k, v in _mapping(data.get("web", {})).items() if k in _web_known})
     sources = _load_sources(data)
     db_path_raw = data.get("db_path")
