@@ -260,8 +260,8 @@ def make_app(
     video_workers=None,
     capture_worker=None,
 ) -> Starlette:
-    import eufy_snapshot
-    static_dir = Path(eufy_snapshot.__file__).parent / "static"
+    import wanyard
+    static_dir = Path(wanyard.__file__).parent / "static"
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
@@ -626,7 +626,7 @@ def make_app(
         if not segs:
             return None, None, "no recorded video for that range"
 
-        tmpdir = Path(tempfile.mkdtemp(prefix="eufy_clip_"))
+        tmpdir = Path(tempfile.mkdtemp(prefix="wanyard_clip_"))
         parts: list[Path] = []
         root = video_dir.resolve()
         for i, seg in enumerate(segs):

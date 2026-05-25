@@ -1,105 +1,78 @@
-# Eufy Snapshot
+# Wanyard
 
-Capture camera-only screenshots from the Eufy Android app through ADB and serve a LAN web viewer for recent snapshots.
+RTSP/HLS camera capture with YOLO object detection and a LAN web viewer.
 
-## Assumptions
+## What it does
 
-- Eufy is installed, logged in, permissions are granted, and the target camera live view is open.
-- Capture uses the in-app Screenshot/scissors button, configured as tap coordinates in `config.yaml`.
-- The Eufy APK and credentials are not bundled. You must install/login once in the emulator UI.
+- Records RTSP camera streams as continuous MP4 segments
+- Serves live HLS streams for browser playback
+- Runs YOLO inference (real-time on HLS segments, backfill on MP4) with per-class thumbnail crops
+- Web UI: live view, timeline filmstrip, event feed with class filtering, clip export
+- Auto-cleanup of old footage by age or disk usage
 
-## Commands
+## Setup
 
 ```bash
-python -m pip install -e .
-eufy-snapshot doctor
-eufy-snapshot capture-once
-eufy-snapshot capture-once --source rtsp_front_door
-eufy-snapshot run
-eufy-snapshot web
-eufy-snapshot serve
+pip install -e .
+wanyard -c config.yaml serve
 ```
-
-`serve` runs both the capture worker and the web viewer.
 
 ## Sources
 
-`config.yaml` supports multiple named sources. Each source has its own capture method and interval, and the web viewer can filter snapshots by source.
-
-The current local RTSP source is configured as:
+Configure cameras in `config.yaml`:
 
 ```yaml
 sources:
-  rtsp_front_door:
-    name: Front Door RTSP
+  front_door:
+    name: Front Door
     type: rtsp
     enabled: true
     interval_seconds: 30
-    output_subdir: rtsp_front_door
+    output_subdir: front_door
     url_env: FRONT_DOOR_RTSP_URL
     rtsp_transport: tcp
     timeout_seconds: 20
 ```
 
-Put the credentialed RTSP URL in `.env` or the runtime environment:
+Set the RTSP URL in the environment:
 
 ```bash
 FRONT_DOOR_RTSP_URL=rtsp://user:password@camera-ip:554/stream1
 ```
 
-RTSP capture requires `ffmpeg`.
+Sources can also be added at runtime through the web UI settings page.
+
+## Commands
+
+```bash
+wanyard serve        # web server + RTSP recording
+wanyard yolo-serve   # YOLO inference + backfill (separate process/container)
+```
 
 ## Docker
 
-The image includes Python app code, Android platform tools, and `ffmpeg`. The emulator remains on the host for `eufy_native` sources.
-
 ```bash
-docker build -t eufy-snapshot .
-docker run --rm \
-  -p 8091:8091 \
-  -e ADB_SERVER_SOCKET=tcp:host.docker.internal:5037 \
+docker build -t wanyard .
+docker run --rm -p 8091:8091 \
   -v "$PWD/config.yaml:/app/config.yaml" \
-  -v "$PWD/snapshots:/app/snapshots" \
-  eufy-snapshot serve
+  -v "$PWD/video:/app/video" \
+  wanyard serve
 ```
 
-If Docker cannot resolve `host.docker.internal` on Linux, add `--add-host=host.docker.internal:host-gateway` or run with host networking where available. The host ADB server must be reachable from the container.
+## Docker Compose (production)
 
-## Bundled Emulator
+`docker-compose.banana.yml` runs two services:
 
-`docker-compose.yml` runs an Android 14/API 34 ARM64 emulator container plus the snapshot app container.
+- **yolo** — GPU container running `wanyard yolo-serve` (YOLO model, backfill loop, HLS tagging)
+- **app** — web server running `wanyard serve` (recording, web UI, API)
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.banana.yml up -d
 ```
 
-The first `docker compose build` downloads a ~2 GB ARM64 system image. The emulator's first boot takes 10–15 minutes (software ARM64 emulation, no KVM required). Subsequent starts are faster.
+Requires NVIDIA GPU runtime for the yolo service.
 
-Open:
+## Web UI
 
-- Web viewer: `http://localhost:8091`
-- Emulator noVNC: `http://localhost:6080`
-
-The Compose stack uses `config.compose.yaml`, where ADB points at the emulator service:
-
-```yaml
-adb_serial: eufy-emulator:5555
-adb_connect: eufy-emulator:5555
-```
-
-After the emulator boots, install Eufy and log in through noVNC. To sideload a user-supplied APK or APKM bundle:
-
-```bash
-mkdir -p apk
-# place the file at apk/eufy-security.apk or apk/eufy-security.apkm
-scripts/install_eufy_apk.sh
-```
-
-The install script detects `.apkm` bundles (APKMirror format) and selects the correct ABI split automatically. Eufy ships ARM64-only native libraries, so the script always uses the `arm64-v8a` split regardless of host architecture.
-
-## Web API
-
-- `GET /api/health`
-- `GET /api/images?date=YYYY-MM-DD`
-- `GET /api/images/latest`
-- `GET /images/<relative-path>`
+- `http://localhost:8091` — timeline viewer with live streams and event feed
+- `http://localhost:8091/settings` — system status, camera management, cleanup config

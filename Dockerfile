@@ -27,5 +27,5 @@ COPY healthcheck.sh ./healthcheck.sh
 EXPOSE 8091
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD sh /app/healthcheck.sh
-ENTRYPOINT ["eufy-snapshot"]
+ENTRYPOINT ["wanyard"]
 CMD ["serve"]

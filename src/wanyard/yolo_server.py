@@ -5,7 +5,7 @@ Runs as a separate process/container. Owns:
   - Backfill loop: tags untagged segments and extracts events
   - Unix socket server for future live frame requests
 
-Start with: eufy-snapshot yolo-serve
+Start with: wanyard yolo-serve
 """
 from __future__ import annotations
 

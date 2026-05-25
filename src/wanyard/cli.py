@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="eufy-snapshot")
+    parser = argparse.ArgumentParser(prog="wanyard")
     parser.add_argument("-c", "--config", default="config.yaml")
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])

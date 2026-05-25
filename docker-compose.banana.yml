@@ -1,7 +1,7 @@
 services:
   yolo:
-    image: eufy-snapshot:latest
-    container_name: eufy-yolo
+    image: wanyard:latest
+    container_name: wanyard-yolo
     restart: unless-stopped
     logging:
       driver: json-file
@@ -33,8 +33,8 @@ services:
               capabilities: [gpu]
 
   app:
-    image: eufy-snapshot:latest
-    container_name: eufy-snapshot
+    image: wanyard:latest
+    container_name: wanyard
     restart: unless-stopped
     logging:
       driver: json-file
