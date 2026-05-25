@@ -1,5 +1,7 @@
 # Wanyard
 
+Website: https://wanyard.com
+
 RTSP/HLS camera capture with YOLO object detection and a LAN web viewer.
 
 ## Quick start

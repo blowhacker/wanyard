@@ -1,0 +1,14 @@
+{
+  "name": "wanyard",
+  "short_name": "wanyard",
+  "description": "Self-hosted NVR with YOLO object detection. Any RTSP camera, one docker compose up.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0e1015",
+  "theme_color": "#e8a558",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

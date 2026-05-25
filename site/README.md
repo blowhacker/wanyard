@@ -39,6 +39,21 @@ Need to swap the accent colour permanently? Set `data-accent="green"` (or `blue`
 ## What's intentionally NOT here
 
 - No analytics. Add Plausible / Umami / Fathom yourself if you want.
-- No SEO bloat. Add `<meta>` tags for OG image / description when you have them.
-- No favicon yet. Drop a `favicon.ico` in `site/` and link it.
-- No service worker, no PWA. It's a one-page site.
+- No service worker, no PWA. It's a one-page site (the webmanifest is just for nice install icons).
+
+## Favicon set
+
+```
+site/favicon.ico                ← multi-res .ico (16/32/48)
+site/site.webmanifest           ← PWA / Android home-screen icon
+site/assets/favicon.svg         ← modern browsers, scales perfectly
+site/assets/favicon-16.png      ← legacy fallback
+site/assets/favicon-32.png      ← legacy fallback
+site/assets/favicon-48.png      ← legacy fallback
+site/assets/apple-touch-icon.png  (180×180)  ← iOS home screen
+site/assets/icon-192.png        ← Android home screen
+site/assets/icon-512.png        ← high-res / maskable
+site/assets/og-mark.png         (1200×1200)  ← social share preview
+```
+
+To redesign the mark: edit `assets/favicon.svg` (the source of truth), then regenerate the PNGs from it. Quick-and-dirty: run `rsvg-convert favicon.svg -w 32 -o favicon-32.png` for each size, or just open the SVG in any vector editor and export.
