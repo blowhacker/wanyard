@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1440">
+<title>wanyard — self-hosted NVR with YOLO detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ─────────── Top bar ─────────── -->
+  <header class="topbar" data-comment-anchor="topbar">
+    <div class="tb-l">
+      <a href="#" class="brand">
+        <div class="mark">w</div>
+        <div class="word">wanyard</div>
+      </a>
+      <div class="tb-sep"></div>
+      <div class="ver">v0.1.0 · self-hosted</div>
+    </div>
+    <nav class="tb-nav">
+      <a href="#what">what it does</a>
+      <a href="#cameras">cameras</a>
+      <a href="#compare">vs.</a>
+      <a href="#install">install</a>
+      <a href="#faq">faq</a>
+    </nav>
+    <div class="tb-r">
+      <a href="#install" class="btn" style="padding:7px 12px;font-size:13px">docs</a>
+      <a href="https://github.com/blowhacker/wanyard" class="gh">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        github
+        <span class="stars">★ 0</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- ─────────── Hero ─────────── -->
+  <section class="hero" data-screen-label="01 Hero" data-comment-anchor="hero">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <div class="eyebrow"><span class="dot"></span>open source · mit licensed · runs on your hardware</div>
+          <h1 class="h1">
+            Your yard<span class="punct">,</span><br>
+            on your <span class="accent">WAN</span><span class="punct">.</span>
+          </h1>
+          <p class="h-sub">
+            <b>Wanyard</b> records your RTSP cameras, runs YOLO object detection in real time, and serves a clean web viewer over your LAN. Two Docker containers. No cloud. No subscription. No Home Assistant required.
+          </p>
+
+          <div class="cta-block">
+            <div class="cmd" data-copy-target="install-cmd">
+              <span class="prompt">$</span>
+              <code id="install-cmd">git clone github.com/blowhacker/wanyard <span class="arg">&amp;&amp;</span> cd wanyard <span class="arg">&amp;&amp;</span> docker compose up <span class="flag">-d</span></code>
+              <button class="copy" data-copy="install-cmd">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 1.5h7a1 1 0 0 1 1 1v7" stroke="currentColor" stroke-width="1.4"/></svg>
+                <span>COPY</span>
+              </button>
+            </div>
+            <div class="cta-row">
+              <a href="https://github.com/blowhacker/wanyard" class="btn">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+                view source
+              </a>
+              <a href="#install" class="btn primary">
+                read the docs
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </a>
+            </div>
+          </div>
+
+          <ul class="h-foot">
+            <li><span class="tick">✓</span> any rtsp camera</li>
+            <li><span class="tick">✓</span> cpu or gpu</li>
+            <li><span class="tick">✓</span> lan-only by default</li>
+          </ul>
+        </div>
+
+        <!-- viewer mockup -->
+        <div class="viewer" data-comment-anchor="hero-viewer">
+          <div class="v-bar">
+            <div class="v-bar-l">
+              <div class="v-traffic"><span></span><span></span><span></span></div>
+              <div class="v-url"><b>wanyard.local</b>:8091<span style="color:var(--txt-4)"> /</span></div>
+            </div>
+            <div class="v-bar-r"><span class="pulse"></span>LIVE · 4 CAMS</div>
+          </div>
+          <div class="v-body">
+            <div class="v-stage">
+              <img src="assets/feed.jpg" alt="Live camera feed">
+              <!-- YOLO detection boxes overlaid -->
+              <div class="v-box" style="left:9%;top:38%;width:18%;height:30%">
+                <div class="lbl">car <span class="pct">94%</span></div>
+              </div>
+              <div class="v-box" style="left:30%;top:46%;width:23%;height:31%">
+                <div class="lbl">car <span class="pct">97%</span></div>
+              </div>
+              <div class="v-box" style="left:54%;top:50%;width:22%;height:29%">
+                <div class="lbl">car <span class="pct">91%</span></div>
+              </div>
+              <div class="v-box" style="left:78%;top:48%;width:20%;height:33%">
+                <div class="lbl">car <span class="pct">88%</span></div>
+              </div>
+              <div class="v-ts">
+                <span>03:09:39</span>
+                <span class="sub">2026-05-13 · driveway</span>
+              </div>
+              <div class="v-tools">
+                <div class="b active" title="Boxes">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="3" y="3" width="10" height="10" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/></svg>
+                </div>
+                <div class="b" title="Fullscreen">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 5.5V3h2.5M13 5.5V3h-2.5M3 10.5V13h2.5M13 10.5V13h-2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                </div>
+                <div class="b" title="Clip">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 3v7M5 7.5l3 3 3-3M3 13h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+              </div>
+            </div>
+            <div class="v-events">
+              <div class="ev-h">
+                <h4>Activity</h4>
+                <div class="ct">142 TODAY</div>
+              </div>
+              <div class="chips">
+                <span class="chip on">all 142</span>
+                <span class="chip">car 87</span>
+                <span class="chip">person 41</span>
+                <span class="chip">cat 12</span>
+                <span class="chip">+3</span>
+              </div>
+              <div class="ev-list">
+                <div class="ev">
+                  <div class="thumb car"></div>
+                  <div class="meta"><div class="cls"><span class="sw"></span>car · 0.97</div><div class="time">03:09:39 · 4s</div></div>
+                </div>
+                <div class="ev">
+                  <div class="thumb person"></div>
+                  <div class="meta"><div class="cls"><span class="sw" style="background:var(--txt-2)"></span>person · 0.88</div><div class="time">02:54:12 · 11s</div></div>
+                </div>
+                <div class="ev">
+                  <div class="thumb cat"></div>
+                  <div class="meta"><div class="cls"><span class="sw" style="background:var(--txt-2)"></span>cat · 0.71</div><div class="time">02:31:48 · 22s</div></div>
+                </div>
+                <div class="ev">
+                  <div class="thumb car"></div>
+                  <div class="meta"><div class="cls"><span class="sw"></span>car · 0.94</div><div class="time">02:18:03 · 6s</div></div>
+                </div>
+                <div class="ev">
+                  <div class="thumb person"></div>
+                  <div class="meta"><div class="cls"><span class="sw" style="background:var(--txt-2)"></span>person · 0.92</div><div class="time">01:47:21 · 18s</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="v-tl">
+            <div class="v-tl-h">
+              <span>TIMELINE · 24h</span>
+              <span>NOW · 03:09:39</span>
+            </div>
+            <div class="v-ruler">
+              <div class="tick" style="left:0%"><span class="lbl">00</span></div>
+              <div class="tick" style="left:16.6%"><span class="lbl">04</span></div>
+              <div class="tick" style="left:33.3%"><span class="lbl">08</span></div>
+              <div class="tick" style="left:50%"><span class="lbl">12</span></div>
+              <div class="tick" style="left:66.6%"><span class="lbl">16</span></div>
+              <div class="tick" style="left:83.3%"><span class="lbl">20</span></div>
+              <div class="seg dim" style="left:2%;width:5%"></div>
+              <div class="seg" style="left:10%;width:3%"></div>
+              <div class="seg dim" style="left:14%;width:2%"></div>
+              <div class="seg" style="left:32%;width:8%"></div>
+              <div class="seg dim" style="left:42%;width:3%"></div>
+              <div class="seg" style="left:48%;width:6%"></div>
+              <div class="seg" style="left:56%;width:4%"></div>
+              <div class="seg dim" style="left:62%;width:5%"></div>
+              <div class="seg" style="left:70%;width:9%"></div>
+              <div class="seg" style="left:82%;width:6%"></div>
+              <div class="seg dim" style="left:90%;width:7%"></div>
+              <div class="playhead" style="left:13%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── What it does ─────────── -->
+  <section class="sec" id="what" data-screen-label="02 What">
+    <div class="wrap">
+      <div class="sec-h">
+        <span class="eyebrow"><span class="dot"></span>what it does</span>
+        <h2>An NVR that doesn't <span class="accent">phone home</span>, doesn't charge you a subscription, and treats your old IP cameras as a feature, not a chore.</h2>
+        <p class="lede">Wanyard is opinionated about the boring parts (recording, retention, browser playback) so the interesting parts (detection, search, export) feel light.</p>
+      </div>
+
+      <div class="feat-grid">
+        <div class="feat">
+          <div class="lbl"><span class="n">01</span> RECORDING</div>
+          <h3>Continuous capture, MP4 segments</h3>
+          <p>Every camera is recorded to disk as <b>seamless MP4 segments</b> and served live to browsers as HLS. Scrub the timeline, jump to any moment, export a clip — no transcode dance.</p>
+          <div class="gloss">RTSP H.264 / H.265 · stored on local disk</div>
+        </div>
+        <div class="feat">
+          <div class="lbl"><span class="n">02</span> DETECTION</div>
+          <h3>YOLO, real-time and on backfill</h3>
+          <p>YOLOv8 tags every segment with per-class detections — <b>person, car, dog, cat, bicycle, package</b>, the full COCO set — and crops a thumbnail for each event so the activity feed is scannable.</p>
+          <div class="gloss">ultralytics 8.3 · runs on CPU or CUDA</div>
+        </div>
+        <div class="feat">
+          <div class="lbl"><span class="n">03</span> VIEWER</div>
+          <h3>One web UI, all your cameras</h3>
+          <p>A single-page viewer with a 24h timeline filmstrip, per-class event filtering, and clip download. Designed for a laptop on the couch, not a kiosk in a server room.</p>
+          <div class="gloss">no app · no port-forward · no auth gymnastics</div>
+        </div>
+        <div class="feat">
+          <div class="lbl"><span class="n">04</span> STORAGE</div>
+          <h3>Disk auto-cleanup</h3>
+          <p>Keep <code style="font:500 11.5px var(--font-mono);background:var(--bg-2);padding:1px 5px;border-radius:3px;border:1px solid var(--line-soft);color:var(--txt)">N</code> days of footage, or cap usage at <b>X gigabytes</b>. Wanyard prunes the oldest segments first and never lets the recorder fill the drive.</p>
+          <div class="gloss">configurable per-camera · safe defaults</div>
+        </div>
+        <div class="feat">
+          <div class="lbl"><span class="n">05</span> INSTALL</div>
+          <h3>Two containers, one compose file</h3>
+          <p>The recorder + web server is one container; the YOLO worker is another. <b>GPU is optional</b> — drop in <code style="font:500 11.5px var(--font-mono);background:var(--bg-2);padding:1px 5px;border-radius:3px;border:1px solid var(--line-soft);color:var(--txt)">docker-compose.gpu.yml</code> when you want acceleration.</p>
+          <div class="gloss">starlette · ultralytics · ffmpeg</div>
+        </div>
+        <div class="feat">
+          <div class="lbl"><span class="n">06</span> DEPLOY</div>
+          <h3>Run it where you want.</h3>
+          <p>Wanyard is just two Docker containers — drop them on a <b>Synology, Raspberry Pi, or homelab box</b> on your LAN, or on a <b>Hetzner / Fly.io / DO droplet</b> and reach it over WireGuard or Tailscale. Self-hosted means <i>your</i> server, not necessarily one in your house.</p>
+          <div class="gloss">homelab · hetzner · fly.io · oracle free tier</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── Cameras strip ─────────── -->
+  <section class="sec thin" id="cameras" data-screen-label="03 Cameras">
+    <div class="wrap">
+      <div class="sec-h" style="margin-bottom:24px">
+        <span class="eyebrow"><span class="dot"></span>any rtsp camera</span>
+        <h2>If it speaks <span class="accent">RTSP</span>, it works.</h2>
+        <p class="lede">No camera lock-in. No "verified device list." If you can paste a URL that starts with <code style="font:500 12px var(--font-mono);color:var(--txt);background:var(--surf);padding:1px 6px;border-radius:3px;border:1px solid var(--line-soft)">rtsp://</code>, wanyard records it.</p>
+      </div>
+      <div class="cams">
+        <div class="row">
+          <span>Reolink</span><span class="dot">·</span>
+          <span>Hikvision</span><span class="dot">·</span>
+          <span>Amcrest</span><span class="dot">·</span>
+          <span>Dahua</span><span class="dot">·</span>
+          <span>Tapo</span><span class="dot">·</span>
+          <span>Ubiquiti</span><span class="dot">·</span>
+          <span>Foscam</span><span class="dot">·</span>
+          <span>Annke</span><span class="dot">·</span>
+          <span>Lorex</span><span class="dot">·</span>
+          <span>Axis</span><span class="dot">·</span>
+          <span>Wyze</span><span style="color:var(--txt-3)">*</span>
+          <span class="more">…or that 2014 IP cam in the garage</span>
+        </div>
+        <div class="hint">* wyze requires rtsp firmware · onvif discovery on the roadmap</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── Flow ASCII ─────────── -->
+  <section class="sec" id="how" data-screen-label="04 How">
+    <div class="wrap">
+      <div class="sec-h">
+        <span class="eyebrow"><span class="dot"></span>under the hood</span>
+        <h2>Two processes. One disk. <span class="accent">Boring on purpose.</span></h2>
+      </div>
+      <div class="flow-wrap">
+        <pre class="flow">  <span class="cam">+----------+</span>    rtsp     <span class="core">+----------+</span>     mp4     <span class="core">+----------+</span>
+  <span class="cam">|  camera  |</span> <span class="arrow">----------&gt;</span> <span class="core">| recorder |</span> <span class="arrow">----------&gt;</span> <span class="core">|   disk   |</span>
+  <span class="cam">+----------+</span>             <span class="core">+----+-----+</span>             <span class="core">+----+-----+</span>
+                                <span class="arrow">|</span> hls                    <span class="arrow">|</span> backfill
+                                <span class="arrow">v</span>                        <span class="arrow">v</span>
+                           <span class="core">+----+-----+</span>             <span class="yolo">+----+-----+</span>
+                  you <span class="arrow">---&gt;</span> <span class="core">|  viewer  |</span> <span class="arrow">&lt;--events--</span> <span class="yolo">|   yolo   |</span>
+                           <span class="core">+----------+</span>             <span class="yolo">+----------+</span></pre>
+
+        <div class="flow-side">
+          <h3>Decoupled by design.</h3>
+          <p>The capture server only ever cares about <b>turning RTSP into MP4</b>. The YOLO worker only ever cares about <b>tagging segments with detections</b>. If one is offline, the other keeps doing its job.</p>
+          <ul>
+            <li><span class="tick">→</span><span><b>Recorder</b> never blocks on inference</span></li>
+            <li><span class="tick">→</span><span><b>YOLO</b> runs real-time on HLS, backfills MP4</span></li>
+            <li><span class="tick">→</span><span><b>Viewer</b> reads from disk; no central broker</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── Comparison ─────────── -->
+  <section class="sec" id="compare" data-screen-label="05 Compare">
+    <div class="wrap">
+      <div class="sec-h">
+        <span class="eyebrow"><span class="dot"></span>vs. the alternatives</span>
+        <h2>Where wanyard <span class="accent">fits</span> — and where it doesn't.</h2>
+        <p class="lede">An honest comparison. The other projects in this space are good. Pick the one that matches what you actually want to run.</p>
+      </div>
+
+      <div class="cmp">
+        <div class="cmp-tbl">
+          <div class="head">&nbsp;</div>
+          <div class="head">wanyard</div>
+          <div class="head" style="color:var(--txt-2)">Frigate</div>
+          <div class="head" style="color:var(--txt-2)">Ring / Nest</div>
+
+          <div class="row-l">Self-hosted</div>
+          <div><span class="sym yes">✓</span></div>
+          <div><span class="sym yes">✓</span></div>
+          <div><span class="sym no">✗</span> cloud-only</div>
+
+          <div class="row-l">Monthly fee</div>
+          <div><span class="mid">$0</span></div>
+          <div><span class="mid">$0</span></div>
+          <div><span class="mid" style="color:var(--red)">$5–15 / mo</span></div>
+
+          <div class="row-l">Object detection</div>
+          <div><span class="mid">YOLO, real-time + backfill</span></div>
+          <div><span class="mid">YOLO / Coral TPU</span></div>
+          <div><span class="mid">basic, paywalled</span></div>
+
+          <div class="row-l">Works with any RTSP cam</div>
+          <div><span class="sym yes">✓</span></div>
+          <div><span class="sym yes">✓</span></div>
+          <div><span class="sym no">✗</span> proprietary only</div>
+
+          <div class="row-l">Setup</div>
+          <div><span class="mid">1 docker compose</span></div>
+          <div><span class="mid">config.yml + HA</span></div>
+          <div><span class="mid">app sign-up</span></div>
+
+          <div class="row-l">Home Assistant required</div>
+          <div><span class="sym no" style="color:var(--green)">no</span></div>
+          <div><span class="mid">commonly paired</span></div>
+          <div><span class="mid">—</span></div>
+
+          <div class="row-l">Your footage stored…</div>
+          <div><span class="mid">on your disk</span></div>
+          <div><span class="mid">on your disk</span></div>
+          <div><span class="mid" style="color:var(--red)">in someone else's datacenter</span></div>
+
+          <div class="row-l" style="border-bottom:none">Source available</div>
+          <div style="border-bottom:none"><span class="sym yes">✓</span> MIT</div>
+          <div style="border-bottom:none"><span class="sym yes">✓</span> MIT</div>
+          <div style="border-bottom:none"><span class="sym no">✗</span></div>
+        </div>
+        <div class="cmp-foot">
+          <b>Why not just use Frigate?</b> You should, if you live inside Home Assistant and want the Coral TPU pipeline. Wanyard is for people who want a smaller surface area: one Docker compose, a web viewer at <code style="font:500 12px var(--font-mono);color:var(--txt);background:var(--surf);padding:1px 5px;border-radius:3px;border:1px solid var(--line-soft)">:8091</code>, and nothing else to configure.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── Quickstart ─────────── -->
+  <section class="sec" id="install" data-screen-label="06 Install">
+    <div class="wrap">
+      <div class="sec-h">
+        <span class="eyebrow"><span class="dot"></span>install</span>
+        <h2>One <span class="accent">docker compose up</span> and you're recording.</h2>
+        <p class="lede">Wanyard needs Docker and a directory to write footage to. That's it. The YOLO model downloads automatically on first run.</p>
+      </div>
+
+      <div class="qs">
+        <div class="code-block">
+          <div class="head">
+            <span class="ttl">QUICKSTART · CPU</span>
+            <button class="copy" data-copy="qs-cpu">COPY</button>
+          </div>
+          <pre id="qs-cpu"><span class="cmt"># clone, build, run</span>
+git clone https://github.com/blowhacker/wanyard.git
+cd wanyard
+docker compose up <span class="prm">--build</span> <span class="prm">-d</span>
+
+<span class="cmt"># add your first camera</span>
+open http://localhost:8091/settings</pre>
+        </div>
+
+        <div class="code-block">
+          <div class="head">
+            <span class="ttl">QUICKSTART · GPU (CUDA)</span>
+            <button class="copy" data-copy="qs-gpu">COPY</button>
+          </div>
+          <pre id="qs-gpu"><span class="cmt"># enable the gpu override</span>
+cp docker-compose.gpu.yml \
+   docker-compose.override.yml
+
+docker compose up <span class="prm">--build</span> <span class="prm">-d</span>
+
+<span class="cmt"># yolo worker now runs on cuda</span>
+docker compose logs <span class="arg">wanyard-yolo</span></pre>
+        </div>
+      </div>
+
+      <div class="qs" style="margin-top:24px">
+        <div class="qs-notes">
+          <h3>Hardware that's known to work</h3>
+          <dl>
+            <dt>MINIMUM</dt>
+            <dd>A 4-core x86 box with <b>8 GB RAM</b> and a 1 TB drive. Handles 1–2 cams at 1080p on CPU comfortably.</dd>
+            <dt>RECOMMENDED</dt>
+            <dd>Anything with an <b>NVIDIA GPU</b> (even a 1060). 4–8 cams real-time with backfill keeping pace.</dd>
+            <dt>OVERKILL</dt>
+            <dd>You already have a NAS and a homelab. Wanyard is happy to live in a corner of it.</dd>
+          </dl>
+        </div>
+
+        <div class="qs-notes">
+          <h3>What you'll see</h3>
+          <dl>
+            <dt>:8091</dt>
+            <dd>The viewer. Live streams, 24h timeline, event feed, clip export.</dd>
+            <dt>:8091/settings</dt>
+            <dd>Add cameras (paste an <code>rtsp://</code> URL), check system status, configure cleanup.</dd>
+            <dt>./data &amp; ./footage</dt>
+            <dd>Your database and your MP4 segments. Back them up like any other folder.</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── FAQ ─────────── -->
+  <section class="sec" id="faq" data-screen-label="07 FAQ">
+    <div class="wrap" style="max-width:1080px">
+      <div class="sec-h">
+        <span class="eyebrow"><span class="dot"></span>faq</span>
+        <h2>Things <span class="accent">people ask</span>.</h2>
+      </div>
+
+      <div class="faq">
+        <div class="faq-row">
+          <div class="q">Does this work without a GPU?</div>
+          <div class="a">Yes. The YOLO worker runs on CPU and handles 1–2 cameras at 1080p in real time. For 4+ cameras you'll want a GPU — even an old 1060 makes a substantial difference, especially for backfill catching up after a downtime.</div>
+        </div>
+        <div class="faq-row">
+          <div class="q">Do I need Home Assistant?</div>
+          <div class="a">No. Wanyard is a standalone web server. Home Assistant is great, but you shouldn't have to install a whole smart-home platform to look at your driveway.</div>
+        </div>
+        <div class="faq-row">
+          <div class="q">What cameras work?</div>
+          <div class="a">Anything that exposes an RTSP stream in H.264 or H.265. That includes most Reolink, Hikvision, Amcrest, Dahua, Tapo (with RTSP firmware), Ubiquiti, Axis, Foscam, and Annke cameras, plus generic ONVIF IP cams from before 2014. If it streams to VLC, it streams to wanyard.</div>
+        </div>
+        <div class="faq-row">
+          <div class="q">Is my footage private?</div>
+          <div class="a">By default, yes — wanyard runs LAN-only. There are no telemetry calls. The only outbound request is the YOLO model download on first run, from the Ultralytics CDN. If you want remote access, put it behind a Tailscale or Wireguard tunnel; don't port-forward it.</div>
+        </div>
+        <div class="faq-row">
+          <div class="q">Will there ever be a hosted version?</div>
+          <div class="a">Maybe, someday. <b>Wanyard hosted</b> would be for people who want all of this without owning a server. It is not the priority right now — the open-source thing is what wanyard <em>is</em>. If you'd find a managed version useful, drop a note on the GitHub.</div>
+        </div>
+        <div class="faq-row">
+          <div class="q">What does "wanyard" mean?</div>
+          <div class="a">Your <b>yard</b> is now on your <b>WAN</b>. Mostly a play on words; partly a reminder that the camera looking at your yard probably shouldn't be relaying through a server in Oregon.</div>
+        </div>
+        <div class="faq-row" style="border-bottom:none">
+          <div class="q">License?</div>
+          <div class="a">MIT. Use it, fork it, run it for a customer. The model weights are subject to Ultralytics' license — read theirs if that matters to you.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── Closer ─────────── -->
+  <section class="closer" data-screen-label="08 Closer">
+    <div class="wrap">
+      <h2>It's <span class="accent">just a docker compose up</span>.</h2>
+      <p>Stop renting your own footage.</p>
+      <div class="cmd" data-copy-target="closer-cmd">
+        <span class="prompt">$</span>
+        <code id="closer-cmd">git clone github.com/blowhacker/wanyard <span style="color:var(--txt-2)">&amp;&amp;</span> cd wanyard <span style="color:var(--txt-2)">&amp;&amp;</span> docker compose up <span style="color:var(--accent)">-d</span></code>
+        <button class="copy" data-copy="closer-cmd">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 1.5h7a1 1 0 0 1 1 1v7" stroke="currentColor" stroke-width="1.4"/></svg>
+          <span>COPY</span>
+        </button>
+      </div>
+      <div class="cta-row">
+        <a href="https://github.com/blowhacker/wanyard" class="btn">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          star on github
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────── Footer ─────────── -->
+  <footer class="foot">
+    <div class="wrap" style="display:flex;align-items:center;justify-content:space-between;width:100%">
+      <div class="l">
+        <span style="color:var(--txt-2)">wanyard</span>
+        <span style="color:var(--txt-4)">·</span>
+        <span>mit license</span>
+        <span style="color:var(--txt-4)">·</span>
+        <span>v0.1.0</span>
+      </div>
+      <div class="r">
+        <a href="https://github.com/blowhacker/wanyard">github</a>
+        <a href="#install">docs</a>
+        <a href="#faq">faq</a>
+        <span style="color:var(--txt-4)">·</span>
+        <span>made by one person · self-hosting since forever</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- copy buttons -->
+  <script>
+    document.querySelectorAll('[data-copy]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.getAttribute('data-copy');
+        const el = document.getElementById(id);
+        if(!el) return;
+        const text = el.innerText.replace(/\s+/g,' ').trim();
+        navigator.clipboard.writeText(text).then(()=>{
+          btn.classList.add('copied');
+          const span = btn.querySelector('span');
+          const old = span ? span.textContent : btn.textContent;
+          if(span){ span.textContent = 'COPIED'; } else { btn.textContent = 'COPIED'; }
+          setTimeout(()=>{
+            btn.classList.remove('copied');
+            if(span){ span.textContent = old; } else { btn.textContent = old; }
+          }, 1400);
+        });
+      });
+    });
+  </script>
+
+  </body>
+</html>
