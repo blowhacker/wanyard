@@ -2,6 +2,23 @@
 
 RTSP/HLS camera capture with YOLO object detection and a LAN web viewer.
 
+## Quick start
+
+```bash
+git clone https://github.com/blowhacker/wanyard.git
+cd wanyard
+docker compose up --build -d
+```
+
+Open `http://localhost:8091/settings` to add cameras. YOLO model downloads automatically on first run.
+
+For GPU acceleration, copy the override file:
+
+```bash
+cp docker-compose.gpu.yml docker-compose.override.yml
+docker compose up --build -d
+```
+
 ## What it does
 
 - Records RTSP camera streams as continuous MP4 segments
@@ -10,37 +27,12 @@ RTSP/HLS camera capture with YOLO object detection and a LAN web viewer.
 - Web UI: live view, timeline filmstrip, event feed with class filtering, clip export
 - Auto-cleanup of old footage by age or disk usage
 
-## Setup
+## Architecture
 
-```bash
-pip install -e .
-wanyard -c config.yaml serve
-```
+Two containers via `docker-compose.yml`:
 
-## Sources
-
-Configure cameras in `config.yaml`:
-
-```yaml
-sources:
-  front_door:
-    name: Front Door
-    type: rtsp
-    enabled: true
-    interval_seconds: 30
-    output_subdir: front_door
-    url_env: FRONT_DOOR_RTSP_URL
-    rtsp_transport: tcp
-    timeout_seconds: 20
-```
-
-Set the RTSP URL in the environment:
-
-```bash
-FRONT_DOOR_RTSP_URL=rtsp://user:password@camera-ip:554/stream1
-```
-
-Sources can also be added at runtime through the web UI settings page.
+- **wanyard** — web server + RTSP recording
+- **wanyard-yolo** — YOLO inference, backfill loop, HLS real-time tagging
 
 ## Commands
 
@@ -49,28 +41,24 @@ wanyard serve        # web server + RTSP recording
 wanyard yolo-serve   # YOLO inference + backfill (separate process/container)
 ```
 
-## Docker
+## Configuration
 
-```bash
-docker build -t wanyard .
-docker run --rm -p 8091:8091 \
-  -v "$PWD/config.yaml:/app/config.yaml" \
-  -v "$PWD/video:/app/video" \
-  wanyard serve
+`config.yaml` — cameras can be added via the web UI or in the config file:
+
+```yaml
+sources:
+  front_door:
+    name: Front Door
+    type: rtsp
+    enabled: true
+    url_env: FRONT_DOOR_RTSP_URL
 ```
 
-## Docker Compose (production)
+Set RTSP URLs in `.env`:
 
-`docker-compose.yml` runs two services:
-
-- **yolo** — GPU container running `wanyard yolo-serve` (YOLO model, backfill loop, HLS tagging)
-- **app** — web server running `wanyard serve` (recording, web UI, API)
-
-```bash
-docker compose up -d
 ```
-
-Requires NVIDIA GPU runtime for the yolo service.
+FRONT_DOOR_RTSP_URL=rtsp://user:password@camera-ip:554/stream1
+```
 
 ## Web UI
 

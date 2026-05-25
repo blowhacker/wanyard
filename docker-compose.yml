@@ -1,5 +1,6 @@
 services:
   yolo:
+    build: .
     image: wanyard:latest
     container_name: wanyard-yolo
     restart: unless-stopped
@@ -24,15 +25,9 @@ services:
       - ./models:/app/models
       - ./video:/app/video
       - yolo-run:/run/yolo
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   app:
+    build: .
     image: wanyard:latest
     container_name: wanyard
     restart: unless-stopped
