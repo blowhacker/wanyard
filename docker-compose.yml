@@ -31,12 +31,11 @@ services:
     image: wanyard:latest
     container_name: wanyard
     restart: unless-stopped
+    network_mode: host
     logging:
       driver: json-file
       options: {max-size: "50m", max-file: "3"}
     command: ["-c", "/app/config.yaml", "serve"]
-    ports:
-      - "8091:8091"
     environment:
       - VIDEO_DIR=/app/video
       - YOLO_SOCKET=/run/yolo/yolo.sock
