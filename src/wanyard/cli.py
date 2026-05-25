@@ -11,7 +11,7 @@ from pathlib import Path
 from .config import AppConfig, load_config
 from .db import SourceDB
 from .runner import CaptureWorker
-from .video import VideoSegmentDB, VideoWorker
+from .video import VideoSegmentDB
 from .web import make_app
 
 
@@ -41,20 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_serve(config: AppConfig) -> int:
-    source_db   = SourceDB(config.db_path) if config.db_path else None
-    all_sources = source_db.to_source_configs() if source_db else ()
-
-    video_dir    = Path(os.environ.get("VIDEO_DIR", "video"))
-    video_db     = VideoSegmentDB(video_dir / "video.db")
-    video_workers = {
-        s.id: VideoWorker(s, video_dir, video_db)
-        for s in all_sources if s.type == "rtsp" and s.enabled
-    }
-    capture_worker = CaptureWorker(config, video_workers=video_workers)
+    source_db      = SourceDB(config.db_path) if config.db_path else None
+    video_dir      = Path(os.environ.get("VIDEO_DIR", "video"))
+    video_db       = VideoSegmentDB(video_dir / "video.db")
+    capture_worker = CaptureWorker(source_db, video_dir, video_db)
 
     app = make_app(config, source_db=source_db,
                    video_dir=video_dir, video_db=video_db,
-                   video_workers=video_workers,
                    capture_worker=capture_worker)
     _serve(app, config)
     return 0

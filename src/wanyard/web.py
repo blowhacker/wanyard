@@ -257,7 +257,6 @@ def make_app(
     source_db=None,
     video_dir=None,
     video_db=None,
-    video_workers=None,
     capture_worker=None,
 ) -> Starlette:
     import wanyard

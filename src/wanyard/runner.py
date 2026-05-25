@@ -1,33 +1,54 @@
-"""RTSP recording coordinator with thread watchdog."""
+"""RTSP recording coordinator with thread watchdog and hot-reload."""
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from .config import AppConfig
+from pathlib import Path
+
+from .video import VideoSegmentDB, VideoWorker
 
 LOG = logging.getLogger(__name__)
-_WATCHDOG_INTERVAL = 30  # seconds between liveness checks
+_WATCHDOG_INTERVAL = 30
 
 
 class CaptureWorker:
-    def __init__(self, config: AppConfig, video_workers=None) -> None:
-        self.config = config
-        self.video_workers = video_workers or {}
+    def __init__(self, source_db, video_dir: Path, video_db: VideoSegmentDB) -> None:
+        self.source_db = source_db
+        self.video_dir = video_dir
+        self.video_db = video_db
+        self.video_workers: dict[str, VideoWorker] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._stop = threading.Event()
         self._watchdog: threading.Thread | None = None
 
     def start(self) -> None:
-        for source_id, vw in self.video_workers.items():
-            self._spawn(source_id, vw)
-        if self.video_workers:
-            self._watchdog = threading.Thread(
-                target=self._watch, name="rec-watchdog", daemon=True
-            )
-            self._watchdog.start()
+        self._sync_sources()
+        self._watchdog = threading.Thread(
+            target=self._watch, name="rec-watchdog", daemon=True
+        )
+        self._watchdog.start()
 
-    def _spawn(self, source_id: str, vw) -> None:
+    def _sync_sources(self) -> None:
+        if not self.source_db:
+            return
+        db_sources = {s.id: s for s in self.source_db.to_source_configs()
+                      if s.type == "rtsp" and s.enabled}
+
+        for sid in set(self.video_workers) - set(db_sources):
+            LOG.info("source removed, stopping: %s", sid)
+            self.video_workers[sid].stop()
+            self._threads.pop(sid, None)
+            self.video_workers.pop(sid)
+
+        for sid, source in db_sources.items():
+            if sid not in self.video_workers:
+                LOG.info("new source, starting: %s", sid)
+                vw = VideoWorker(source, self.video_dir, self.video_db)
+                self.video_workers[sid] = vw
+                self._spawn(sid, vw)
+
+    def _spawn(self, source_id: str, vw: VideoWorker) -> None:
         t = threading.Thread(target=vw.run, name=f"rec-{source_id}", daemon=True)
         t.start()
         self._threads[source_id] = t
@@ -38,11 +59,12 @@ class CaptureWorker:
             self._stop.wait(_WATCHDOG_INTERVAL)
             if self._stop.is_set():
                 break
-            for source_id, vw in self.video_workers.items():
+            self._sync_sources()
+            for source_id, vw in list(self.video_workers.items()):
                 t = self._threads.get(source_id)
                 if t and not t.is_alive():
                     LOG.warning("recording thread dead for %s — restarting", source_id)
-                    vw._stop.clear()  # reset stop event so run() loop can proceed
+                    vw._stop.clear()
                     self._spawn(source_id, vw)
 
     def thread_health(self) -> dict[str, bool]:
