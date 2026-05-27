@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS video_events (
 CREATE INDEX IF NOT EXISTS vevt_source_ts ON video_events(source_id, abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_class     ON video_events(class, abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_source_class_ts ON video_events(source_id, class, abs_ts);
+CREATE INDEX IF NOT EXISTS vevt_ts        ON video_events(abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_seg       ON video_events(segment_id, class);
 
 CREATE TABLE IF NOT EXISTS app_settings (
