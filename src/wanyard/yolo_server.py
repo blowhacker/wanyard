@@ -267,6 +267,7 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                 segs = conn.execute(
                     "SELECT s.* FROM segments s WHERE s.end_ts IS NOT NULL"
                     " AND NOT EXISTS (SELECT 1 FROM video_detections WHERE segment_id=s.id)"
+                    " ORDER BY s.start_ts"
                     " LIMIT 5"
                 ).fetchall()
 
@@ -289,31 +290,6 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                     until=seg["end_ts"],
                 )
                 if hls_evts:
-                    # HLS events go straight to video_events for fast provisional
-                    # display. But always run MP4 YOLO for accurate detection
-                    # ts_offsets — cv2.CAP_PROP_POS_MSEC on MP4 gives exact PTS,
-                    # whereas TS PROGRAM-DATE-TIME is approximate (rounding,
-                    # keyframe alignment) and causes box trail.
-                    promoted = [
-                        {
-                            "segment_id": seg["id"],
-                            "source_id":  e["source_id"],
-                            "abs_ts":     e["abs_ts"],
-                            "class":      e["class"],
-                            "start_off":  max(0.0, e["abs_ts"] - seg["start_ts"]),
-                            "end_off":    min(
-                                seg["end_ts"] - seg["start_ts"],
-                                e["abs_ts"] - seg["start_ts"] + 2.0,
-                            ),
-                            "confidence": e["confidence"],
-                            "boxes_json": e["boxes_json"],
-                        }
-                        for e in hls_evts
-                    ]
-                    video_db.insert_events(promoted)
-                    video_db.delete_hls_events(
-                        seg["source_id"], seg["start_ts"], seg["end_ts"]
-                    )
                     if seg_path.exists():
                         n = _yolo_tag_video(model, seg_path, seg["id"], video_db)
                         LOG.info("HLS events + MP4 YOLO (%d frames): %s",
@@ -322,6 +298,13 @@ def _backfill_loop(model, video_db, video_dir: Path, stop_event: threading.Event
                             video_db.replace_detections(seg["id"], _sentinel)
                     else:
                         video_db.replace_detections(seg["id"], _sentinel)
+                    video_db.delete_hls_events(
+                        seg["source_id"], seg["start_ts"], seg["end_ts"]
+                    )
+                    dets = video_db.detections_for_segment(seg["id"])
+                    n_evt = extract_events(seg, dets, video_db)
+                    if n_evt:
+                        LOG.info("extracted %d events: %s", n_evt, seg["path"][-35:])
                     continue
 
                 if seg_path.exists():

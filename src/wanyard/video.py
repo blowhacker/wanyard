@@ -27,6 +27,12 @@ _SPRITE_COLS         = 10
 _SPRITE_ROWS         = 6
 _EVENT_GAP_SECONDS   = 2.0    # detections within this gap = same event
 _PROVISIONAL_GRACE_SECONDS = 3600.0
+_VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
+_VEHICLE_TRACK_CENTER_DISTANCE = 0.045
+_VEHICLE_TRACK_AREA_RATIO = 3.0
+_VEHICLE_MIN_OBSERVATIONS = 2
+_VEHICLE_EXIT_GRACE_SECONDS = 15 * 60.0
+_VEHICLE_TRACK_LOOKBACK_SECONDS = 2 * 60 * 60.0
 _CLASS_PRIORITY      = ["person", "bird", "cat", "dog",
                          "bus", "truck", "motorcycle", "bicycle", "car",
                          "backpack", "suitcase"]
@@ -73,6 +79,25 @@ CREATE INDEX IF NOT EXISTS vevt_source_class_ts ON video_events(source_id, class
 CREATE INDEX IF NOT EXISTS vevt_ts        ON video_events(abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_seg       ON video_events(segment_id, class);
 
+CREATE TABLE IF NOT EXISTS vehicle_tracks (
+    id              INTEGER PRIMARY KEY,
+    source_id       TEXT    NOT NULL,
+    class           TEXT    NOT NULL,
+    cx              REAL    NOT NULL,
+    cy              REAL    NOT NULL,
+    area            REAL    NOT NULL,
+    first_seen      REAL    NOT NULL,
+    last_seen       REAL    NOT NULL,
+    last_segment_id INTEGER,
+    last_start_off  REAL    NOT NULL DEFAULT 0,
+    last_end_off    REAL    NOT NULL DEFAULT 0,
+    confidence      REAL    NOT NULL DEFAULT 0,
+    boxes_json      TEXT,
+    active          INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS vtrk_active_source
+    ON vehicle_tracks(active, source_id, last_seen);
+
 CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -114,6 +139,8 @@ class VideoSegmentDB:
             for migration in [
                 "ALTER TABLE hls_events ADD COLUMN thumb_jpeg BLOB",
                 "ALTER TABLE segments  ADD COLUMN actual_start_ts REAL",
+                "ALTER TABLE video_events ADD COLUMN event_type TEXT NOT NULL DEFAULT 'detection'",
+                "ALTER TABLE video_events ADD COLUMN track_id TEXT",
             ]:
                 try:
                     conn.execute(migration)
@@ -203,13 +230,157 @@ class VideoSegmentDB:
         } for r in rows]
 
     def insert_events(self, events: list[dict]) -> None:
+        rows = [
+            {
+                **event,
+                "event_type": event.get("event_type", "detection"),
+                "track_id": event.get("track_id"),
+            }
+            for event in events
+        ]
         with self._connect() as conn:
             conn.executemany(
                 "INSERT INTO video_events"
-                "(segment_id, source_id, abs_ts, class, start_off, end_off, confidence, boxes_json)"
-                " VALUES(:segment_id,:source_id,:abs_ts,:class,:start_off,:end_off,:confidence,:boxes_json)",
-                events,
+                "(segment_id, source_id, abs_ts, class, start_off, end_off,"
+                " confidence, boxes_json, event_type, track_id)"
+                " VALUES(:segment_id,:source_id,:abs_ts,:class,:start_off,:end_off,"
+                " :confidence,:boxes_json,:event_type,:track_id)",
+                rows,
             )
+
+    def track_vehicle_events(self, segment: dict, events: list[dict]) -> list[dict]:
+        source_id = segment["source_id"]
+        seg_start = float(segment["start_ts"])
+        seg_end = float(segment.get("end_ts") or seg_start)
+        output: list[dict] = []
+
+        with self._connect() as conn:
+            active = [
+                dict(r) for r in conn.execute(
+                    "SELECT * FROM vehicle_tracks"
+                    " WHERE active=1 AND source_id=? AND last_seen>=?"
+                    " ORDER BY last_seen DESC",
+                    (source_id, seg_start - _VEHICLE_TRACK_LOOKBACK_SECONDS),
+                ).fetchall()
+            ]
+            used_track_ids: set[int] = set()
+
+            for event in sorted(events, key=lambda e: e["abs_ts"]):
+                box = _event_vehicle_box(event)
+                if not box:
+                    continue
+                cx, cy = _box_center(box)
+                area = _box_area(box)
+                best: dict | None = None
+                best_dist = _VEHICLE_TRACK_CENTER_DISTANCE
+                for track in active:
+                    if int(track["id"]) in used_track_ids:
+                        continue
+                    if not _area_compatible(area, float(track["area"])):
+                        continue
+                    dist = _center_distance(cx, cy, float(track["cx"]), float(track["cy"]))
+                    if dist <= best_dist:
+                        best = track
+                        best_dist = dist
+
+                last_seen = float(event["abs_ts"]) + max(
+                    0.0, float(event["end_off"]) - float(event["start_off"])
+                )
+                if best:
+                    track_id = int(best["id"])
+                    used_track_ids.add(track_id)
+                    conn.execute(
+                        "UPDATE vehicle_tracks"
+                        " SET class=?, cx=?, cy=?, area=?, last_seen=?,"
+                        " last_segment_id=?, last_start_off=?, last_end_off=?,"
+                        " confidence=?, boxes_json=?, active=1"
+                        " WHERE id=?",
+                        (
+                            event["class"], cx, cy, area, last_seen,
+                            event["segment_id"], event["start_off"], event["end_off"],
+                            event["confidence"], event["boxes_json"], track_id,
+                        ),
+                    )
+                    best.update({
+                        "class": event["class"],
+                        "cx": cx,
+                        "cy": cy,
+                        "area": area,
+                        "last_seen": last_seen,
+                        "last_segment_id": event["segment_id"],
+                        "last_start_off": event["start_off"],
+                        "last_end_off": event["end_off"],
+                        "confidence": event["confidence"],
+                        "boxes_json": event["boxes_json"],
+                    })
+                else:
+                    cur = conn.execute(
+                        "INSERT INTO vehicle_tracks"
+                        "(source_id, class, cx, cy, area, first_seen, last_seen,"
+                        " last_segment_id, last_start_off, last_end_off,"
+                        " confidence, boxes_json, active)"
+                        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                        (
+                            source_id, event["class"], cx, cy, area,
+                            event["abs_ts"], last_seen, event["segment_id"],
+                            event["start_off"], event["end_off"],
+                            event["confidence"], event["boxes_json"],
+                        ),
+                    )
+                    track_id = int(cur.lastrowid)
+                    used_track_ids.add(track_id)
+                    active.append({
+                        "id": track_id,
+                        "source_id": source_id,
+                        "class": event["class"],
+                        "cx": cx,
+                        "cy": cy,
+                        "area": area,
+                        "first_seen": event["abs_ts"],
+                        "last_seen": last_seen,
+                        "last_segment_id": event["segment_id"],
+                        "last_start_off": event["start_off"],
+                        "last_end_off": event["end_off"],
+                        "confidence": event["confidence"],
+                        "boxes_json": event["boxes_json"],
+                        "active": 1,
+                    })
+                    output.append({
+                        **event,
+                        "event_type": "entry",
+                        "track_id": str(track_id),
+                    })
+
+            stale_before = seg_end - _VEHICLE_EXIT_GRACE_SECONDS
+            stale = [
+                dict(r) for r in conn.execute(
+                    "SELECT * FROM vehicle_tracks"
+                    " WHERE active=1 AND source_id=? AND last_seen<?",
+                    (source_id, stale_before),
+                ).fetchall()
+            ]
+            for track in stale:
+                track_id = int(track["id"])
+                if track_id in used_track_ids:
+                    continue
+                conn.execute(
+                    "UPDATE vehicle_tracks SET active=0 WHERE id=?",
+                    (track_id,),
+                )
+                output.append({
+                    "segment_id": track["last_segment_id"],
+                    "source_id": track["source_id"],
+                    "abs_ts": track["last_seen"],
+                    "class": track["class"],
+                    "start_off": track["last_start_off"],
+                    "end_off": track["last_end_off"],
+                    "confidence": track["confidence"],
+                    "boxes_json": track["boxes_json"],
+                    "event_type": "exit",
+                    "track_id": str(track_id),
+                })
+
+        return output
 
     def list_events(self, source_id: str | None = None, cls: str | None = None,
                     date: str | None = None, limit: int = 100,
@@ -667,6 +838,7 @@ def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
         segs = conn.execute(
             "SELECT s.* FROM segments s WHERE s.end_ts IS NOT NULL"
             " AND NOT EXISTS (SELECT 1 FROM video_detections WHERE segment_id=s.id)"
+            " ORDER BY s.start_ts"
         ).fetchall()
     for row in segs:
         seg = dict(row)
@@ -684,9 +856,74 @@ def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
 def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) -> int:
     """Group detections into events and store them."""
     rows = _events_from_detections(segment, detections)
+    vehicle_rows = [r for r in rows if r["class"] in _VEHICLE_CLASSES]
+    rows = [r for r in rows if r["class"] not in _VEHICLE_CLASSES]
+    rows.extend(db.track_vehicle_events(segment, vehicle_rows))
     if rows:
         db.insert_events(rows)
     return len(rows)
+
+
+def rebuild_events(
+    db: VideoSegmentDB,
+    source_id: str | None = None,
+    since: float | None = None,
+    until: float | None = None,
+    *,
+    reset_vehicle_tracks: bool = True,
+) -> dict:
+    where = ["s.end_ts IS NOT NULL"]
+    params: list = []
+    if source_id and source_id != "all":
+        where.append("s.source_id=?")
+        params.append(source_id)
+    if since is not None:
+        where.append("s.end_ts>=?")
+        params.append(since)
+    if until is not None:
+        where.append("s.start_ts<=?")
+        params.append(until)
+
+    with db._connect() as conn:
+        segs = [
+            dict(r) for r in conn.execute(
+                "SELECT s.* FROM segments s"
+                f" WHERE {' AND '.join(where)}"
+                " ORDER BY s.source_id, s.start_ts",
+                params,
+            ).fetchall()
+        ]
+        seg_ids = [s["id"] for s in segs]
+        for chunk in _chunks(seg_ids, 500):
+            placeholders = ",".join("?" for _ in chunk)
+            conn.execute(
+                f"DELETE FROM video_events WHERE segment_id IN ({placeholders})",
+                chunk,
+            )
+        if reset_vehicle_tracks:
+            if source_id and source_id != "all":
+                conn.execute("DELETE FROM vehicle_tracks WHERE source_id=?", (source_id,))
+            else:
+                conn.execute("DELETE FROM vehicle_tracks")
+
+    event_count = 0
+    detection_segments = 0
+    for seg in segs:
+        dets = db.detections_for_segment(seg["id"])
+        if dets:
+            detection_segments += 1
+        event_count += extract_events(seg, dets, db)
+
+    return {
+        "segments": len(segs),
+        "segments_with_detections": detection_segments,
+        "events": event_count,
+    }
+
+
+def _chunks(values: list, size: int):
+    for i in range(0, len(values), size):
+        yield values[i:i + size]
 
 
 def _events_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
@@ -694,28 +931,38 @@ def _events_from_detections(segment: dict, detections: list[dict]) -> list[dict]
         return []
 
     seg_start = segment["start_ts"]
+    events = _non_vehicle_events_from_detections(segment, detections)
+    events.extend(_vehicle_events_from_detections(segment, detections))
+    events.sort(key=lambda r: (r["abs_ts"], r["class"]))
+    return events
+
+
+def _non_vehicle_events_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
+    seg_start = segment["start_ts"]
     events: list[dict] = []
     current: dict | None = None
 
     for det in detections:
-        classes = det.get("classes") or []
+        classes = [c for c in (det.get("classes") or []) if c not in _VEHICLE_CLASSES]
         if not classes:
             continue
         dom = _dominant_class(classes)
         off = det["ts_offset"]
+        boxes = [b for b in (det.get("boxes") or []) if b.get("cls") == dom]
+        conf = max((float(b.get("conf", 0.0)) for b in boxes), default=det["confidence"])
 
         if current is None:
             current = {"cls": dom, "start": off, "end": off,
-                       "conf": det["confidence"], "boxes": det.get("boxes")}
+                       "conf": conf, "boxes": boxes}
         elif dom == current["cls"] and (off - current["end"]) <= _EVENT_GAP_SECONDS:
             current["end"] = off
-            if det["confidence"] > current["conf"]:
-                current["conf"] = det["confidence"]
-                current["boxes"] = det.get("boxes")
+            if conf > current["conf"]:
+                current["conf"] = conf
+                current["boxes"] = boxes
         else:
             events.append(current)
             current = {"cls": dom, "start": off, "end": off,
-                       "conf": det["confidence"], "boxes": det.get("boxes")}
+                       "conf": conf, "boxes": boxes}
 
     if current:
         events.append(current)
@@ -730,6 +977,130 @@ def _events_from_detections(segment: dict, detections: list[dict]) -> list[dict]
         "confidence": e["conf"],
         "boxes_json": json.dumps(e["boxes"]) if e["boxes"] else None,
     } for e in events]
+
+
+def _vehicle_events_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
+    seg_start = segment["start_ts"]
+    tracks: list[dict] = []
+
+    for det in detections:
+        off = float(det.get("ts_offset", 0.0))
+        if off < 0:
+            continue
+        boxes = [
+            b for b in (det.get("boxes") or [])
+            if b.get("cls") in _VEHICLE_CLASSES
+        ]
+        used: set[int] = set()
+        for box in sorted(boxes, key=lambda b: float(b.get("conf", 0.0)), reverse=True):
+            cx, cy = _box_center(box)
+            area = _box_area(box)
+            best_idx: int | None = None
+            best_dist = _VEHICLE_TRACK_CENTER_DISTANCE
+            for idx, track in enumerate(tracks):
+                if idx in used:
+                    continue
+                if not _area_compatible(area, track["area"]):
+                    continue
+                dist = _center_distance(cx, cy, track["cx"], track["cy"])
+                if dist <= best_dist:
+                    best_idx = idx
+                    best_dist = dist
+
+            if best_idx is None:
+                track = {
+                    "first": off,
+                    "last": off,
+                    "cx": cx,
+                    "cy": cy,
+                    "area": area,
+                    "seen": 1,
+                    "scores": {},
+                    "confidence": float(box.get("conf", 0.0)),
+                    "box": dict(box),
+                }
+                _add_vehicle_score(track, box)
+                tracks.append(track)
+                used.add(len(tracks) - 1)
+                continue
+
+            track = tracks[best_idx]
+            used.add(best_idx)
+            track["last"] = off
+            track["seen"] += 1
+            # Let the center follow slow movement, while preserving a stable
+            # identity for parked vehicles with small detector jitter.
+            track["cx"] = (track["cx"] * 0.7) + (cx * 0.3)
+            track["cy"] = (track["cy"] * 0.7) + (cy * 0.3)
+            track["area"] = (track["area"] * 0.7) + (area * 0.3)
+            _add_vehicle_score(track, box)
+            conf = float(box.get("conf", 0.0))
+            if conf >= track["confidence"]:
+                track["confidence"] = conf
+                track["box"] = dict(box)
+
+    events: list[dict] = []
+    for track in tracks:
+        if track["seen"] < _VEHICLE_MIN_OBSERVATIONS:
+            continue
+        cls = max(track["scores"].items(), key=lambda item: item[1])[0]
+        box = dict(track["box"])
+        box["cls"] = cls
+        events.append({
+            "segment_id": segment["id"],
+            "source_id": segment["source_id"],
+            "abs_ts": seg_start + track["first"],
+            "class": cls,
+            "start_off": track["first"],
+            "end_off": track["last"],
+            "confidence": track["confidence"],
+            "boxes_json": json.dumps([box]),
+        })
+    return events
+
+
+def _add_vehicle_score(track: dict, box: dict) -> None:
+    cls = box.get("cls")
+    if cls not in _VEHICLE_CLASSES:
+        return
+    track["scores"][cls] = track["scores"].get(cls, 0.0) + max(
+        0.01, float(box.get("conf", 0.0))
+    )
+
+
+def _event_vehicle_box(event: dict) -> dict | None:
+    try:
+        boxes = json.loads(event["boxes_json"]) if event.get("boxes_json") else []
+    except (TypeError, json.JSONDecodeError):
+        return None
+    for box in boxes:
+        if isinstance(box, dict) and box.get("cls") in _VEHICLE_CLASSES:
+            return box
+    return None
+
+
+def _box_center(box: dict) -> tuple[float, float]:
+    return (
+        (float(box["x1"]) + float(box["x2"])) / 2,
+        (float(box["y1"]) + float(box["y2"])) / 2,
+    )
+
+
+def _box_area(box: dict) -> float:
+    return max(0.0, float(box["x2"]) - float(box["x1"])) * max(
+        0.0, float(box["y2"]) - float(box["y1"])
+    )
+
+
+def _center_distance(ax: float, ay: float, bx: float, by: float) -> float:
+    return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+
+def _area_compatible(area: float, other: float) -> bool:
+    if area <= 0 or other <= 0:
+        return False
+    ratio = max(area, other) / min(area, other)
+    return ratio <= _VEHICLE_TRACK_AREA_RATIO
 
 
 class VideoWorker:

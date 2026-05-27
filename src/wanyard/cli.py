@@ -12,7 +12,6 @@ from .config import AppConfig, load_config
 from .db import SourceDB
 from .runner import CaptureWorker
 from .video import VideoSegmentDB
-from .web import make_app
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -25,6 +24,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_serve(config)
     if args.command == "yolo-serve":
         return cmd_yolo_serve()
+    if args.command == "rebuild-events":
+        return cmd_rebuild_events(args)
     parser.print_help()
     return 2
 
@@ -37,10 +38,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("serve",      help="web server + RTSP recording")
     sub.add_parser("yolo-serve", help="YOLO inference + backfill (separate process/container)")
+    rebuild = sub.add_parser("rebuild-events", help="rebuild video events from stored detections")
+    rebuild.add_argument("--source", default=None, help="source id to rebuild, for example tapo-garden")
+    rebuild.add_argument("--since", type=float, default=None, help="Unix timestamp lower bound")
+    rebuild.add_argument("--until", type=float, default=None, help="Unix timestamp upper bound")
+    rebuild.add_argument("--keep-vehicle-tracks", action="store_true",
+                         help="do not clear persisted vehicle tracking state before rebuilding")
     return parser
 
 
 def cmd_serve(config: AppConfig) -> int:
+    from .web import make_app
+
     source_db      = SourceDB(config.db_path) if config.db_path else None
     video_dir      = Path(os.environ.get("VIDEO_DIR", "video"))
     video_db       = VideoSegmentDB(video_dir / "video.db")
@@ -57,6 +66,27 @@ def cmd_yolo_serve() -> int:
     from . import yolo_server
     video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
     yolo_server.run(video_dir / "video.db", video_dir)
+    return 0
+
+
+def cmd_rebuild_events(args) -> int:
+    from .video import VideoSegmentDB, rebuild_events
+
+    video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
+    db = VideoSegmentDB(video_dir / "video.db")
+    stats = rebuild_events(
+        db,
+        source_id=args.source,
+        since=args.since,
+        until=args.until,
+        reset_vehicle_tracks=not args.keep_vehicle_tracks,
+    )
+    print(
+        "rebuilt events:"
+        f" segments={stats['segments']}"
+        f" with_detections={stats['segments_with_detections']}"
+        f" events={stats['events']}"
+    )
     return 0
 
 
