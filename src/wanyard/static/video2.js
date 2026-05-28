@@ -2512,7 +2512,22 @@ function _filterBoxes(boxes) {
   let b = boxes || [];
   if (st.xls.size > 0) b = b.filter(x => !st.xls.has(x.cls));
   if (st.cls.size > 0) b = b.filter(x =>  st.cls.has(x.cls));
+  const poly = activeZonePolygon();
+  if (poly) {
+    b = b.filter(x => {
+      const cx = (Number(x.x1) + Number(x.x2)) / 2;
+      const cy = (Number(x.y1) + Number(x.y2)) / 2;
+      return pointInPoly({ x: cx, y: cy }, poly);
+    });
+  }
   return b;
+}
+
+function activeZonePolygon() {
+  if (st.activeZoneId == null) return null;
+  const zone = (st.zones || []).find(z => z.id === st.activeZoneId);
+  if (!zone || !Array.isArray(zone.polygon) || zone.polygon.length < 3) return null;
+  return zone.polygon;
 }
 
 function drawBoxList(v, boxes) {
