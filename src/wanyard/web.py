@@ -446,14 +446,37 @@ def make_app(
 
     def _build_timeline(source_id):
         segs = video_db.list_segments(source_id)
-        with video_db._connect() as conn:
-            rows = conn.execute(
-                "SELECT segment_id, class, COUNT(*) as n"
-                " FROM video_events GROUP BY segment_id, class"
-            ).fetchall()
         summary: dict[int, dict] = {}
-        for r in rows:
-            summary.setdefault(r["segment_id"], {})[r["class"]] = r["n"]
+        if video_db.has_vehicle_event_zones(source_id):
+            where, params = ["1"], []
+            if source_id and source_id != "all":
+                where.append("source_id=?")
+                params.append(source_id)
+            with video_db._connect() as conn:
+                rows = conn.execute(
+                    "SELECT segment_id, source_id, class, boxes_json FROM video_events"
+                    f" WHERE {' AND '.join(where)}",
+                    params,
+                ).fetchall()
+            for evt in video_db.filter_events_by_zones([dict(r) for r in rows]):
+                summary.setdefault(evt["segment_id"], {})[evt["class"]] = (
+                    summary.setdefault(evt["segment_id"], {}).get(evt["class"], 0) + 1
+                )
+        else:
+            where, params = ["1"], []
+            if source_id and source_id != "all":
+                where.append("source_id=?")
+                params.append(source_id)
+            with video_db._connect() as conn:
+                rows = conn.execute(
+                    "SELECT segment_id, class, COUNT(*) as n"
+                    " FROM video_events"
+                    f" WHERE {' AND '.join(where)}"
+                    " GROUP BY segment_id, class",
+                    params,
+                ).fetchall()
+            for r in rows:
+                summary.setdefault(r["segment_id"], {})[r["class"]] = r["n"]
         for evt in video_db.provisional_events(source_id):
             summary.setdefault(evt["segment_id"], {})[evt["class"]] = (
                 summary.setdefault(evt["segment_id"], {}).get(evt["class"], 0) + 1

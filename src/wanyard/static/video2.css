@@ -335,24 +335,26 @@ body {
 }
 .v2-zone-bar {
   position: absolute;
-  left: 50%;
-  bottom: 24px;
+  top: 20px;
+  right: 24px;
   z-index: 9;
   display: flex;
-  gap: 6px;
-  padding: 6px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--r);
-  background: rgba(8, 10, 14, 0.82);
-  backdrop-filter: blur(10px);
-  transform: translateX(-50%);
+  background: rgba(8, 10, 14, 0.88);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(12px);
 }
 .v2-zone-bar[hidden] {
   display: none;
 }
 .v2-zone-action {
-  height: 32px;
-  padding: 0 12px;
+  min-width: 74px;
+  height: 36px;
+  padding: 0 14px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--r);
   background: rgba(255, 255, 255, 0.04);
@@ -372,6 +374,9 @@ body {
   color: #0b0d10;
   border-color: transparent;
   background: var(--amber);
+}
+.v2-zone-action.primary:disabled {
+  color: #0b0d10;
 }
 
 /* Activity panel */
