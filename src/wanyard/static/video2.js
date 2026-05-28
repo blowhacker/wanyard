@@ -2695,7 +2695,26 @@ function openZoneMenu() {
   renderZonePicker();
   el.zoneMenu.hidden = false;
   el.zones?.setAttribute("aria-expanded", "true");
+  positionZoneMenu();
 }
+
+function positionZoneMenu() {
+  if (!el.zoneMenu || !el.zones) return;
+  const r = el.zones.getBoundingClientRect();
+  el.zoneMenu.style.top = `${r.bottom + 6}px`;
+  const mw = el.zoneMenu.offsetWidth || 200;
+  const right = Math.max(8, window.innerWidth - r.right);
+  el.zoneMenu.style.right = `${right}px`;
+  el.zoneMenu.style.left = "auto";
+  el.zoneMenu.style.minWidth = `${Math.max(r.width, mw)}px`;
+}
+
+window.addEventListener("resize", () => {
+  if (el.zoneMenu && !el.zoneMenu.hidden) positionZoneMenu();
+});
+window.addEventListener("scroll", () => {
+  if (el.zoneMenu && !el.zoneMenu.hidden) positionZoneMenu();
+}, true);
 
 function closeZoneMenu() {
   if (!el.zoneMenu) return;

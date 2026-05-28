@@ -354,9 +354,7 @@ body {
   display: flex;
 }
 .st-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   min-width: 200px;
   max-height: 320px;
   overflow-y: auto;
@@ -366,7 +364,7 @@ body {
   background: rgba(10, 12, 16, 0.96);
   backdrop-filter: blur(10px);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  z-index: 30;
+  z-index: 9999;
   display: flex;
   flex-direction: column;
   gap: 2px;
