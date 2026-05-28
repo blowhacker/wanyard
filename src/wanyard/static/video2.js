@@ -2754,15 +2754,31 @@ function drawZones() {
     if (!poly) return;
     const pts = poly.map(normToCanvas).filter(Boolean);
     if (pts.length < 3) return;
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = "rgba(232, 165, 88, 0.7)";
-    ctx.fillStyle = "rgba(232, 165, 88, 0.10)";
-    ctx.setLineDash([6, 4]);
+
+    // dim everything outside the polygon (evenodd: outer rect minus poly)
+    ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
     ctx.beginPath();
-    pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    ctx.rect(0, 0, c.width, c.height);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
     ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+    ctx.fill("evenodd");
+
+    // dark halo under the bright stroke so it reads against any background
+    const drawOutline = () => {
+      ctx.beginPath();
+      pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+      ctx.stroke();
+    };
+    ctx.setLineDash([]);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    drawOutline();
+    ctx.setLineDash([8, 5]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255, 200, 120, 0.98)";
+    drawOutline();
     ctx.setLineDash([]);
     return;
   }
