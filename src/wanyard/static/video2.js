@@ -2613,6 +2613,7 @@ function updateZoneControl() {
   el.zones.disabled = !singleSource;
   el.zones.classList.toggle("active", st.zoneEdit.active || completedActivityZones().length > 0);
   renderZoneTabs();
+  drawZones();
 }
 
 function renderZoneTabs() {
@@ -2651,6 +2652,7 @@ function setActiveZone(id) {
   st.activeZoneId = id;
   pushState();
   renderZoneTabs();
+  drawZones();
   st.events = [];
   _eventsRangesClear();
   load();
@@ -2746,7 +2748,24 @@ function drawZones() {
   c.width = c.clientWidth; c.height = c.clientHeight;
   const ctx = c.getContext("2d");
   ctx.clearRect(0, 0, c.width, c.height);
-  if (!st.zoneEdit.active) return;
+
+  if (!st.zoneEdit.active) {
+    const poly = activeZonePolygon();
+    if (!poly) return;
+    const pts = poly.map(normToCanvas).filter(Boolean);
+    if (pts.length < 3) return;
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(232, 165, 88, 0.7)";
+    ctx.fillStyle = "rgba(232, 165, 88, 0.10)";
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    return;
+  }
 
   st.zoneEdit.zones.forEach((zone, idx) => {
     const points = (zone.polygon || []).map(normToCanvas).filter(Boolean);
