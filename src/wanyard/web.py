@@ -946,8 +946,8 @@ def make_app(
                             headers={"Cache-Control": "no-cache, no-store"})
 
     routes = [
-        Route("/",                           lambda r: FileResponse(static_dir / "video2.html")),
-        Route("/settings",                  lambda r: FileResponse(static_dir / "settings.html")),
+        Route("/",                           lambda r: FileResponse(static_dir / "video2.html", headers={"Cache-Control": "no-cache"})),
+        Route("/settings",                  lambda r: FileResponse(static_dir / "settings.html", headers={"Cache-Control": "no-cache"})),
         Route("/api/health",                api_health),
         Route("/api/thumb",                 api_thumb),
         Route("/api/video/event-thumb/{event_id}", api_video_event_thumb),
