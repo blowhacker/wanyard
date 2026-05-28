@@ -333,6 +333,88 @@ body {
   cursor: not-allowed;
   opacity: 0.55;
 }
+.st-btn-wide {
+  width: auto;
+  padding: 0 10px;
+  gap: 6px;
+  font: 600 12px var(--font-ui);
+}
+.st-btn-label {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-chevron {
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+.st-picker {
+  position: relative;
+  display: flex;
+}
+.st-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--r);
+  background: rgba(10, 12, 16, 0.96);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.st-menu[hidden] {
+  display: none;
+}
+.st-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--txt-2);
+  border-radius: 6px;
+  font: 600 12px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.st-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--txt);
+}
+.st-menu-item.active {
+  color: #f3b46a;
+  background: rgba(232, 165, 88, 0.12);
+}
+.st-menu-item .st-menu-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+.st-menu-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.st-menu-edit {
+  color: var(--amber);
+  font-weight: 600;
+}
+.st-menu-edit:hover {
+  background: rgba(232, 165, 88, 0.18);
+}
 .v2-zone-bar {
   position: absolute;
   top: 20px;

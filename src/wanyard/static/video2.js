@@ -741,7 +741,9 @@ const el = {
   zones:   $("v2Zones"),
   zoneBar: $("v2ZoneBar"),
   zoneName: $("v2ZoneName"),
-  zoneTabs: $("v2ZoneTabs"),
+  zoneTriggerLabel: $("v2ZoneTriggerLabel"),
+  zoneMenu: $("v2ZoneMenu"),
+  zonePicker: $("v2ZonePicker"),
   zoneCount:$("v2ZoneCount"),
   zonePrev:$("v2ZonePrev"),
   zoneNext:$("v2ZoneNext"),
@@ -2365,9 +2367,18 @@ el.liveVideo.addEventListener("click", togglePlayback);
 el.video.addEventListener("dblclick", toggleFullscreen);
 el.liveVideo.addEventListener("dblclick", toggleFullscreen);
 
-el.zones?.addEventListener("click", () => {
-  if (st.zoneEdit.active) cancelZoneEditor();
-  else startZoneEditor();
+el.zones?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (st.zoneEdit.active) { cancelZoneEditor(); return; }
+  toggleZoneMenu();
+});
+document.addEventListener("click", (e) => {
+  if (!el.zoneMenu || el.zoneMenu.hidden) return;
+  if (el.zonePicker?.contains(e.target)) return;
+  closeZoneMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && el.zoneMenu && !el.zoneMenu.hidden) closeZoneMenu();
 });
 el.zonePrev?.addEventListener("click", () => selectZone(st.zoneEdit.selected - 1));
 el.zoneNext?.addEventListener("click", () => selectZone(st.zoneEdit.selected + 1));
@@ -2611,47 +2622,92 @@ function updateZoneControl() {
   if (!el.zones) return;
   const singleSource = st.source !== "all";
   el.zones.disabled = !singleSource;
-  el.zones.classList.toggle("active", st.zoneEdit.active || completedActivityZones().length > 0);
-  renderZoneTabs();
+  el.zones.classList.toggle("active", st.zoneEdit.active || st.activeZoneId != null);
+  renderZonePicker();
   drawZones();
 }
 
-function renderZoneTabs() {
-  if (!el.zoneTabs) return;
+function activeZoneName() {
+  if (st.activeZoneId == null) return "All";
+  const z = (st.zones || []).find(z => z.id === st.activeZoneId);
+  return z?.name || `Area ${st.activeZoneId}`;
+}
+
+function renderZonePicker() {
+  if (!el.zones) return;
   const singleSource = st.source !== "all";
   const zones = completedActivityZones();
-  if (!singleSource || zones.length === 0) {
-    el.zoneTabs.hidden = true;
-    el.zoneTabs.innerHTML = "";
-    if (st.activeZoneId != null) {
-      st.activeZoneId = null;
-      pushState();
-    }
+  if (!singleSource) {
+    if (el.zonePicker) el.zonePicker.hidden = true;
+    if (st.activeZoneId != null) { st.activeZoneId = null; pushState(); }
+    closeZoneMenu();
     return;
   }
-  el.zoneTabs.hidden = false;
+  if (el.zonePicker) el.zonePicker.hidden = false;
   const validIds = new Set(zones.map(z => z.id));
   if (st.activeZoneId != null && !validIds.has(st.activeZoneId)) {
     st.activeZoneId = null;
     pushState();
   }
-  const tabs = [{ id: null, name: "All" }, ...zones.map(z => ({ id: z.id, name: z.name || `Area ${z.id}` }))];
-  el.zoneTabs.innerHTML = "";
-  tabs.forEach(t => {
+  if (el.zoneTriggerLabel) el.zoneTriggerLabel.textContent = activeZoneName();
+  if (!el.zoneMenu) return;
+  el.zoneMenu.innerHTML = "";
+  const items = [{ id: null, name: "All areas" }, ...zones.map(z => ({ id: z.id, name: z.name || `Area ${z.id}` }))];
+  items.forEach(t => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "v2-zone-tab" + (st.activeZoneId === t.id ? " active" : "");
-    b.textContent = t.name;
-    b.addEventListener("click", () => setActiveZone(t.id));
-    el.zoneTabs.appendChild(b);
+    b.role = "menuitem";
+    b.className = "st-menu-item" + (st.activeZoneId === t.id ? " active" : "");
+    const name = document.createElement("span");
+    name.className = "st-menu-name";
+    name.textContent = t.name;
+    b.appendChild(name);
+    if (st.activeZoneId === t.id) {
+      const tick = document.createElement("span");
+      tick.textContent = "✓";
+      b.appendChild(tick);
+    }
+    b.addEventListener("click", () => { closeZoneMenu(); setActiveZone(t.id); });
+    el.zoneMenu.appendChild(b);
   });
+  if (zones.length > 0) {
+    const div = document.createElement("div");
+    div.className = "st-menu-divider";
+    el.zoneMenu.appendChild(div);
+  }
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.role = "menuitem";
+  edit.className = "st-menu-item st-menu-edit";
+  edit.textContent = zones.length ? "Edit areas" : "Add area";
+  edit.addEventListener("click", () => { closeZoneMenu(); startZoneEditor(); });
+  el.zoneMenu.appendChild(edit);
+}
+
+function toggleZoneMenu() {
+  if (!el.zoneMenu) return;
+  if (el.zoneMenu.hidden) openZoneMenu();
+  else closeZoneMenu();
+}
+
+function openZoneMenu() {
+  if (!el.zoneMenu) return;
+  renderZonePicker();
+  el.zoneMenu.hidden = false;
+  el.zones?.setAttribute("aria-expanded", "true");
+}
+
+function closeZoneMenu() {
+  if (!el.zoneMenu) return;
+  el.zoneMenu.hidden = true;
+  el.zones?.setAttribute("aria-expanded", "false");
 }
 
 function setActiveZone(id) {
   if (st.activeZoneId === id) return;
   st.activeZoneId = id;
   pushState();
-  renderZoneTabs();
+  renderZonePicker();
   drawZones();
   st.events = [];
   _eventsRangesClear();
