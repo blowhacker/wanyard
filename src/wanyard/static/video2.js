@@ -715,6 +715,7 @@ const el = {
   video:   $("v2Video"),
   liveVideo:$("v2LiveVideo"),
   canvas:  $("v2BoxCanvas"),
+  zoneCanvas:$("v2ZoneCanvas"),
   tlCanvas:$("v2Timeline"),
   thumb:   $("v2ThumbPreview"),
   empty:   $("v2Empty"),
@@ -737,6 +738,18 @@ const el = {
   loop:    $("v2Loop"),
   timeDisp:$("v2TimeDisp"),
   boxes:   $("v2Boxes"),
+  zones:   $("v2Zones"),
+  zoneBar: $("v2ZoneBar"),
+  zoneName: $("v2ZoneName"),
+  zoneTabs: $("v2ZoneTabs"),
+  zoneCount:$("v2ZoneCount"),
+  zonePrev:$("v2ZonePrev"),
+  zoneNext:$("v2ZoneNext"),
+  zoneNew:$("v2ZoneNew"),
+  zoneDelete:$("v2ZoneDelete"),
+  zoneSave:$("v2ZoneSave"),
+  zoneReset:$("v2ZoneReset"),
+  zoneCancel:$("v2ZoneCancel"),
   fullscreen:$("v2Fullscreen"),
   download: $("v2DownloadClip"),
   status:  $("v2Status"),
@@ -757,6 +770,17 @@ const st = {
   classes:  {},
   sources:  [],
   sourceStatus: {},
+  zones: [],
+  zonesSource: null,
+  activeZoneId: null,
+  zoneEdit: {
+    active: false,
+    zones: [],
+    selected: -1,
+    dragPoint: null,
+    dragPoly: false,
+    last: null,
+  },
   source:   "all",
   cls:      new Set(),   // included classes (amber)
   xls:      new Set(),   // excluded classes (red)
@@ -1002,6 +1026,7 @@ async function fetchActivitySummary() {
   const { since, until } = todayRange();
   const p = new URLSearchParams({ since: String(Math.floor(since)), until: String(Math.ceil(until)) });
   if (st.source !== "all") p.set("source", st.source);
+  if (st.source !== "all" && st.activeZoneId != null) p.set("zone", String(st.activeZoneId));
   const r = await fetch(`/api/video/activity-summary?${p}`, { cache:"no-store" }).catch(() => null);
   if (!r?.ok) {
     const classes = {};
@@ -1012,6 +1037,14 @@ async function fetchActivitySummary() {
     return;
   }
   st.summary = await r.json();
+}
+
+async function fetchZonesForSource() {
+  if (st.source === "all") return { zones: [] };
+  const p = new URLSearchParams({ source: st.source });
+  const r = await fetch(`/api/video/zones?${p}`, { cache:"no-store" }).catch(() => null);
+  if (!r?.ok) return { zones: [] };
+  return r.json();
 }
 
 function updateActivityCount() {
@@ -1427,6 +1460,7 @@ async function load() {
   _loadStart();
   const p = new URLSearchParams();
   if (st.source !== "all") p.set("source", st.source);
+  if (st.source !== "all" && st.activeZoneId != null) p.set("zone", String(st.activeZoneId));
 
   // Events are loaded for a buffered range (±12h) around the visible window.
   // Only re-fetch if the visible window has moved outside the already-loaded range.
@@ -1436,16 +1470,21 @@ async function load() {
   const needsEventsLoad = _loadCheckTo > st.window.from && !_eventsRangesCovers(st.window.from, _loadCheckTo);
   if (needsEventsLoad) timeline.setFetchingRange(evFrom, evTo);
 
-  const [sr, evR, cr] = await Promise.all([
+  const [sr, evR, cr, zr] = await Promise.all([
     fetch(`/api/video2/timeline?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
     needsEventsLoad
       ? fetch(`/api/video/events?since=${Math.floor(evFrom)}&until=${Math.ceil(evTo)}&${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({}))
       : Promise.resolve(null),
     fetch(`/api/video/classes?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
+    fetchZonesForSource(),
   ]);
 
   st.segments = sr.segments || [];
   st.classes  = cr.classes  || {};
+  if (zr) {
+    st.zones = zr.zones || [];
+    st.zonesSource = st.source;
+  }
 
   if (evR) {
     // Merge new events into st.events (accumulate, don't replace)
@@ -1485,6 +1524,8 @@ async function load() {
   await fetchActivitySummary();
   updateActivityCount();
   renderClsCtrl();
+  updateZoneControl();
+  drawZones();
   renderNearScope();
   scheduleNearestEvents(true);
 
@@ -1575,9 +1616,10 @@ function renderSrcCtrl() {
     b.addEventListener("click", () => {
       if (st.source === s.id) return;
       const wasLive = liveTail.active;
+      cancelZoneEditor();
       stopLiveTail(false);
       st.source = s.id; st.initDone = false;
-      st.events = []; _eventsRangesClear();
+      st.events = []; st.zones = []; st.zonesSource = null; st.activeZoneId = null; _eventsRangesClear();
       renderSrcCtrl(); load().then(pushState);
       if (wasLive) startLiveTail(s.id);
     });
@@ -2190,7 +2232,7 @@ function updateLiveTailClock() {
   if (!liveTail.active) return;
 
   // Recover from paused state (tab hidden, autoplay policy, etc.)
-  if (el.liveVideo.paused && !el.liveVideo.ended) {
+  if (!st.zoneEdit.active && el.liveVideo.paused && !el.liveVideo.ended) {
     el.liveVideo.play().catch(() => {});
   }
 
@@ -2200,6 +2242,7 @@ function updateLiveTailClock() {
   setTimestampChip(ts, liveTail.srcId, true);
   setStatus("LIVE");
   drawLiveBoxes();
+  drawZones();
 }
 
 // ── Player controls ───────────────────────────────────
@@ -2322,6 +2365,91 @@ el.liveVideo.addEventListener("click", togglePlayback);
 el.video.addEventListener("dblclick", toggleFullscreen);
 el.liveVideo.addEventListener("dblclick", toggleFullscreen);
 
+el.zones?.addEventListener("click", () => {
+  if (st.zoneEdit.active) cancelZoneEditor();
+  else startZoneEditor();
+});
+el.zonePrev?.addEventListener("click", () => selectZone(st.zoneEdit.selected - 1));
+el.zoneNext?.addEventListener("click", () => selectZone(st.zoneEdit.selected + 1));
+el.zoneNew?.addEventListener("click", addZoneDraft);
+el.zoneDelete?.addEventListener("click", deleteSelectedZoneDraft);
+el.zoneSave?.addEventListener("click", saveZoneEditor);
+el.zoneReset?.addEventListener("click", resetZoneEditor);
+el.zoneCancel?.addEventListener("click", cancelZoneEditor);
+el.zoneName?.addEventListener("input", () => {
+  const z = selectedDraftZone();
+  if (z) z.name = el.zoneName.value.slice(0, 80);
+});
+
+el.zoneCanvas?.addEventListener("pointerdown", e => {
+  if (!st.zoneEdit.active || e.button !== 0) return;
+  e.preventDefault();
+  const pt = canvasToNorm(e);
+  if (!pt) return;
+  const hit = zonePointAt(e);
+  if (hit != null) {
+    st.zoneEdit.dragPoint = hit;
+  } else {
+    const clickedZone = zoneUnderPointer(e);
+    if (clickedZone != null && clickedZone !== st.zoneEdit.selected) {
+      selectZone(clickedZone);
+    }
+    let points = selectedPoints();
+    const nearEdge = zoneEdgeAt(e, 14);
+    if (nearEdge != null) {
+      points.splice(nearEdge + 1, 0, pt);
+      st.zoneEdit.dragPoint = nearEdge + 1;
+    } else if (points.length >= 3 && pointInPoly(pt, points)) {
+      st.zoneEdit.dragPoly = true;
+      st.zoneEdit.last = pt;
+    } else {
+      const edge = zoneEdgeAt(e);
+      if (edge != null && points.length >= 2) {
+        points.splice(edge + 1, 0, pt);
+        st.zoneEdit.dragPoint = edge + 1;
+      } else {
+        points = ensureDraftZone().polygon;
+        points.push(pt);
+        st.zoneEdit.dragPoint = points.length - 1;
+      }
+    }
+  }
+  el.zoneCanvas.setPointerCapture?.(e.pointerId);
+  updateZoneChrome();
+  drawZones();
+});
+
+el.zoneCanvas?.addEventListener("pointermove", e => {
+  if (!st.zoneEdit.active) return;
+  const pt = canvasToNorm(e);
+  if (!pt) return;
+  if (st.zoneEdit.dragPoint != null) {
+    selectedPoints()[st.zoneEdit.dragPoint] = pt;
+    drawZones();
+  } else if (st.zoneEdit.dragPoly && st.zoneEdit.last) {
+    moveZonePolygon(pt.x - st.zoneEdit.last.x, pt.y - st.zoneEdit.last.y);
+    st.zoneEdit.last = pt;
+    drawZones();
+  }
+});
+
+el.zoneCanvas?.addEventListener("pointerup", e => {
+  if (!st.zoneEdit.active) return;
+  st.zoneEdit.dragPoint = null;
+  st.zoneEdit.dragPoly = false;
+  st.zoneEdit.last = null;
+  el.zoneCanvas.releasePointerCapture?.(e.pointerId);
+});
+
+el.zoneCanvas?.addEventListener("dblclick", e => {
+  if (!st.zoneEdit.active) return;
+  const hit = zonePointAt(e);
+  if (hit == null) return;
+  selectedPoints().splice(hit, 1);
+  updateZoneChrome();
+  drawZones();
+});
+
 // ── Player events → UI ────────────────────────────────
 player.on("play",  () => { if (!liveTail.active) setPlayIcon(true); });
 player.on("pause", () => { if (!liveTail.active) setPlayIcon(false); });
@@ -2333,6 +2461,7 @@ player.on("timeupdate", () => {
   timeline.setPlayhead(ts);
   setTimestampChip(ts, player.currentSeg?.source_id ?? null, false);
   drawBoxes(ts);
+  drawZones();
   scheduleNearestEvents();
 });
 
@@ -2383,7 +2512,22 @@ function _filterBoxes(boxes) {
   let b = boxes || [];
   if (st.xls.size > 0) b = b.filter(x => !st.xls.has(x.cls));
   if (st.cls.size > 0) b = b.filter(x =>  st.cls.has(x.cls));
+  const poly = activeZonePolygon();
+  if (poly) {
+    b = b.filter(x => {
+      const cx = (Number(x.x1) + Number(x.x2)) / 2;
+      const cy = (Number(x.y1) + Number(x.y2)) / 2;
+      return pointInPoly({ x: cx, y: cy }, poly);
+    });
+  }
   return b;
+}
+
+function activeZonePolygon() {
+  if (st.activeZoneId == null) return null;
+  const zone = (st.zones || []).find(z => z.id === st.activeZoneId);
+  if (!zone || !Array.isArray(zone.polygon) || zone.polygon.length < 3) return null;
+  return zone.polygon;
 }
 
 function drawBoxList(v, boxes) {
@@ -2420,6 +2564,402 @@ function drawBoxList(v, boxes) {
   ctx.globalAlpha=1;
 }
 
+// ── Activity areas ───────────────────────────────────
+function isActivityZone(z) {
+  return z && ["activity_area", "vehicle_event"].includes(z.type)
+    && z.enabled !== false
+    && Array.isArray(z.polygon);
+}
+
+function activityZones() {
+  return (st.zones || []).filter(isActivityZone);
+}
+
+function completedActivityZones() {
+  return activityZones().filter(z => z.polygon.length >= 3);
+}
+
+function normalizeDraftZone(zone, idx) {
+  return {
+    name: zone?.name || `Area ${idx + 1}`,
+    type: "activity_area",
+    enabled: zone?.enabled !== false,
+    polygon: Array.isArray(zone?.polygon)
+      ? zone.polygon.map(p => ({ x: Number(p.x), y: Number(p.y) }))
+      : [],
+  };
+}
+
+function selectedDraftZone() {
+  return st.zoneEdit.zones[st.zoneEdit.selected] || null;
+}
+
+function selectedPoints() {
+  return selectedDraftZone()?.polygon || [];
+}
+
+function ensureDraftZone() {
+  if (selectedDraftZone()) return selectedDraftZone();
+  const zone = normalizeDraftZone(null, st.zoneEdit.zones.length);
+  st.zoneEdit.zones.push(zone);
+  st.zoneEdit.selected = st.zoneEdit.zones.length - 1;
+  updateZoneChrome();
+  return zone;
+}
+
+function updateZoneControl() {
+  if (!el.zones) return;
+  const singleSource = st.source !== "all";
+  el.zones.disabled = !singleSource;
+  el.zones.classList.toggle("active", st.zoneEdit.active || completedActivityZones().length > 0);
+  renderZoneTabs();
+  drawZones();
+}
+
+function renderZoneTabs() {
+  if (!el.zoneTabs) return;
+  const singleSource = st.source !== "all";
+  const zones = completedActivityZones();
+  if (!singleSource || zones.length === 0) {
+    el.zoneTabs.hidden = true;
+    el.zoneTabs.innerHTML = "";
+    if (st.activeZoneId != null) {
+      st.activeZoneId = null;
+      pushState();
+    }
+    return;
+  }
+  el.zoneTabs.hidden = false;
+  const validIds = new Set(zones.map(z => z.id));
+  if (st.activeZoneId != null && !validIds.has(st.activeZoneId)) {
+    st.activeZoneId = null;
+    pushState();
+  }
+  const tabs = [{ id: null, name: "All" }, ...zones.map(z => ({ id: z.id, name: z.name || `Area ${z.id}` }))];
+  el.zoneTabs.innerHTML = "";
+  tabs.forEach(t => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "v2-zone-tab" + (st.activeZoneId === t.id ? " active" : "");
+    b.textContent = t.name;
+    b.addEventListener("click", () => setActiveZone(t.id));
+    el.zoneTabs.appendChild(b);
+  });
+}
+
+function setActiveZone(id) {
+  if (st.activeZoneId === id) return;
+  st.activeZoneId = id;
+  pushState();
+  renderZoneTabs();
+  drawZones();
+  st.events = [];
+  _eventsRangesClear();
+  load();
+}
+
+function activeStageVideo() {
+  return liveTail.active ? el.liveVideo : el.video;
+}
+
+function videoRenderRect(v, c) {
+  if (!v?.videoWidth || !v?.videoHeight || !c?.clientWidth || !c?.clientHeight) return null;
+  const cw = c.clientWidth, ch = c.clientHeight;
+  const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
+  const w = v.videoWidth * scale, h = v.videoHeight * scale;
+  return { x: (cw - w) / 2, y: (ch - h) / 2, w, h };
+}
+
+function normToCanvas(pt) {
+  const rect = videoRenderRect(activeStageVideo(), el.zoneCanvas);
+  if (!rect) return null;
+  return { x: rect.x + pt.x * rect.w, y: rect.y + pt.y * rect.h };
+}
+
+function canvasToNorm(evt) {
+  const c = el.zoneCanvas;
+  const rect = videoRenderRect(activeStageVideo(), c);
+  if (!rect) return null;
+  const box = c.getBoundingClientRect();
+  const x = evt.clientX - box.left;
+  const y = evt.clientY - box.top;
+  return {
+    x: Math.max(0, Math.min(1, (x - rect.x) / rect.w)),
+    y: Math.max(0, Math.min(1, (y - rect.y) / rect.h)),
+  };
+}
+
+function zonePointAt(evt) {
+  const c = el.zoneCanvas;
+  const box = c.getBoundingClientRect();
+  const x = evt.clientX - box.left;
+  const y = evt.clientY - box.top;
+  let best = null, bestDist = 12;
+  selectedPoints().forEach((pt, idx) => {
+    const p = normToCanvas(pt);
+    if (!p) return;
+    const dist = Math.hypot(p.x - x, p.y - y);
+    if (dist <= bestDist) { best = idx; bestDist = dist; }
+  });
+  return best;
+}
+
+function zoneEdgeAt(evt, maxDist = Infinity) {
+  const pts = selectedPoints().map(normToCanvas);
+  if (pts.length < 2 || pts.some(p => !p)) return null;
+  const c = el.zoneCanvas;
+  const box = c.getBoundingClientRect();
+  const p = { x: evt.clientX - box.left, y: evt.clientY - box.top };
+  let best = null, bestDist = maxDist;
+  const edgeCount = pts.length >= 3 ? pts.length : pts.length - 1;
+  for (let i = 0; i < edgeCount; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    const dist = distToSegment(p, a, b);
+    if (dist < bestDist) {
+      best = i;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function zoneUnderPointer(evt) {
+  const pt = canvasToNorm(evt);
+  if (!pt) return null;
+  let best = null;
+  st.zoneEdit.zones.forEach((zone, idx) => {
+    if ((zone.polygon || []).length >= 3 && pointInPoly(pt, zone.polygon)) best = idx;
+  });
+  return best;
+}
+
+function distToSegment(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (!lenSq) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function drawZones() {
+  const c = el.zoneCanvas;
+  if (!c) return;
+  c.width = c.clientWidth; c.height = c.clientHeight;
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  if (!st.zoneEdit.active) {
+    const poly = activeZonePolygon();
+    if (!poly) return;
+    const pts = poly.map(normToCanvas).filter(Boolean);
+    if (pts.length < 3) return;
+
+    // dim everything outside the polygon (evenodd: outer rect minus poly)
+    ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
+    ctx.beginPath();
+    ctx.rect(0, 0, c.width, c.height);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.fill("evenodd");
+
+    // dark halo under the bright stroke so it reads against any background
+    const drawOutline = () => {
+      ctx.beginPath();
+      pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+      ctx.stroke();
+    };
+    ctx.setLineDash([]);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    drawOutline();
+    ctx.setLineDash([8, 5]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255, 200, 120, 0.98)";
+    drawOutline();
+    ctx.setLineDash([]);
+    return;
+  }
+
+  st.zoneEdit.zones.forEach((zone, idx) => {
+    const points = (zone.polygon || []).map(normToCanvas).filter(Boolean);
+    if (!points.length) return;
+    const selected = idx === st.zoneEdit.selected;
+    ctx.lineWidth = selected ? 2.5 : 1.5;
+    ctx.strokeStyle = selected ? "#e8a558" : "rgba(104, 176, 171, 0.86)";
+    ctx.fillStyle = selected ? "rgba(232, 165, 88, 0.18)" : "rgba(104, 176, 171, 0.12)";
+    ctx.beginPath();
+    points.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    if (points.length >= 3) {
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.stroke();
+  });
+
+  selectedPoints().map(normToCanvas).filter(Boolean).forEach((p, i) => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = i === st.zoneEdit.dragPoint ? "#f3b46a" : "#e8a558";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#050709";
+    ctx.stroke();
+  });
+}
+
+function setZoneEditing(active) {
+  st.zoneEdit.active = active;
+  el.stage?.classList.toggle("zone-editing", active);
+  if (el.zoneBar) el.zoneBar.hidden = !active;
+  updateZoneControl();
+  updateZoneChrome();
+  drawZones();
+}
+
+function updateZoneChrome() {
+  const zones = st.zoneEdit.zones;
+  const selected = selectedDraftZone();
+  const invalid = zones.some(z => {
+    const n = (z.polygon || []).length;
+    return n > 0 && n < 3;
+  });
+  if (el.zoneSave) el.zoneSave.disabled = invalid;
+  if (el.zoneDelete) el.zoneDelete.disabled = !selected;
+  if (el.zonePrev) el.zonePrev.disabled = zones.length <= 1;
+  if (el.zoneNext) el.zoneNext.disabled = zones.length <= 1;
+  if (el.zoneName) {
+    el.zoneName.disabled = !selected;
+    const nextName = selected?.name || "";
+    if (document.activeElement !== el.zoneName && el.zoneName.value !== nextName) {
+      el.zoneName.value = nextName;
+    }
+  }
+  if (el.zoneCount) {
+    const validCount = zones.filter(z => (z.polygon || []).length >= 3).length;
+    const total = zones.length;
+    el.zoneCount.textContent = total
+      ? `${Math.max(0, st.zoneEdit.selected) + 1} of ${total} · ${validCount} saved`
+      : "0 areas";
+  }
+}
+
+function selectZone(idx) {
+  const n = st.zoneEdit.zones.length;
+  if (!n) {
+    st.zoneEdit.selected = -1;
+  } else {
+    st.zoneEdit.selected = (idx + n) % n;
+  }
+  st.zoneEdit.dragPoint = null;
+  st.zoneEdit.dragPoly = false;
+  st.zoneEdit.last = null;
+  updateZoneChrome();
+  drawZones();
+}
+
+function addZoneDraft() {
+  const zone = normalizeDraftZone(null, st.zoneEdit.zones.length);
+  st.zoneEdit.zones.push(zone);
+  selectZone(st.zoneEdit.zones.length - 1);
+}
+
+function deleteSelectedZoneDraft() {
+  if (!selectedDraftZone()) return;
+  st.zoneEdit.zones.splice(st.zoneEdit.selected, 1);
+  selectZone(Math.min(st.zoneEdit.selected, st.zoneEdit.zones.length - 1));
+}
+
+function startZoneEditor() {
+  if (st.source === "all") return;
+  player.pause();
+  el.liveVideo?.pause();
+  st.zoneEdit.zones = activityZones().map(normalizeDraftZone);
+  st.zoneEdit.selected = st.zoneEdit.zones.length ? 0 : -1;
+  st.zoneEdit.dragPoint = null;
+  st.zoneEdit.dragPoly = false;
+  st.zoneEdit.last = null;
+  setZoneEditing(true);
+}
+
+function cancelZoneEditor() {
+  st.zoneEdit.zones = [];
+  st.zoneEdit.selected = -1;
+  st.zoneEdit.dragPoint = null;
+  st.zoneEdit.dragPoly = false;
+  st.zoneEdit.last = null;
+  setZoneEditing(false);
+}
+
+async function saveZoneEditor() {
+  if (st.source === "all") return;
+  if (st.zoneEdit.zones.some(z => {
+    const n = (z.polygon || []).length;
+    return n > 0 && n < 3;
+  })) return;
+  const zones = st.zoneEdit.zones
+    .filter(z => (z.polygon || []).length >= 3)
+    .map((z, idx) => ({
+      name: z.name || `Area ${idx + 1}`,
+      type: "activity_area",
+      enabled: true,
+      polygon: z.polygon,
+    }));
+  const p = new URLSearchParams({ source: st.source });
+  const r = await fetch(`/api/video/zones?${p}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ zones }),
+  }).catch(() => null);
+  if (!r?.ok) return;
+  const data = await r.json();
+  st.zones = data.zones || [];
+  st.zonesSource = st.source;
+  cancelZoneEditor();
+  st.events = [];
+  _eventsRangesClear();
+  await load();
+}
+
+function resetZoneEditor() {
+  st.zoneEdit.zones = activityZones().map(normalizeDraftZone);
+  st.zoneEdit.selected = st.zoneEdit.zones.length ? 0 : -1;
+  st.zoneEdit.dragPoint = null;
+  st.zoneEdit.dragPoly = false;
+  st.zoneEdit.last = null;
+  updateZoneChrome();
+  drawZones();
+}
+
+function moveZonePolygon(dx, dy) {
+  const pts = selectedPoints();
+  if (!pts.length) return;
+  const minX = Math.min(...pts.map(p => p.x));
+  const maxX = Math.max(...pts.map(p => p.x));
+  const minY = Math.min(...pts.map(p => p.y));
+  const maxY = Math.max(...pts.map(p => p.y));
+  const clampedDx = Math.max(-minX, Math.min(1 - maxX, dx));
+  const clampedDy = Math.max(-minY, Math.min(1 - maxY, dy));
+  pts.forEach(p => {
+    p.x += clampedDx;
+    p.y += clampedDy;
+  });
+}
+
+function pointInPoly(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > pt.y) !== (b.y > pt.y)) {
+      const xAtY = (b.x - a.x) * (pt.y - a.y) / (b.y - a.y) + a.x;
+      if (pt.x <= xAtY) inside = !inside;
+    }
+  }
+  return inside;
+}
+
 // ── Auto-refresh ──────────────────────────────────────
 setInterval(async () => {
   setStatus(liveTail.active ? "LIVE" : "SYNC");
@@ -2434,7 +2974,10 @@ setInterval(async () => {
   setStatus(liveTail.active ? "LIVE" : "REPLAY");
 }, 15000);
 
-window.addEventListener("resize", () => timeline.draw());
+window.addEventListener("resize", () => {
+  timeline.draw();
+  drawZones();
+});
 
 // ── Deep links ────────────────────────────────────────
 function pushState() {
@@ -2450,6 +2993,7 @@ function pushState() {
   }
   if (st.cls.size > 0)        p.set("cls",  [...st.cls].join(","));
   if (st.xls.size > 0)        p.set("xcls", [...st.xls].join(","));
+  if (st.activeZoneId != null) p.set("zone", String(st.activeZoneId));
   history.replaceState(null, "", `${location.pathname}${p.size ? "?" + p : ""}`);
 }
 
@@ -2458,6 +3002,11 @@ function readState() {
   if (p.has("source")) st.source = p.get("source");
   if (p.has("cls"))  p.get("cls").split(",").filter(Boolean).forEach(c => st.cls.add(c));
   if (p.has("xcls")) p.get("xcls").split(",").filter(Boolean).forEach(c => st.xls.add(c));
+  if (p.has("zone")) {
+    const z = p.get("zone");
+    const n = parseInt(z, 10);
+    st.activeZoneId = Number.isFinite(n) ? n : null;
+  }
   return { ts: p.has("ts") ? parseFloat(p.get("ts")) : null, live: p.get("live") === "1" };
 }
 

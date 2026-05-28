@@ -26,6 +26,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_yolo_serve()
     if args.command == "rebuild-events":
         return cmd_rebuild_events(args)
+    if args.command == "derive-episodes":
+        return cmd_derive_episodes(args)
     parser.print_help()
     return 2
 
@@ -42,8 +44,16 @@ def build_parser() -> argparse.ArgumentParser:
     rebuild.add_argument("--source", default=None, help="source id to rebuild, for example tapo-garden")
     rebuild.add_argument("--since", type=float, default=None, help="Unix timestamp lower bound")
     rebuild.add_argument("--until", type=float, default=None, help="Unix timestamp upper bound")
-    rebuild.add_argument("--keep-vehicle-tracks", action="store_true",
-                         help="do not clear persisted vehicle tracking state before rebuilding")
+    rebuild.add_argument("--keep-object-tracks", dest="keep_object_tracks", action="store_true",
+                         help="do not clear persisted object tracking state before rebuilding")
+    rebuild.add_argument("--keep-vehicle-tracks", dest="keep_object_tracks",
+                         action="store_true", help=argparse.SUPPRESS)
+    derive = sub.add_parser("derive-episodes", help="derive object episodes from stored detections")
+    derive.add_argument("--source", default=None, help="source id to derive, for example tapo-front")
+    derive.add_argument("--since", type=float, default=None, help="Unix timestamp lower bound")
+    derive.add_argument("--until", type=float, default=None, help="Unix timestamp upper bound")
+    derive.add_argument("--keep-tracks", action="store_true",
+                        help="append to existing object tracking state instead of clearing it first")
     return parser
 
 
@@ -79,13 +89,36 @@ def cmd_rebuild_events(args) -> int:
         source_id=args.source,
         since=args.since,
         until=args.until,
-        reset_vehicle_tracks=not args.keep_vehicle_tracks,
+        reset_object_tracks=not args.keep_object_tracks,
     )
     print(
         "rebuilt events:"
         f" segments={stats['segments']}"
         f" with_detections={stats['segments_with_detections']}"
         f" events={stats['events']}"
+    )
+    return 0
+
+
+def cmd_derive_episodes(args) -> int:
+    from .video import VideoSegmentDB, derive_object_events
+
+    video_dir = Path(os.environ.get("VIDEO_DIR", "video"))
+    db = VideoSegmentDB(video_dir / "video.db")
+    stats = derive_object_events(
+        db,
+        source_id=args.source,
+        since=args.since,
+        until=args.until,
+        reset_tracks=not args.keep_tracks,
+    )
+    sources = ",".join(stats["sources"]) if stats["sources"] else "none"
+    print(
+        "derived episodes:"
+        f" segments={stats['segments']}"
+        f" with_detections={stats['segments_with_detections']}"
+        f" events={stats['events']}"
+        f" sources={sources}"
     )
     return 0
 

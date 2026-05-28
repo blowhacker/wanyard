@@ -362,11 +362,7 @@ def make_app(
     async def _serve_event_thumb(event_id_raw: str) -> Response:
         if not video_dir or not video_db:
             return Response(status_code=404)
-        try:
-            event_id = int(event_id_raw)
-        except ValueError:
-            return Response(status_code=400)
-        evt = await asyncio.to_thread(video_db.get_event_with_segment, event_id)
+        evt = await asyncio.to_thread(video_db.get_event_with_segment, event_id_raw)
         if not evt:
             return Response(status_code=404)
 
@@ -386,7 +382,11 @@ def make_app(
         box = _select_event_box(boxes, evt.get("class", ""))
 
         cache_dir = seg_path.parent / ".thumbcache"
-        cache_file = cache_dir / f"event_{event_id}_crop_v1.jpg"
+        safe_event_id = "".join(
+            ch if ch.isalnum() or ch in {"-", "_"} else "_"
+            for ch in event_id_raw
+        )
+        cache_file = cache_dir / f"event_{safe_event_id}_crop_v1.jpg"
         if not cache_file.exists():
             ok = await asyncio.to_thread(_extract_video_thumb, seg_path, cache_file, t, box)
             if not ok:
@@ -444,17 +444,46 @@ def make_app(
                 ).fetchone()
         return JSONResponse({"segment": dict(row) if row else None})
 
-    def _build_timeline(source_id):
+    def _build_timeline(source_id, zone_id=None):
+        from wanyard.video import _filter_with_polygons
         segs = video_db.list_segments(source_id)
-        with video_db._connect() as conn:
-            rows = conn.execute(
-                "SELECT segment_id, class, COUNT(*) as n"
-                " FROM video_events GROUP BY segment_id, class"
-            ).fetchall()
         summary: dict[int, dict] = {}
-        for r in rows:
-            summary.setdefault(r["segment_id"], {})[r["class"]] = r["n"]
-        for evt in video_db.provisional_events(source_id):
+        table = "object_events" if video_db.object_events_available(source_id) else "video_events"
+        episode_filter = "event_type='appeared'" if table == "object_events" else "1"
+        polygons = video_db.zone_polygons(source_id, zone_id)
+        if polygons:
+            where, params = [episode_filter], []
+            if source_id and source_id != "all":
+                where.append("source_id=?")
+                params.append(source_id)
+            with video_db._connect() as conn:
+                rows = conn.execute(
+                    f"SELECT segment_id, source_id, class, boxes_json FROM {table}"
+                    f" WHERE {' AND '.join(where)}",
+                    params,
+                ).fetchall()
+            for evt in _filter_with_polygons([dict(r) for r in rows], polygons):
+                if evt["segment_id"] is None:
+                    continue
+                summary.setdefault(evt["segment_id"], {})[evt["class"]] = (
+                    summary.setdefault(evt["segment_id"], {}).get(evt["class"], 0) + 1
+                )
+        else:
+            where, params = [episode_filter], []
+            if source_id and source_id != "all":
+                where.append("source_id=?")
+                params.append(source_id)
+            with video_db._connect() as conn:
+                rows = conn.execute(
+                    "SELECT segment_id, class, COUNT(*) as n"
+                    f" FROM {table}"
+                    f" WHERE {' AND '.join(where)}"
+                    " GROUP BY segment_id, class",
+                    params,
+                ).fetchall()
+            for r in rows:
+                summary.setdefault(r["segment_id"], {})[r["class"]] = r["n"]
+        for evt in video_db.provisional_events(source_id, zone_id=zone_id):
             summary.setdefault(evt["segment_id"], {})[evt["class"]] = (
                 summary.setdefault(evt["segment_id"], {}).get(evt["class"], 0) + 1
             )
@@ -467,7 +496,8 @@ def make_app(
         if not video_db:
             return JSONResponse({"segments": []})
         source_id = request.query_params.get("source") or None
-        segs = await asyncio.to_thread(_build_timeline, source_id)
+        zone_id = request.query_params.get("zone") or None
+        segs = await asyncio.to_thread(_build_timeline, source_id, zone_id)
         return JSONResponse({"segments": segs})
 
     async def api_video_events(request: Request) -> JSONResponse:
@@ -491,7 +521,10 @@ def make_app(
             events = await asyncio.to_thread(
                 video_db.nearest_events, float(around_raw), source_id, classes, limit
             )
-            provisional = await asyncio.to_thread(video_db.provisional_events, source_id)
+            zone_id_around = request.query_params.get("zone") or None
+            provisional = await asyncio.to_thread(
+                video_db.provisional_events, source_id, None, zone_id_around
+            )
             if classes:
                 wanted = set(classes)
                 provisional = [e for e in provisional if e["class"] in wanted]
@@ -505,10 +538,13 @@ def make_app(
         until_raw = request.query_params.get("until")
         since     = float(since_raw) if since_raw else None
         until     = float(until_raw) if until_raw else None
+        zone_id   = request.query_params.get("zone") or None
         events = await asyncio.to_thread(
-            video_db.list_events, source_id, cls, date, limit, since, until
+            video_db.list_events, source_id, cls, date, limit, since, until, zone_id
         )
-        provisional = await asyncio.to_thread(video_db.provisional_events, source_id, since)
+        provisional = await asyncio.to_thread(
+            video_db.provisional_events, source_id, since, zone_id
+        )
         if cls and cls != "all":
             provisional = [e for e in provisional if e["class"] == cls]
         events = provisional + events
@@ -521,20 +557,50 @@ def make_app(
         if not video_db:
             return JSONResponse({"classes": {}})
         source_id = request.query_params.get("source") or None
-        counts = await asyncio.to_thread(video_db.class_counts, source_id)
+        zone_id = request.query_params.get("zone") or None
+        counts = await asyncio.to_thread(video_db.class_counts, source_id, True, zone_id)
         return JSONResponse({"classes": counts})
 
     async def api_video_activity_summary(request: Request) -> JSONResponse:
         if not video_db:
             return JSONResponse({"total": 0, "classes": {}})
         source_id = request.query_params.get("source") or None
+        zone_id = request.query_params.get("zone") or None
         try:
             since = float(request.query_params["since"])
             until = float(request.query_params["until"])
         except (KeyError, ValueError):
             return JSONResponse({"error": "since and until required"}, status_code=400)
-        summary = await asyncio.to_thread(video_db.activity_summary, source_id, since, until)
+        summary = await asyncio.to_thread(
+            video_db.activity_summary, source_id, since, until, zone_id
+        )
         return JSONResponse(summary)
+
+    async def api_video_zones(request: Request) -> JSONResponse:
+        if not video_db:
+            return JSONResponse({"zones": []})
+        source_id = request.query_params.get("source") or None
+        if not source_id or source_id == "all":
+            return JSONResponse({"error": "source is required"}, status_code=400)
+
+        if request.method == "GET":
+            zones = await asyncio.to_thread(video_db.list_zones, source_id)
+            return JSONResponse({"zones": zones})
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
+        zones = body.get("zones", [])
+        if not isinstance(zones, list):
+            return JSONResponse({"error": "zones must be a list"}, status_code=400)
+        try:
+            saved = await asyncio.to_thread(video_db.replace_zones, source_id, zones)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"zones": saved})
 
     def _source_statuses() -> dict:
         sources = _sources_list(config, source_db)
@@ -728,7 +794,11 @@ def make_app(
                     "SELECT COUNT(*) FROM segments WHERE end_ts IS NOT NULL"
                 ).fetchone()[0]
                 row = conn.execute(
-                    "SELECT MAX(abs_ts) FROM video_events"
+                    "SELECT MAX(abs_ts) FROM ("
+                    " SELECT abs_ts FROM video_events"
+                    " UNION ALL"
+                    " SELECT abs_ts FROM object_events"
+                    ")"
                 ).fetchone()
                 latest_event_ts = row[0] if row else None
         # Check yolo-serve socket
@@ -868,6 +938,7 @@ def make_app(
             with video_db._connect() as conn:
                 placeholders = ",".join("?" * len(seg_ids))
                 conn.execute(f"DELETE FROM video_events WHERE segment_id IN ({placeholders})", seg_ids)
+                conn.execute(f"DELETE FROM object_events WHERE segment_id IN ({placeholders})", seg_ids)
                 conn.execute(f"DELETE FROM video_detections WHERE segment_id IN ({placeholders})", seg_ids)
                 conn.execute(f"DELETE FROM segments WHERE id IN ({placeholders})", seg_ids)
         return JSONResponse({
@@ -897,17 +968,18 @@ def make_app(
                             headers={"Cache-Control": "no-cache, no-store"})
 
     routes = [
-        Route("/",                           lambda r: FileResponse(static_dir / "video2.html")),
-        Route("/settings",                  lambda r: FileResponse(static_dir / "settings.html")),
+        Route("/",                           lambda r: FileResponse(static_dir / "video2.html", headers={"Cache-Control": "no-cache"})),
+        Route("/settings",                  lambda r: FileResponse(static_dir / "settings.html", headers={"Cache-Control": "no-cache"})),
         Route("/api/health",                api_health),
         Route("/api/thumb",                 api_thumb),
         Route("/api/video/event-thumb/{event_id}", api_video_event_thumb),
         Route("/api/video/hls-thumb/{hls_id}", api_video_hls_thumb),
         Route("/api/video/segment-at",      api_video_segment_at),
         Route("/api/video2/timeline",       api_video2_timeline),
-Route("/api/video/events",          api_video_events),
+        Route("/api/video/events",          api_video_events),
         Route("/api/video/classes",         api_video_class_counts),
         Route("/api/video/activity-summary", api_video_activity_summary),
+        Route("/api/video/zones",           api_video_zones, methods=["GET", "PUT"]),
         Route("/api/video/segments",        api_video_segments),
         Route("/api/video/detections",      api_video_detections),
         Route("/api/video/live",            api_video_live_status),
