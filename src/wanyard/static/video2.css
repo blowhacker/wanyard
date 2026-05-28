@@ -561,6 +561,47 @@ body {
   font: 500 11px var(--font-mono);
   white-space: nowrap;
 }
+.ph-zone-picker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.ph-zone-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  max-width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: var(--txt-2);
+  font: 600 11px var(--font-ui);
+  cursor: pointer;
+}
+.ph-zone-trigger:hover {
+  color: var(--txt);
+  background: rgba(255, 255, 255, 0.08);
+}
+.ph-zone-trigger[aria-expanded="true"] {
+  border-color: rgba(232, 165, 88, 0.45);
+  color: #f3b46a;
+  background: rgba(232, 165, 88, 0.10);
+}
+.ph-zone-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ph-zone-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.ph-zone-chevron {
+  opacity: 0.7;
+  flex-shrink: 0;
+}
 .ph-filters,
 .class-chips {
   display: flex;

@@ -739,6 +739,7 @@ const el = {
   timeDisp:$("v2TimeDisp"),
   boxes:   $("v2Boxes"),
   zones:   $("v2Zones"),
+  zonesEdit: $("v2ZonesEdit"),
   zoneBar: $("v2ZoneBar"),
   zoneName: $("v2ZoneName"),
   zoneTriggerLabel: $("v2ZoneTriggerLabel"),
@@ -2372,6 +2373,11 @@ el.zones?.addEventListener("click", (e) => {
   if (st.zoneEdit.active) { cancelZoneEditor(); return; }
   toggleZoneMenu();
 });
+el.zonesEdit?.addEventListener("click", () => {
+  closeZoneMenu();
+  if (st.zoneEdit.active) cancelZoneEditor();
+  else startZoneEditor();
+});
 document.addEventListener("click", (e) => {
   if (!el.zoneMenu || el.zoneMenu.hidden) return;
   if (el.zonePicker?.contains(e.target)) return;
@@ -2619,10 +2625,12 @@ function ensureDraftZone() {
 }
 
 function updateZoneControl() {
-  if (!el.zones) return;
   const singleSource = st.source !== "all";
-  el.zones.disabled = !singleSource;
-  el.zones.classList.toggle("active", st.zoneEdit.active || st.activeZoneId != null);
+  if (el.zones) el.zones.disabled = !singleSource;
+  if (el.zonesEdit) {
+    el.zonesEdit.disabled = !singleSource;
+    el.zonesEdit.classList.toggle("active", st.zoneEdit.active);
+  }
   renderZonePicker();
   drawZones();
 }
