@@ -483,7 +483,7 @@ def make_app(
                 ).fetchall()
             for r in rows:
                 summary.setdefault(r["segment_id"], {})[r["class"]] = r["n"]
-        for evt in video_db.provisional_events(source_id):
+        for evt in video_db.provisional_events(source_id, zone_id=zone_id):
             summary.setdefault(evt["segment_id"], {})[evt["class"]] = (
                 summary.setdefault(evt["segment_id"], {}).get(evt["class"], 0) + 1
             )
@@ -521,7 +521,10 @@ def make_app(
             events = await asyncio.to_thread(
                 video_db.nearest_events, float(around_raw), source_id, classes, limit
             )
-            provisional = await asyncio.to_thread(video_db.provisional_events, source_id)
+            zone_id_around = request.query_params.get("zone") or None
+            provisional = await asyncio.to_thread(
+                video_db.provisional_events, source_id, None, zone_id_around
+            )
             if classes:
                 wanted = set(classes)
                 provisional = [e for e in provisional if e["class"] in wanted]
@@ -539,7 +542,9 @@ def make_app(
         events = await asyncio.to_thread(
             video_db.list_events, source_id, cls, date, limit, since, until, zone_id
         )
-        provisional = await asyncio.to_thread(video_db.provisional_events, source_id, since)
+        provisional = await asyncio.to_thread(
+            video_db.provisional_events, source_id, since, zone_id
+        )
         if cls and cls != "all":
             provisional = [e for e in provisional if e["class"] == cls]
         events = provisional + events

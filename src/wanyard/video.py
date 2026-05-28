@@ -851,7 +851,7 @@ class VideoSegmentDB:
                     ).fetchall()
             counts = {r["class"]: r["n"] for r in rows}
         if include_provisional:
-            for evt in self.provisional_events(source_id):
+            for evt in self.provisional_events(source_id, zone_id=zone_id):
                 counts[evt["class"]] = counts.get(evt["class"], 0) + 1
         return counts
 
@@ -893,7 +893,7 @@ class VideoSegmentDB:
             with self._connect() as conn:
                 rows = conn.execute(sql, params).fetchall()
             classes = {r["class"]: r["n"] for r in rows}
-        for evt in self.provisional_events(source_id, since):
+        for evt in self.provisional_events(source_id, since, zone_id=zone_id):
             if until is not None and evt["abs_ts"] >= until:
                 continue
             classes[evt["class"]] = classes.get(evt["class"], 0) + 1
@@ -930,7 +930,8 @@ class VideoSegmentDB:
         return [dict(r) for r in rows]
 
     def provisional_events(self, source_id: str | None = None,
-                           since: float | None = None) -> list[dict]:
+                           since: float | None = None,
+                           zone_id=None) -> list[dict]:
         cutoff = time.time() - _PROVISIONAL_GRACE_SECONDS
         where, params = [
             "((s.end_ts IS NULL AND s.start_ts>=?)"
@@ -949,6 +950,7 @@ class VideoSegmentDB:
         with self._connect() as conn:
             segs = [dict(r) for r in conn.execute(sql, params).fetchall()]
 
+        polygons = self.zone_polygons(source_id, zone_id)
         events: list[dict] = []
         for seg in segs:
             rows = _object_tracklets_from_detections(seg, self.detections_for_segment(seg["id"]))
@@ -961,8 +963,9 @@ class VideoSegmentDB:
                 row["spritesheet"] = seg.get("spritesheet")
                 row["seg_start_ts"] = seg["start_ts"]
                 events.append(row)
+        events = _filter_with_polygons(events, polygons)
         # Merge real-time HLS events (tagged within seconds of capture)
-        hls = self.get_hls_events(source_id=source_id, since=since)
+        hls = self.get_hls_events(source_id=source_id, since=since, zone_id=zone_id)
         events.extend(hls)
         events.sort(key=lambda r: r["abs_ts"], reverse=True)
         return events
@@ -998,7 +1001,8 @@ class VideoSegmentDB:
 
     def get_hls_events(self, source_id: str | None = None,
                        since: float | None = None,
-                       until: float | None = None) -> list[dict]:
+                       until: float | None = None,
+                       zone_id=None) -> list[dict]:
         cutoff = time.time() - _PROVISIONAL_GRACE_SECONDS
         where, params = ["abs_ts>=?"], [cutoff]
         if source_id and source_id != "all":
@@ -1026,7 +1030,7 @@ class VideoSegmentDB:
             "end_off":     _LIVE_HLS_SEGMENT_SECONDS,
             "segment_id":  None,
         } for r in rows]
-        return self.filter_events_by_areas(events)
+        return _filter_with_polygons(events, self.zone_polygons(source_id, zone_id))
 
     def delete_hls_events(self, source_id: str, since: float, until: float) -> int:
         with self._connect() as conn:
