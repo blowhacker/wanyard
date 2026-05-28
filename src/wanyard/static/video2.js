@@ -740,7 +740,8 @@ const el = {
   boxes:   $("v2Boxes"),
   zones:   $("v2Zones"),
   zoneBar: $("v2ZoneBar"),
-  zoneLabel:$("v2ZoneLabel"),
+  zoneName: $("v2ZoneName"),
+  zoneTabs: $("v2ZoneTabs"),
   zoneCount:$("v2ZoneCount"),
   zonePrev:$("v2ZonePrev"),
   zoneNext:$("v2ZoneNext"),
@@ -771,6 +772,7 @@ const st = {
   sourceStatus: {},
   zones: [],
   zonesSource: null,
+  activeZoneId: null,
   zoneEdit: {
     active: false,
     zones: [],
@@ -1024,6 +1026,7 @@ async function fetchActivitySummary() {
   const { since, until } = todayRange();
   const p = new URLSearchParams({ since: String(Math.floor(since)), until: String(Math.ceil(until)) });
   if (st.source !== "all") p.set("source", st.source);
+  if (st.source !== "all" && st.activeZoneId != null) p.set("zone", String(st.activeZoneId));
   const r = await fetch(`/api/video/activity-summary?${p}`, { cache:"no-store" }).catch(() => null);
   if (!r?.ok) {
     const classes = {};
@@ -1457,6 +1460,7 @@ async function load() {
   _loadStart();
   const p = new URLSearchParams();
   if (st.source !== "all") p.set("source", st.source);
+  if (st.source !== "all" && st.activeZoneId != null) p.set("zone", String(st.activeZoneId));
 
   // Events are loaded for a buffered range (±12h) around the visible window.
   // Only re-fetch if the visible window has moved outside the already-loaded range.
@@ -1615,7 +1619,7 @@ function renderSrcCtrl() {
       cancelZoneEditor();
       stopLiveTail(false);
       st.source = s.id; st.initDone = false;
-      st.events = []; st.zones = []; st.zonesSource = null; _eventsRangesClear();
+      st.events = []; st.zones = []; st.zonesSource = null; st.activeZoneId = null; _eventsRangesClear();
       renderSrcCtrl(); load().then(pushState);
       if (wasLive) startLiveTail(s.id);
     });
@@ -2372,6 +2376,10 @@ el.zoneDelete?.addEventListener("click", deleteSelectedZoneDraft);
 el.zoneSave?.addEventListener("click", saveZoneEditor);
 el.zoneReset?.addEventListener("click", resetZoneEditor);
 el.zoneCancel?.addEventListener("click", cancelZoneEditor);
+el.zoneName?.addEventListener("input", () => {
+  const z = selectedDraftZone();
+  if (z) z.name = el.zoneName.value.slice(0, 80);
+});
 
 el.zoneCanvas?.addEventListener("pointerdown", e => {
   if (!st.zoneEdit.active || e.button !== 0) return;
@@ -2589,6 +2597,48 @@ function updateZoneControl() {
   const singleSource = st.source !== "all";
   el.zones.disabled = !singleSource;
   el.zones.classList.toggle("active", st.zoneEdit.active || completedActivityZones().length > 0);
+  renderZoneTabs();
+}
+
+function renderZoneTabs() {
+  if (!el.zoneTabs) return;
+  const singleSource = st.source !== "all";
+  const zones = completedActivityZones();
+  if (!singleSource || zones.length === 0) {
+    el.zoneTabs.hidden = true;
+    el.zoneTabs.innerHTML = "";
+    if (st.activeZoneId != null) {
+      st.activeZoneId = null;
+      pushState();
+    }
+    return;
+  }
+  el.zoneTabs.hidden = false;
+  const validIds = new Set(zones.map(z => z.id));
+  if (st.activeZoneId != null && !validIds.has(st.activeZoneId)) {
+    st.activeZoneId = null;
+    pushState();
+  }
+  const tabs = [{ id: null, name: "All" }, ...zones.map(z => ({ id: z.id, name: z.name || `Area ${z.id}` }))];
+  el.zoneTabs.innerHTML = "";
+  tabs.forEach(t => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "v2-zone-tab" + (st.activeZoneId === t.id ? " active" : "");
+    b.textContent = t.name;
+    b.addEventListener("click", () => setActiveZone(t.id));
+    el.zoneTabs.appendChild(b);
+  });
+}
+
+function setActiveZone(id) {
+  if (st.activeZoneId === id) return;
+  st.activeZoneId = id;
+  pushState();
+  renderZoneTabs();
+  st.events = [];
+  _eventsRangesClear();
+  load();
 }
 
 function activeStageVideo() {
@@ -2730,7 +2780,13 @@ function updateZoneChrome() {
   if (el.zoneDelete) el.zoneDelete.disabled = !selected;
   if (el.zonePrev) el.zonePrev.disabled = zones.length <= 1;
   if (el.zoneNext) el.zoneNext.disabled = zones.length <= 1;
-  if (el.zoneLabel) el.zoneLabel.textContent = selected?.name || "Activity area";
+  if (el.zoneName) {
+    el.zoneName.disabled = !selected;
+    const nextName = selected?.name || "";
+    if (document.activeElement !== el.zoneName && el.zoneName.value !== nextName) {
+      el.zoneName.value = nextName;
+    }
+  }
   if (el.zoneCount) {
     const validCount = zones.filter(z => (z.polygon || []).length >= 3).length;
     const total = zones.length;
@@ -2887,6 +2943,7 @@ function pushState() {
   }
   if (st.cls.size > 0)        p.set("cls",  [...st.cls].join(","));
   if (st.xls.size > 0)        p.set("xcls", [...st.xls].join(","));
+  if (st.activeZoneId != null) p.set("zone", String(st.activeZoneId));
   history.replaceState(null, "", `${location.pathname}${p.size ? "?" + p : ""}`);
 }
 
@@ -2895,6 +2952,11 @@ function readState() {
   if (p.has("source")) st.source = p.get("source");
   if (p.has("cls"))  p.get("cls").split(",").filter(Boolean).forEach(c => st.cls.add(c));
   if (p.has("xcls")) p.get("xcls").split(",").filter(Boolean).forEach(c => st.xls.add(c));
+  if (p.has("zone")) {
+    const z = p.get("zone");
+    const n = parseInt(z, 10);
+    st.activeZoneId = Number.isFinite(n) ? n : null;
+  }
   return { ts: p.has("ts") ? parseFloat(p.get("ts")) : null, live: p.get("live") === "1" };
 }
 

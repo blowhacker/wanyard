@@ -444,12 +444,14 @@ def make_app(
                 ).fetchone()
         return JSONResponse({"segment": dict(row) if row else None})
 
-    def _build_timeline(source_id):
+    def _build_timeline(source_id, zone_id=None):
+        from wanyard.video import _filter_with_polygons
         segs = video_db.list_segments(source_id)
         summary: dict[int, dict] = {}
         table = "object_events" if video_db.object_events_available(source_id) else "video_events"
         episode_filter = "event_type='appeared'" if table == "object_events" else "1"
-        if video_db.has_activity_areas(source_id):
+        polygons = video_db.zone_polygons(source_id, zone_id)
+        if polygons:
             where, params = [episode_filter], []
             if source_id and source_id != "all":
                 where.append("source_id=?")
@@ -460,7 +462,7 @@ def make_app(
                     f" WHERE {' AND '.join(where)}",
                     params,
                 ).fetchall()
-            for evt in video_db.filter_events_by_areas([dict(r) for r in rows]):
+            for evt in _filter_with_polygons([dict(r) for r in rows], polygons):
                 if evt["segment_id"] is None:
                     continue
                 summary.setdefault(evt["segment_id"], {})[evt["class"]] = (
@@ -494,7 +496,8 @@ def make_app(
         if not video_db:
             return JSONResponse({"segments": []})
         source_id = request.query_params.get("source") or None
-        segs = await asyncio.to_thread(_build_timeline, source_id)
+        zone_id = request.query_params.get("zone") or None
+        segs = await asyncio.to_thread(_build_timeline, source_id, zone_id)
         return JSONResponse({"segments": segs})
 
     async def api_video_events(request: Request) -> JSONResponse:
@@ -532,8 +535,9 @@ def make_app(
         until_raw = request.query_params.get("until")
         since     = float(since_raw) if since_raw else None
         until     = float(until_raw) if until_raw else None
+        zone_id   = request.query_params.get("zone") or None
         events = await asyncio.to_thread(
-            video_db.list_events, source_id, cls, date, limit, since, until
+            video_db.list_events, source_id, cls, date, limit, since, until, zone_id
         )
         provisional = await asyncio.to_thread(video_db.provisional_events, source_id, since)
         if cls and cls != "all":
@@ -548,19 +552,23 @@ def make_app(
         if not video_db:
             return JSONResponse({"classes": {}})
         source_id = request.query_params.get("source") or None
-        counts = await asyncio.to_thread(video_db.class_counts, source_id)
+        zone_id = request.query_params.get("zone") or None
+        counts = await asyncio.to_thread(video_db.class_counts, source_id, True, zone_id)
         return JSONResponse({"classes": counts})
 
     async def api_video_activity_summary(request: Request) -> JSONResponse:
         if not video_db:
             return JSONResponse({"total": 0, "classes": {}})
         source_id = request.query_params.get("source") or None
+        zone_id = request.query_params.get("zone") or None
         try:
             since = float(request.query_params["since"])
             until = float(request.query_params["until"])
         except (KeyError, ValueError):
             return JSONResponse({"error": "since and until required"}, status_code=400)
-        summary = await asyncio.to_thread(video_db.activity_summary, source_id, since, until)
+        summary = await asyncio.to_thread(
+            video_db.activity_summary, source_id, since, until, zone_id
+        )
         return JSONResponse(summary)
 
     async def api_video_zones(request: Request) -> JSONResponse:

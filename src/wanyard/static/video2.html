@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/app.css">
-    <link rel="stylesheet" href="/video2.css?v=episodes-1">
+    <link rel="stylesheet" href="/video2.css?v=zones-tabs-1">
   </head>
   <body>
     <div id="v2LoadBar" class="v2-load-bar"></div>
@@ -68,7 +68,7 @@
         </div>
         <div id="v2ZoneBar" class="v2-zone-bar" hidden>
           <div class="v2-zone-meta">
-            <span id="v2ZoneLabel">Activity area</span>
+            <input id="v2ZoneName" class="v2-zone-name" type="text" placeholder="Area name" maxlength="80" autocomplete="off">
             <span id="v2ZoneCount">0 areas</span>
           </div>
           <div class="v2-zone-actions compact">
@@ -91,6 +91,7 @@
             <div class="ph-title">Activity</div>
             <div id="v2EventCount" class="ph-count">0 today</div>
           </div>
+          <div id="v2ZoneTabs" class="v2-zone-tabs" hidden></div>
           <div id="v2ClassField" class="ph-filters">
             <div id="v2ClassCtrl" class="class-chips"></div>
           </div>
@@ -137,6 +138,6 @@
         </div>
       </div>
     </main>
-    <script src="/video2.js?v=episodes-1"></script>
+    <script src="/video2.js?v=zones-tabs-1"></script>
   </body>
 </html>

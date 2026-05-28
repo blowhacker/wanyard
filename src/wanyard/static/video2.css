@@ -354,10 +354,50 @@ body {
 .v2-zone-meta {
   display: flex;
   flex-direction: column;
-  min-width: 112px;
+  min-width: 132px;
   gap: 2px;
   color: var(--txt);
   font: 650 12px var(--font-ui);
+}
+.v2-zone-name {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: var(--txt);
+  font: 650 12px var(--font-ui);
+  padding: 4px 6px;
+  outline: none;
+  min-width: 0;
+}
+.v2-zone-name:focus {
+  border-color: rgba(232, 165, 88, 0.55);
+}
+.v2-zone-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 2px;
+}
+.v2-zone-tabs[hidden] {
+  display: none;
+}
+.v2-zone-tab {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: var(--txt-2);
+  cursor: pointer;
+  font: 600 11px var(--font-ui);
+  padding: 4px 10px;
+}
+.v2-zone-tab:hover {
+  color: var(--txt);
+  background: rgba(255, 255, 255, 0.08);
+}
+.v2-zone-tab.active {
+  background: rgba(232, 165, 88, 0.16);
+  border-color: rgba(232, 165, 88, 0.55);
+  color: #f3b46a;
 }
 .v2-zone-meta span:last-child {
   color: var(--txt-3);

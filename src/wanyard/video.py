@@ -356,6 +356,20 @@ class VideoSegmentDB:
                 filtered.append(event)
         return filtered
 
+    def zone_polygons(self, source_id: str | None,
+                      zone_id) -> list[list[dict]]:
+        """Polygons to filter by. If zone_id is a valid id, restrict to that
+        zone alone; otherwise fall back to all enabled activity areas."""
+        if source_id and source_id != "all" and zone_id is not None and str(zone_id) != "all":
+            try:
+                z_id = int(zone_id)
+            except (TypeError, ValueError):
+                return self.activity_areas(source_id)
+            for z in self.list_zones(source_id):
+                if z["id"] == z_id and z["enabled"] and len(z["polygon"]) >= 3:
+                    return [z["polygon"]]
+        return self.activity_areas(source_id) if source_id else []
+
     def object_events_available(
         self,
         source_id: str | None = None,
@@ -423,7 +437,8 @@ class VideoSegmentDB:
     def list_object_events(self, source_id: str | None = None, cls: str | None = None,
                            date: str | None = None, limit: int = 100,
                            since: float | None = None,
-                           until: float | None = None) -> list[dict]:
+                           until: float | None = None,
+                           zone_id=None) -> list[dict]:
         where, params = ["1"], []
         if source_id and source_id != "all":
             where.append("e.source_id=?"); params.append(source_id)
@@ -441,8 +456,9 @@ class VideoSegmentDB:
             hi = lo + 3 * 86400
             where.append("e.abs_ts BETWEEN ? AND ?")
             params += [lo, hi]
+        polygons = self.zone_polygons(source_id, zone_id)
         query_limit = limit
-        if self.has_activity_areas(source_id) and limit < 100000:
+        if polygons and limit < 100000:
             query_limit = max(limit * 20, 200)
         sql = (
             "SELECT e.*, s.path as seg_path, s.spritesheet, s.start_ts as seg_start_ts"
@@ -453,7 +469,7 @@ class VideoSegmentDB:
         params.append(query_limit)
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        events = self.filter_events_by_areas([dict(r) for r in rows])[:limit]
+        events = _filter_with_polygons([dict(r) for r in rows], polygons)[:limit]
         return [_public_object_event(r) for r in events]
 
     def nearest_object_events(self, around: float, source_id: str | None = None,
@@ -664,9 +680,10 @@ class VideoSegmentDB:
     def list_events(self, source_id: str | None = None, cls: str | None = None,
                     date: str | None = None, limit: int = 100,
                     since: float | None = None,
-                    until: float | None = None) -> list[dict]:
+                    until: float | None = None,
+                    zone_id=None) -> list[dict]:
         if self.object_events_available(source_id, since, until):
-            return self.list_object_events(source_id, cls, date, limit, since, until)
+            return self.list_object_events(source_id, cls, date, limit, since, until, zone_id)
 
         where, params = ["1"], []
         if source_id and source_id != "all":
@@ -687,8 +704,9 @@ class VideoSegmentDB:
             hi = lo + 3 * 86400
             where.append("e.abs_ts BETWEEN ? AND ?")
             params += [lo, hi]
+        polygons = self.zone_polygons(source_id, zone_id)
         query_limit = limit
-        if self.has_activity_areas(source_id) and limit < 100000:
+        if polygons and limit < 100000:
             query_limit = max(limit * 20, 200)
         sql = (
             "SELECT e.*, s.path as seg_path, s.spritesheet, s.start_ts as seg_start_ts"
@@ -699,7 +717,7 @@ class VideoSegmentDB:
         params.append(query_limit)
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        return self.filter_events_by_areas([dict(r) for r in rows])[:limit]
+        return _filter_with_polygons([dict(r) for r in rows], polygons)[:limit]
 
     def nearest_events(self, around: float, source_id: str | None = None,
                        classes: list[str] | None = None,
@@ -799,10 +817,12 @@ class VideoSegmentDB:
         return {r[0]: r[1] for r in rows}
 
     def class_counts(self, source_id: str | None = None,
-                     include_provisional: bool = True) -> dict[str, int]:
+                     include_provisional: bool = True,
+                     zone_id=None) -> dict[str, int]:
         table = "object_events" if self.object_events_available(source_id) else "video_events"
         episode_filter = "event_type='appeared'" if table == "object_events" else "1"
-        if self.has_activity_areas(source_id):
+        polygons = self.zone_polygons(source_id, zone_id)
+        if polygons:
             where, params = [episode_filter], []
             if source_id and source_id != "all":
                 where.append("source_id=?")
@@ -814,7 +834,7 @@ class VideoSegmentDB:
                     params,
                 ).fetchall()
             counts: dict[str, int] = {}
-            for event in self.filter_events_by_areas([dict(r) for r in rows]):
+            for event in _filter_with_polygons([dict(r) for r in rows], polygons):
                 counts[event["class"]] = counts.get(event["class"], 0) + 1
         else:
             with self._connect() as conn:
@@ -837,7 +857,8 @@ class VideoSegmentDB:
 
     def activity_summary(self, source_id: str | None = None,
                          since: float | None = None,
-                         until: float | None = None) -> dict:
+                         until: float | None = None,
+                         zone_id=None) -> dict:
         table = (
             "object_events"
             if self.object_events_available(source_id, since, until)
@@ -852,7 +873,8 @@ class VideoSegmentDB:
             where.append("abs_ts>=?"); params.append(since)
         if until is not None:
             where.append("abs_ts<?"); params.append(until)
-        if self.has_activity_areas(source_id):
+        polygons = self.zone_polygons(source_id, zone_id)
+        if polygons:
             sql = (
                 f"SELECT source_id, class, boxes_json FROM {table}"
                 f" WHERE {' AND '.join(where)}"
@@ -860,7 +882,7 @@ class VideoSegmentDB:
             with self._connect() as conn:
                 rows = conn.execute(sql, params).fetchall()
             classes: dict[str, int] = {}
-            for event in self.filter_events_by_areas([dict(r) for r in rows]):
+            for event in _filter_with_polygons([dict(r) for r in rows], polygons):
                 classes[event["class"]] = classes.get(event["class"], 0) + 1
         else:
             sql = (
@@ -1555,6 +1577,12 @@ def _event_allowed_by_areas(event: dict, areas: list[list[dict]]) -> bool:
         return False
     cx, cy = _box_center(box)
     return _point_in_any_polygon(cx, cy, areas)
+
+
+def _filter_with_polygons(events: list[dict], polygons: list[list[dict]]) -> list[dict]:
+    if not polygons:
+        return list(events)
+    return [e for e in events if _event_allowed_by_areas(e, polygons)]
 
 
 def _point_in_any_polygon(x: float, y: float, polygons: list[list[dict]]) -> bool:
