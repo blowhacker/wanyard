@@ -388,6 +388,7 @@ def _cleanup_loop(video_db, video_dir: Path, stop_event: threading.Event):
                         ids = [s["id"] for s in segs]
                         pl  = ",".join("?" * len(ids))
                         conn.execute(f"DELETE FROM video_events WHERE segment_id IN ({pl})", ids)
+                        conn.execute(f"DELETE FROM object_events WHERE segment_id IN ({pl})", ids)
                         conn.execute(f"DELETE FROM video_detections WHERE segment_id IN ({pl})", ids)
                         conn.execute(f"DELETE FROM segments WHERE id IN ({pl})", ids)
                     LOG.info("auto-cleanup: deleted %d segments, freed %.1f GB",

@@ -362,11 +362,7 @@ def make_app(
     async def _serve_event_thumb(event_id_raw: str) -> Response:
         if not video_dir or not video_db:
             return Response(status_code=404)
-        try:
-            event_id = int(event_id_raw)
-        except ValueError:
-            return Response(status_code=400)
-        evt = await asyncio.to_thread(video_db.get_event_with_segment, event_id)
+        evt = await asyncio.to_thread(video_db.get_event_with_segment, event_id_raw)
         if not evt:
             return Response(status_code=404)
 
@@ -386,7 +382,11 @@ def make_app(
         box = _select_event_box(boxes, evt.get("class", ""))
 
         cache_dir = seg_path.parent / ".thumbcache"
-        cache_file = cache_dir / f"event_{event_id}_crop_v1.jpg"
+        safe_event_id = "".join(
+            ch if ch.isalnum() or ch in {"-", "_"} else "_"
+            for ch in event_id_raw
+        )
+        cache_file = cache_dir / f"event_{safe_event_id}_crop_v1.jpg"
         if not cache_file.exists():
             ok = await asyncio.to_thread(_extract_video_thumb, seg_path, cache_file, t, box)
             if not ok:
@@ -447,30 +447,34 @@ def make_app(
     def _build_timeline(source_id):
         segs = video_db.list_segments(source_id)
         summary: dict[int, dict] = {}
-        if video_db.has_vehicle_event_zones(source_id):
-            where, params = ["1"], []
+        table = "object_events" if video_db.object_events_available(source_id) else "video_events"
+        episode_filter = "event_type='appeared'" if table == "object_events" else "1"
+        if video_db.has_activity_areas(source_id):
+            where, params = [episode_filter], []
             if source_id and source_id != "all":
                 where.append("source_id=?")
                 params.append(source_id)
             with video_db._connect() as conn:
                 rows = conn.execute(
-                    "SELECT segment_id, source_id, class, boxes_json FROM video_events"
+                    f"SELECT segment_id, source_id, class, boxes_json FROM {table}"
                     f" WHERE {' AND '.join(where)}",
                     params,
                 ).fetchall()
-            for evt in video_db.filter_events_by_zones([dict(r) for r in rows]):
+            for evt in video_db.filter_events_by_areas([dict(r) for r in rows]):
+                if evt["segment_id"] is None:
+                    continue
                 summary.setdefault(evt["segment_id"], {})[evt["class"]] = (
                     summary.setdefault(evt["segment_id"], {}).get(evt["class"], 0) + 1
                 )
         else:
-            where, params = ["1"], []
+            where, params = [episode_filter], []
             if source_id and source_id != "all":
                 where.append("source_id=?")
                 params.append(source_id)
             with video_db._connect() as conn:
                 rows = conn.execute(
                     "SELECT segment_id, class, COUNT(*) as n"
-                    " FROM video_events"
+                    f" FROM {table}"
                     f" WHERE {' AND '.join(where)}"
                     " GROUP BY segment_id, class",
                     params,
@@ -777,7 +781,11 @@ def make_app(
                     "SELECT COUNT(*) FROM segments WHERE end_ts IS NOT NULL"
                 ).fetchone()[0]
                 row = conn.execute(
-                    "SELECT MAX(abs_ts) FROM video_events"
+                    "SELECT MAX(abs_ts) FROM ("
+                    " SELECT abs_ts FROM video_events"
+                    " UNION ALL"
+                    " SELECT abs_ts FROM object_events"
+                    ")"
                 ).fetchone()
                 latest_event_ts = row[0] if row else None
         # Check yolo-serve socket
@@ -917,6 +925,7 @@ def make_app(
             with video_db._connect() as conn:
                 placeholders = ",".join("?" * len(seg_ids))
                 conn.execute(f"DELETE FROM video_events WHERE segment_id IN ({placeholders})", seg_ids)
+                conn.execute(f"DELETE FROM object_events WHERE segment_id IN ({placeholders})", seg_ids)
                 conn.execute(f"DELETE FROM video_detections WHERE segment_id IN ({placeholders})", seg_ids)
                 conn.execute(f"DELETE FROM segments WHERE id IN ({placeholders})", seg_ids)
         return JSONResponse({

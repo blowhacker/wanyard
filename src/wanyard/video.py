@@ -28,12 +28,11 @@ _SPRITE_COLS         = 10
 _SPRITE_ROWS         = 6
 _EVENT_GAP_SECONDS   = 2.0    # detections within this gap = same event
 _PROVISIONAL_GRACE_SECONDS = 3600.0
-_VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
-_VEHICLE_TRACK_CENTER_DISTANCE = 0.045
-_VEHICLE_TRACK_AREA_RATIO = 3.0
-_VEHICLE_MIN_OBSERVATIONS = 2
-_VEHICLE_EXIT_GRACE_SECONDS = 15 * 60.0
-_VEHICLE_TRACK_LOOKBACK_SECONDS = 2 * 60 * 60.0
+_OBJECT_TRACK_CENTER_DISTANCE = 0.045
+_OBJECT_TRACK_AREA_RATIO = 3.0
+_OBJECT_MIN_OBSERVATIONS = 2
+_OBJECT_EXIT_GRACE_SECONDS = 15 * 60.0
+_OBJECT_TRACK_LOOKBACK_SECONDS = 2 * 60 * 60.0
 _CLASS_PRIORITY      = ["person", "bird", "cat", "dog",
                          "bus", "truck", "motorcycle", "bicycle", "car",
                          "backpack", "suitcase"]
@@ -80,30 +79,62 @@ CREATE INDEX IF NOT EXISTS vevt_source_class_ts ON video_events(source_id, class
 CREATE INDEX IF NOT EXISTS vevt_ts        ON video_events(abs_ts);
 CREATE INDEX IF NOT EXISTS vevt_seg       ON video_events(segment_id, class);
 
-CREATE TABLE IF NOT EXISTS vehicle_tracks (
-    id              INTEGER PRIMARY KEY,
-    source_id       TEXT    NOT NULL,
-    class           TEXT    NOT NULL,
-    cx              REAL    NOT NULL,
-    cy              REAL    NOT NULL,
-    area            REAL    NOT NULL,
-    first_seen      REAL    NOT NULL,
-    last_seen       REAL    NOT NULL,
-    last_segment_id INTEGER,
-    last_start_off  REAL    NOT NULL DEFAULT 0,
-    last_end_off    REAL    NOT NULL DEFAULT 0,
-    confidence      REAL    NOT NULL DEFAULT 0,
-    boxes_json      TEXT,
-    active          INTEGER NOT NULL DEFAULT 1
+CREATE TABLE IF NOT EXISTS object_tracks (
+    id               INTEGER PRIMARY KEY,
+    source_id        TEXT    NOT NULL,
+    class            TEXT    NOT NULL,
+    cx               REAL    NOT NULL,
+    cy               REAL    NOT NULL,
+    area             REAL    NOT NULL,
+    first_seen       REAL    NOT NULL,
+    last_seen        REAL    NOT NULL,
+    first_segment_id INTEGER,
+    last_segment_id  INTEGER,
+    first_start_off  REAL    NOT NULL DEFAULT 0,
+    last_start_off   REAL    NOT NULL DEFAULT 0,
+    last_end_off     REAL    NOT NULL DEFAULT 0,
+    confidence       REAL    NOT NULL DEFAULT 0,
+    observations     INTEGER NOT NULL DEFAULT 0,
+    boxes_json       TEXT,
+    active           INTEGER NOT NULL DEFAULT 1,
+    state            TEXT    NOT NULL DEFAULT 'active',
+    stationary_since REAL
 );
-CREATE INDEX IF NOT EXISTS vtrk_active_source
-    ON vehicle_tracks(active, source_id, last_seen);
+CREATE INDEX IF NOT EXISTS otrk_active_source_class
+    ON object_tracks(active, source_id, class, last_seen);
+CREATE INDEX IF NOT EXISTS otrk_source_seen
+    ON object_tracks(source_id, first_seen, last_seen);
+
+CREATE TABLE IF NOT EXISTS object_events (
+    id          INTEGER PRIMARY KEY,
+    track_id    INTEGER REFERENCES object_tracks(id) ON DELETE CASCADE,
+    segment_id  INTEGER REFERENCES segments(id) ON DELETE SET NULL,
+    source_id   TEXT    NOT NULL,
+    abs_ts      REAL    NOT NULL,
+    class       TEXT    NOT NULL,
+    event_type  TEXT    NOT NULL,
+    start_off   REAL    NOT NULL DEFAULT 0,
+    end_off     REAL    NOT NULL DEFAULT 0,
+    confidence  REAL    NOT NULL DEFAULT 0,
+    boxes_json  TEXT
+);
+CREATE INDEX IF NOT EXISTS oevt_source_ts ON object_events(source_id, abs_ts);
+CREATE INDEX IF NOT EXISTS oevt_class_ts ON object_events(class, abs_ts);
+CREATE INDEX IF NOT EXISTS oevt_track ON object_events(track_id, abs_ts);
+CREATE INDEX IF NOT EXISTS oevt_seg ON object_events(segment_id, class);
+
+CREATE TABLE IF NOT EXISTS object_derivations (
+    source_id    TEXT PRIMARY KEY,
+    since        REAL,
+    until        REAL,
+    generated_at REAL NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS video_zones (
     id           INTEGER PRIMARY KEY,
     source_id    TEXT    NOT NULL,
     name         TEXT    NOT NULL,
-    zone_type    TEXT    NOT NULL DEFAULT 'vehicle_event',
+    zone_type    TEXT    NOT NULL DEFAULT 'activity_area',
     polygon_json TEXT    NOT NULL,
     enabled      INTEGER NOT NULL DEFAULT 1,
     created_at   REAL    NOT NULL DEFAULT (unixepoch('now')),
@@ -299,34 +330,171 @@ class VideoSegmentDB:
             )
         return self.list_zones(source_id)
 
-    def vehicle_event_zones(self, source_id: str) -> list[list[dict]]:
+    def activity_areas(self, source_id: str) -> list[list[dict]]:
         return [
-            z["polygon"] for z in self.list_zones(source_id, "vehicle_event")
+            z["polygon"] for z in self.list_zones(source_id)
             if z["enabled"] and len(z["polygon"]) >= 3
         ]
 
-    def has_vehicle_event_zones(self, source_id: str | None = None) -> bool:
+    def has_activity_areas(self, source_id: str | None = None) -> bool:
         return any(
             z["enabled"] and len(z["polygon"]) >= 3
-            for z in self.list_zones(source_id, "vehicle_event")
+            for z in self.list_zones(source_id)
         )
 
-    def filter_events_by_zones(self, events: list[dict]) -> list[dict]:
-        zone_cache: dict[str, list[list[dict]]] = {}
+    def filter_events_by_areas(self, events: list[dict]) -> list[dict]:
+        area_cache: dict[str, list[list[dict]]] = {}
         filtered: list[dict] = []
         for event in events:
-            if event.get("class") not in _VEHICLE_CLASSES:
-                filtered.append(event)
-                continue
             source_id = event.get("source_id")
             if not source_id:
                 filtered.append(event)
                 continue
-            if source_id not in zone_cache:
-                zone_cache[source_id] = self.vehicle_event_zones(source_id)
-            if _vehicle_event_allowed_by_zones(event, zone_cache[source_id]):
+            if source_id not in area_cache:
+                area_cache[source_id] = self.activity_areas(source_id)
+            if _event_allowed_by_areas(event, area_cache[source_id]):
                 filtered.append(event)
         return filtered
+
+    def object_events_available(
+        self,
+        source_id: str | None = None,
+        since: float | None = None,
+        until: float | None = None,
+    ) -> bool:
+        with self._connect() as conn:
+            if source_id and source_id != "all":
+                row = conn.execute(
+                    "SELECT since, until FROM object_derivations WHERE source_id=?",
+                    (source_id,),
+                ).fetchone()
+                return _derivation_covers(dict(row) if row else None, since, until)
+
+            where, params = ["1"], []
+            if since is not None:
+                where.append("(end_ts IS NULL OR end_ts>=?)")
+                params.append(since)
+            if until is not None:
+                where.append("start_ts<=?")
+                params.append(until)
+            sources = [
+                r["source_id"] for r in conn.execute(
+                    "SELECT DISTINCT source_id FROM segments"
+                    f" WHERE {' AND '.join(where)}",
+                    params,
+                ).fetchall()
+            ]
+            if not sources:
+                return False
+            rows = {
+                r["source_id"]: dict(r)
+                for r in conn.execute(
+                    "SELECT source_id, since, until FROM object_derivations"
+                ).fetchall()
+            }
+        return all(_derivation_covers(rows.get(src), since, until) for src in sources)
+
+    def mark_object_derivation(
+        self,
+        source_id: str,
+        since: float | None = None,
+        until: float | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO object_derivations(source_id, since, until, generated_at)"
+                " VALUES(?,?,?,?)",
+                (source_id, since, until, time.time()),
+            )
+
+    def insert_object_events(self, events: list[dict]) -> None:
+        if not events:
+            return
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO object_events"
+                "(track_id, segment_id, source_id, abs_ts, class, event_type,"
+                " start_off, end_off, confidence, boxes_json)"
+                " VALUES(:track_id,:segment_id,:source_id,:abs_ts,:class,:event_type,"
+                " :start_off,:end_off,:confidence,:boxes_json)",
+                events,
+            )
+
+    def list_object_events(self, source_id: str | None = None, cls: str | None = None,
+                           date: str | None = None, limit: int = 100,
+                           since: float | None = None,
+                           until: float | None = None) -> list[dict]:
+        where, params = ["1"], []
+        if source_id and source_id != "all":
+            where.append("e.source_id=?"); params.append(source_id)
+        if cls and cls != "all":
+            where.append("e.class=?"); params.append(cls)
+        if since is not None:
+            where.append("e.abs_ts>=?"); params.append(since)
+        if until is not None:
+            where.append("e.abs_ts<=?"); params.append(until)
+        if date:
+            import calendar
+            from datetime import date as ddate
+            d = ddate.fromisoformat(date)
+            lo = calendar.timegm(d.timetuple()) - 86400
+            hi = lo + 3 * 86400
+            where.append("e.abs_ts BETWEEN ? AND ?")
+            params += [lo, hi]
+        query_limit = limit
+        if self.has_activity_areas(source_id) and limit < 100000:
+            query_limit = max(limit * 20, 200)
+        sql = (
+            "SELECT e.*, s.path as seg_path, s.spritesheet, s.start_ts as seg_start_ts"
+            " FROM object_events e LEFT JOIN segments s ON s.id=e.segment_id"
+            f" WHERE {' AND '.join(where)}"
+            " ORDER BY e.abs_ts DESC LIMIT ?"
+        )
+        params.append(query_limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        events = self.filter_events_by_areas([dict(r) for r in rows])[:limit]
+        return [_public_object_event(r) for r in events]
+
+    def nearest_object_events(self, around: float, source_id: str | None = None,
+                              classes: list[str] | None = None,
+                              limit: int = 20) -> list[dict]:
+        if classes and len(classes) > 1:
+            rows: list[dict] = []
+            for cls in classes:
+                rows.extend(self.nearest_object_events(around, source_id, [cls], limit))
+            by_id = {r["id"]: r for r in rows}
+            rows = list(by_id.values())
+            rows.sort(key=lambda r: (abs(r["abs_ts"] - around), r["abs_ts"]))
+            return rows[:limit]
+
+        where, params = ["1"], []
+        if source_id and source_id != "all":
+            where.append("e.source_id=?"); params.append(source_id)
+        if classes:
+            placeholders = ",".join("?" for _ in classes)
+            where.append(f"e.class IN ({placeholders})")
+            params.extend(classes)
+        base = " AND ".join(where)
+        select = (
+            "SELECT e.*, s.path as seg_path, s.spritesheet,"
+            " s.start_ts as seg_start_ts"
+            " FROM object_events e LEFT JOIN segments s ON s.id=e.segment_id"
+            f" WHERE {base}"
+        )
+        query_limit = max(limit * 20, 200) if self.has_activity_areas(source_id) else limit
+        with self._connect() as conn:
+            before = conn.execute(
+                f"{select} AND e.abs_ts<=? ORDER BY e.abs_ts DESC LIMIT ?",
+                (*params, around, query_limit),
+            ).fetchall()
+            after = conn.execute(
+                f"{select} AND e.abs_ts>? ORDER BY e.abs_ts ASC LIMIT ?",
+                (*params, around, query_limit),
+            ).fetchall()
+        rows = self.filter_events_by_areas([dict(r) for r in before] + [dict(r) for r in after])
+        rows.sort(key=lambda r: (abs(r["abs_ts"] - around), r["abs_ts"]))
+        return [_public_object_event(r) for r in rows[:limit]]
 
     def insert_events(self, events: list[dict]) -> None:
         rows = [
@@ -347,7 +515,7 @@ class VideoSegmentDB:
                 rows,
             )
 
-    def track_vehicle_events(self, segment: dict, events: list[dict]) -> list[dict]:
+    def track_object_events(self, segment: dict, tracklets: list[dict]) -> list[dict]:
         source_id = segment["source_id"]
         seg_start = float(segment["start_ts"])
         seg_end = float(segment.get("end_ts") or seg_start)
@@ -356,24 +524,26 @@ class VideoSegmentDB:
         with self._connect() as conn:
             active = [
                 dict(r) for r in conn.execute(
-                    "SELECT * FROM vehicle_tracks"
+                    "SELECT * FROM object_tracks"
                     " WHERE active=1 AND source_id=? AND last_seen>=?"
                     " ORDER BY last_seen DESC",
-                    (source_id, seg_start - _VEHICLE_TRACK_LOOKBACK_SECONDS),
+                    (source_id, seg_start - _OBJECT_TRACK_LOOKBACK_SECONDS),
                 ).fetchall()
             ]
             used_track_ids: set[int] = set()
 
-            for event in sorted(events, key=lambda e: e["abs_ts"]):
-                box = _event_vehicle_box(event)
+            for tracklet in sorted(tracklets, key=lambda e: e["abs_ts"]):
+                box = _event_box(tracklet)
                 if not box:
                     continue
                 cx, cy = _box_center(box)
                 area = _box_area(box)
                 best: dict | None = None
-                best_dist = _VEHICLE_TRACK_CENTER_DISTANCE
+                best_dist = _OBJECT_TRACK_CENTER_DISTANCE
                 for track in active:
                     if int(track["id"]) in used_track_ids:
+                        continue
+                    if track["class"] != tracklet["class"]:
                         continue
                     if not _area_compatible(area, float(track["area"])):
                         continue
@@ -382,48 +552,53 @@ class VideoSegmentDB:
                         best = track
                         best_dist = dist
 
-                last_seen = float(event["abs_ts"]) + max(
-                    0.0, float(event["end_off"]) - float(event["start_off"])
+                last_seen = float(tracklet["abs_ts"]) + max(
+                    0.0, float(tracklet["end_off"]) - float(tracklet["start_off"])
                 )
                 if best:
                     track_id = int(best["id"])
                     used_track_ids.add(track_id)
+                    observations = int(best["observations"]) + int(tracklet.get("observations", 1))
                     conn.execute(
-                        "UPDATE vehicle_tracks"
-                        " SET class=?, cx=?, cy=?, area=?, last_seen=?,"
-                        " last_segment_id=?, last_start_off=?, last_end_off=?,"
-                        " confidence=?, boxes_json=?, active=1"
+                        "UPDATE object_tracks"
+                        " SET cx=?, cy=?, area=?, last_seen=?, last_segment_id=?,"
+                        " last_start_off=?, last_end_off=?, confidence=?, observations=?,"
+                        " boxes_json=?, active=1, state='active'"
                         " WHERE id=?",
                         (
-                            event["class"], cx, cy, area, last_seen,
-                            event["segment_id"], event["start_off"], event["end_off"],
-                            event["confidence"], event["boxes_json"], track_id,
+                            cx, cy, area, last_seen, tracklet["segment_id"],
+                            tracklet["start_off"], tracklet["end_off"],
+                            tracklet["confidence"], observations,
+                            tracklet["boxes_json"], track_id,
                         ),
                     )
                     best.update({
-                        "class": event["class"],
                         "cx": cx,
                         "cy": cy,
                         "area": area,
                         "last_seen": last_seen,
-                        "last_segment_id": event["segment_id"],
-                        "last_start_off": event["start_off"],
-                        "last_end_off": event["end_off"],
-                        "confidence": event["confidence"],
-                        "boxes_json": event["boxes_json"],
+                        "last_segment_id": tracklet["segment_id"],
+                        "last_start_off": tracklet["start_off"],
+                        "last_end_off": tracklet["end_off"],
+                        "confidence": tracklet["confidence"],
+                        "observations": observations,
+                        "boxes_json": tracklet["boxes_json"],
                     })
                 else:
                     cur = conn.execute(
-                        "INSERT INTO vehicle_tracks"
+                        "INSERT INTO object_tracks"
                         "(source_id, class, cx, cy, area, first_seen, last_seen,"
-                        " last_segment_id, last_start_off, last_end_off,"
-                        " confidence, boxes_json, active)"
-                        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                        " first_segment_id, last_segment_id, first_start_off,"
+                        " last_start_off, last_end_off, confidence, observations,"
+                        " boxes_json, active, state, stationary_since)"
+                        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active',?)",
                         (
-                            source_id, event["class"], cx, cy, area,
-                            event["abs_ts"], last_seen, event["segment_id"],
-                            event["start_off"], event["end_off"],
-                            event["confidence"], event["boxes_json"],
+                            source_id, tracklet["class"], cx, cy, area,
+                            tracklet["abs_ts"], last_seen, tracklet["segment_id"],
+                            tracklet["segment_id"], tracklet["start_off"],
+                            tracklet["start_off"], tracklet["end_off"],
+                            tracklet["confidence"], int(tracklet.get("observations", 1)),
+                            tracklet["boxes_json"], tracklet["abs_ts"],
                         ),
                     )
                     track_id = int(cur.lastrowid)
@@ -431,29 +606,34 @@ class VideoSegmentDB:
                     active.append({
                         "id": track_id,
                         "source_id": source_id,
-                        "class": event["class"],
+                        "class": tracklet["class"],
                         "cx": cx,
                         "cy": cy,
                         "area": area,
-                        "first_seen": event["abs_ts"],
+                        "first_seen": tracklet["abs_ts"],
                         "last_seen": last_seen,
-                        "last_segment_id": event["segment_id"],
-                        "last_start_off": event["start_off"],
-                        "last_end_off": event["end_off"],
-                        "confidence": event["confidence"],
-                        "boxes_json": event["boxes_json"],
+                        "first_segment_id": tracklet["segment_id"],
+                        "last_segment_id": tracklet["segment_id"],
+                        "first_start_off": tracklet["start_off"],
+                        "last_start_off": tracklet["start_off"],
+                        "last_end_off": tracklet["end_off"],
+                        "confidence": tracklet["confidence"],
+                        "observations": int(tracklet.get("observations", 1)),
+                        "boxes_json": tracklet["boxes_json"],
                         "active": 1,
+                        "state": "active",
+                        "stationary_since": tracklet["abs_ts"],
                     })
                     output.append({
-                        **event,
-                        "event_type": "entry",
-                        "track_id": str(track_id),
+                        **tracklet,
+                        "event_type": "appeared",
+                        "track_id": track_id,
                     })
 
-            stale_before = seg_end - _VEHICLE_EXIT_GRACE_SECONDS
+            stale_before = seg_end - _OBJECT_EXIT_GRACE_SECONDS
             stale = [
                 dict(r) for r in conn.execute(
-                    "SELECT * FROM vehicle_tracks"
+                    "SELECT * FROM object_tracks"
                     " WHERE active=1 AND source_id=? AND last_seen<?",
                     (source_id, stale_before),
                 ).fetchall()
@@ -463,20 +643,20 @@ class VideoSegmentDB:
                 if track_id in used_track_ids:
                     continue
                 conn.execute(
-                    "UPDATE vehicle_tracks SET active=0 WHERE id=?",
+                    "UPDATE object_tracks SET active=0, state='gone' WHERE id=?",
                     (track_id,),
                 )
                 output.append({
+                    "track_id": track_id,
                     "segment_id": track["last_segment_id"],
                     "source_id": track["source_id"],
                     "abs_ts": track["last_seen"],
                     "class": track["class"],
+                    "event_type": "disappeared",
                     "start_off": track["last_start_off"],
                     "end_off": track["last_end_off"],
                     "confidence": track["confidence"],
                     "boxes_json": track["boxes_json"],
-                    "event_type": "exit",
-                    "track_id": str(track_id),
                 })
 
         return output
@@ -485,6 +665,9 @@ class VideoSegmentDB:
                     date: str | None = None, limit: int = 100,
                     since: float | None = None,
                     until: float | None = None) -> list[dict]:
+        if self.object_events_available(source_id, since, until):
+            return self.list_object_events(source_id, cls, date, limit, since, until)
+
         where, params = ["1"], []
         if source_id and source_id != "all":
             where.append("e.source_id=?"); params.append(source_id)
@@ -504,20 +687,26 @@ class VideoSegmentDB:
             hi = lo + 3 * 86400
             where.append("e.abs_ts BETWEEN ? AND ?")
             params += [lo, hi]
+        query_limit = limit
+        if self.has_activity_areas(source_id) and limit < 100000:
+            query_limit = max(limit * 20, 200)
         sql = (
             "SELECT e.*, s.path as seg_path, s.spritesheet, s.start_ts as seg_start_ts"
             " FROM video_events e JOIN segments s ON s.id=e.segment_id"
             f" WHERE {' AND '.join(where)}"
             " ORDER BY e.abs_ts DESC LIMIT ?"
         )
-        params.append(limit)
+        params.append(query_limit)
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        return self.filter_events_by_zones([dict(r) for r in rows])[:limit]
+        return self.filter_events_by_areas([dict(r) for r in rows])[:limit]
 
     def nearest_events(self, around: float, source_id: str | None = None,
                        classes: list[str] | None = None,
                        limit: int = 20) -> list[dict]:
+        if self.object_events_available(source_id):
+            return self.nearest_object_events(around, source_id, classes, limit)
+
         if classes and len(classes) > 1:
             rows: list[dict] = []
             for cls in classes:
@@ -542,7 +731,7 @@ class VideoSegmentDB:
             f" WHERE {base}"
         )
         query_limit = limit
-        if self.has_vehicle_event_zones(source_id):
+        if self.has_activity_areas(source_id):
             query_limit = max(limit * 20, 200)
         with self._connect() as conn:
             before = conn.execute(
@@ -553,18 +742,38 @@ class VideoSegmentDB:
                 f"{select} AND e.abs_ts>? ORDER BY e.abs_ts ASC LIMIT ?",
                 (*params, around, query_limit),
             ).fetchall()
-        rows = self.filter_events_by_zones([dict(r) for r in before] + [dict(r) for r in after])
+        rows = self.filter_events_by_areas([dict(r) for r in before] + [dict(r) for r in after])
         rows.sort(key=lambda r: (abs(r["abs_ts"] - around), r["abs_ts"]))
         return rows[:limit]
 
-    def get_event_with_segment(self, event_id: int) -> dict | None:
+    def get_event_with_segment(self, event_id) -> dict | None:
+        raw_id = str(event_id)
+        if raw_id.startswith("o:"):
+            try:
+                object_event_id = int(raw_id[2:])
+            except ValueError:
+                return None
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT e.*, s.path as seg_path, s.start_ts as seg_start_ts,"
+                    " s.end_ts as seg_end_ts"
+                    " FROM object_events e JOIN segments s ON s.id=e.segment_id"
+                    " WHERE e.id=?",
+                    (object_event_id,),
+                ).fetchone()
+            return dict(row) if row else None
+
+        try:
+            legacy_event_id = int(raw_id)
+        except (TypeError, ValueError):
+            return None
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT e.*, s.path as seg_path, s.start_ts as seg_start_ts,"
                 " s.end_ts as seg_end_ts"
                 " FROM video_events e JOIN segments s ON s.id=e.segment_id"
                 " WHERE e.id=?",
-                (event_id,),
+                (legacy_event_id,),
             ).fetchone()
         return dict(row) if row else None
 
@@ -591,30 +800,34 @@ class VideoSegmentDB:
 
     def class_counts(self, source_id: str | None = None,
                      include_provisional: bool = True) -> dict[str, int]:
-        if self.has_vehicle_event_zones(source_id):
-            where, params = ["1"], []
+        table = "object_events" if self.object_events_available(source_id) else "video_events"
+        episode_filter = "event_type='appeared'" if table == "object_events" else "1"
+        if self.has_activity_areas(source_id):
+            where, params = [episode_filter], []
             if source_id and source_id != "all":
                 where.append("source_id=?")
                 params.append(source_id)
             with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT source_id, class, boxes_json FROM video_events"
+                    f"SELECT source_id, class, boxes_json FROM {table}"
                     f" WHERE {' AND '.join(where)}",
                     params,
                 ).fetchall()
             counts: dict[str, int] = {}
-            for event in self.filter_events_by_zones([dict(r) for r in rows]):
+            for event in self.filter_events_by_areas([dict(r) for r in rows]):
                 counts[event["class"]] = counts.get(event["class"], 0) + 1
         else:
             with self._connect() as conn:
                 if source_id and source_id != "all":
                     rows = conn.execute(
-                        "SELECT class, COUNT(*) as n FROM video_events WHERE source_id=? GROUP BY class",
+                        f"SELECT class, COUNT(*) as n FROM {table}"
+                        f" WHERE {episode_filter} AND source_id=? GROUP BY class",
                         (source_id,),
                     ).fetchall()
                 else:
                     rows = conn.execute(
-                        "SELECT class, COUNT(*) as n FROM video_events GROUP BY class"
+                        f"SELECT class, COUNT(*) as n FROM {table}"
+                        f" WHERE {episode_filter} GROUP BY class"
                     ).fetchall()
             counts = {r["class"]: r["n"] for r in rows}
         if include_provisional:
@@ -625,26 +838,33 @@ class VideoSegmentDB:
     def activity_summary(self, source_id: str | None = None,
                          since: float | None = None,
                          until: float | None = None) -> dict:
+        table = (
+            "object_events"
+            if self.object_events_available(source_id, since, until)
+            else "video_events"
+        )
         where, params = ["1"], []
+        if table == "object_events":
+            where.append("event_type='appeared'")
         if source_id and source_id != "all":
             where.append("source_id=?"); params.append(source_id)
         if since is not None:
             where.append("abs_ts>=?"); params.append(since)
         if until is not None:
             where.append("abs_ts<?"); params.append(until)
-        if self.has_vehicle_event_zones(source_id):
+        if self.has_activity_areas(source_id):
             sql = (
-                "SELECT source_id, class, boxes_json FROM video_events"
+                f"SELECT source_id, class, boxes_json FROM {table}"
                 f" WHERE {' AND '.join(where)}"
             )
             with self._connect() as conn:
                 rows = conn.execute(sql, params).fetchall()
             classes: dict[str, int] = {}
-            for event in self.filter_events_by_zones([dict(r) for r in rows]):
+            for event in self.filter_events_by_areas([dict(r) for r in rows]):
                 classes[event["class"]] = classes.get(event["class"], 0) + 1
         else:
             sql = (
-                "SELECT class, COUNT(*) as n FROM video_events"
+                f"SELECT class, COUNT(*) as n FROM {table}"
                 f" WHERE {' AND '.join(where)}"
                 " GROUP BY class"
             )
@@ -709,8 +929,7 @@ class VideoSegmentDB:
 
         events: list[dict] = []
         for seg in segs:
-            zones = self.vehicle_event_zones(seg["source_id"])
-            rows = _events_from_detections(seg, self.detections_for_segment(seg["id"]), zones)
+            rows = _object_tracklets_from_detections(seg, self.detections_for_segment(seg["id"]))
             for row in rows:
                 if since is not None and row["abs_ts"] < since:
                     continue
@@ -729,15 +948,15 @@ class VideoSegmentDB:
     # ── HLS real-time event store ──────────────────────────────────────────
     def insert_hls_events(self, events: list[dict]) -> None:
         """Store provisional events detected from live HLS .ts segments."""
-        zone_cache: dict[str, list[list[dict]]] = {}
+        area_cache: dict[str, list[list[dict]]] = {}
         filtered: list[dict] = []
         for event in events:
             source_id = event.get("source_id")
             if not source_id:
                 continue
-            if source_id not in zone_cache:
-                zone_cache[source_id] = self.vehicle_event_zones(source_id)
-            if _vehicle_event_allowed_by_zones(event, zone_cache[source_id]):
+            if source_id not in area_cache:
+                area_cache[source_id] = self.activity_areas(source_id)
+            if _event_allowed_by_areas(event, area_cache[source_id]):
                 filtered.append(event)
         if not filtered:
             return
@@ -785,7 +1004,7 @@ class VideoSegmentDB:
             "end_off":     _LIVE_HLS_SEGMENT_SECONDS,
             "segment_id":  None,
         } for r in rows]
-        return self.filter_events_by_zones(events)
+        return self.filter_events_by_areas(events)
 
     def delete_hls_events(self, source_id: str, since: float, until: float) -> int:
         with self._connect() as conn:
@@ -997,13 +1216,11 @@ def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
 
 def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) -> int:
     """Group detections into events and store them."""
-    zones = db.vehicle_event_zones(segment["source_id"])
-    rows = _events_from_detections(segment, detections, zones)
-    vehicle_rows = [r for r in rows if r["class"] in _VEHICLE_CLASSES]
-    rows = [r for r in rows if r["class"] not in _VEHICLE_CLASSES]
-    rows.extend(db.track_vehicle_events(segment, vehicle_rows))
+    tracklets = _object_tracklets_from_detections(segment, detections)
+    rows = db.track_object_events(segment, tracklets)
     if rows:
-        db.insert_events(rows)
+        db.insert_object_events(rows)
+        db.insert_events(_legacy_events_from_object_events(rows))
     return len(rows)
 
 
@@ -1013,7 +1230,7 @@ def rebuild_events(
     since: float | None = None,
     until: float | None = None,
     *,
-    reset_vehicle_tracks: bool = True,
+    reset_object_tracks: bool = True,
 ) -> dict:
     where = ["s.end_ts IS NOT NULL"]
     params: list = []
@@ -1043,11 +1260,17 @@ def rebuild_events(
                 f"DELETE FROM video_events WHERE segment_id IN ({placeholders})",
                 chunk,
             )
-        if reset_vehicle_tracks:
+            conn.execute(
+                f"DELETE FROM object_events WHERE segment_id IN ({placeholders})",
+                chunk,
+            )
+        if reset_object_tracks:
             if source_id and source_id != "all":
-                conn.execute("DELETE FROM vehicle_tracks WHERE source_id=?", (source_id,))
+                conn.execute("DELETE FROM object_tracks WHERE source_id=?", (source_id,))
+                conn.execute("DELETE FROM object_derivations WHERE source_id=?", (source_id,))
             else:
-                conn.execute("DELETE FROM vehicle_tracks")
+                conn.execute("DELETE FROM object_tracks")
+                conn.execute("DELETE FROM object_derivations")
 
     event_count = 0
     detection_segments = 0
@@ -1064,75 +1287,92 @@ def rebuild_events(
     }
 
 
+def derive_object_events(
+    db: VideoSegmentDB,
+    source_id: str | None = None,
+    since: float | None = None,
+    until: float | None = None,
+    *,
+    reset_tracks: bool = True,
+) -> dict:
+    where = ["s.end_ts IS NOT NULL"]
+    params: list = []
+    if source_id and source_id != "all":
+        where.append("s.source_id=?")
+        params.append(source_id)
+    if since is not None:
+        where.append("s.end_ts>=?")
+        params.append(since)
+    if until is not None:
+        where.append("s.start_ts<=?")
+        params.append(until)
+
+    with db._connect() as conn:
+        segs = [
+            dict(r) for r in conn.execute(
+                "SELECT s.* FROM segments s"
+                f" WHERE {' AND '.join(where)}"
+                " ORDER BY s.source_id, s.start_ts",
+                params,
+            ).fetchall()
+        ]
+        sources = sorted({s["source_id"] for s in segs})
+        if reset_tracks:
+            if source_id and source_id != "all":
+                conn.execute("DELETE FROM object_events WHERE source_id=?", (source_id,))
+                conn.execute("DELETE FROM object_tracks WHERE source_id=?", (source_id,))
+                conn.execute("DELETE FROM object_derivations WHERE source_id=?", (source_id,))
+            else:
+                conn.execute("DELETE FROM object_events")
+                conn.execute("DELETE FROM object_tracks")
+                conn.execute("DELETE FROM object_derivations")
+
+    event_count = 0
+    detection_segments = 0
+    for seg in segs:
+        dets = db.detections_for_segment(seg["id"])
+        if dets:
+            detection_segments += 1
+        tracklets = _object_tracklets_from_detections(seg, dets)
+        rows = db.track_object_events(seg, tracklets)
+        if rows:
+            db.insert_object_events(rows)
+            event_count += len(rows)
+
+    for source in sources:
+        db.mark_object_derivation(source, since, until)
+
+    return {
+        "segments": len(segs),
+        "segments_with_detections": detection_segments,
+        "events": event_count,
+        "sources": sources,
+    }
+
+
+def _derivation_covers(row: dict | None, since: float | None, until: float | None) -> bool:
+    if not row:
+        return False
+    marker_since = row.get("since")
+    marker_until = row.get("until")
+    if marker_since is not None and (since is None or float(marker_since) > since):
+        return False
+    if marker_until is not None and (until is None or float(marker_until) < until):
+        return False
+    return True
+
+
 def _chunks(values: list, size: int):
     for i in range(0, len(values), size):
         yield values[i:i + size]
 
 
-def _events_from_detections(
-    segment: dict,
-    detections: list[dict],
-    vehicle_zones: list[list[dict]] | None = None,
-) -> list[dict]:
+def _object_tracklets_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
     if not detections:
         return []
 
-    events = _non_vehicle_events_from_detections(segment, detections)
-    events.extend(_vehicle_events_from_detections(segment, detections, vehicle_zones))
-    events.sort(key=lambda r: (r["abs_ts"], r["class"]))
-    return events
-
-
-def _non_vehicle_events_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
-    seg_start = segment["start_ts"]
-    events: list[dict] = []
-    current: dict | None = None
-
-    for det in detections:
-        classes = [c for c in (det.get("classes") or []) if c not in _VEHICLE_CLASSES]
-        if not classes:
-            continue
-        dom = _dominant_class(classes)
-        off = det["ts_offset"]
-        boxes = [b for b in (det.get("boxes") or []) if b.get("cls") == dom]
-        conf = max((float(b.get("conf", 0.0)) for b in boxes), default=det["confidence"])
-
-        if current is None:
-            current = {"cls": dom, "start": off, "end": off,
-                       "conf": conf, "boxes": boxes}
-        elif dom == current["cls"] and (off - current["end"]) <= _EVENT_GAP_SECONDS:
-            current["end"] = off
-            if conf > current["conf"]:
-                current["conf"] = conf
-                current["boxes"] = boxes
-        else:
-            events.append(current)
-            current = {"cls": dom, "start": off, "end": off,
-                       "conf": conf, "boxes": boxes}
-
-    if current:
-        events.append(current)
-
-    return [{
-        "segment_id": segment["id"],
-        "source_id":  segment["source_id"],
-        "abs_ts":     seg_start + e["start"],
-        "class":      e["cls"],
-        "start_off":  e["start"],
-        "end_off":    e["end"],
-        "confidence": e["conf"],
-        "boxes_json": json.dumps(e["boxes"]) if e["boxes"] else None,
-    } for e in events]
-
-
-def _vehicle_events_from_detections(
-    segment: dict,
-    detections: list[dict],
-    vehicle_zones: list[list[dict]] | None = None,
-) -> list[dict]:
-    seg_start = segment["start_ts"]
+    seg_start = float(segment["start_ts"])
     tracks: list[dict] = []
-    use_zones = bool(vehicle_zones)
 
     for det in detections:
         off = float(det.get("ts_offset", 0.0))
@@ -1140,17 +1380,19 @@ def _vehicle_events_from_detections(
             continue
         boxes = [
             b for b in (det.get("boxes") or [])
-            if b.get("cls") in _VEHICLE_CLASSES
+            if isinstance(b, dict) and b.get("cls")
         ]
         used: set[int] = set()
         for box in sorted(boxes, key=lambda b: float(b.get("conf", 0.0)), reverse=True):
+            cls = str(box.get("cls"))
             cx, cy = _box_center(box)
             area = _box_area(box)
-            in_zone = _point_in_any_polygon(cx, cy, vehicle_zones or [])
             best_idx: int | None = None
-            best_dist = _VEHICLE_TRACK_CENTER_DISTANCE
+            best_dist = _OBJECT_TRACK_CENTER_DISTANCE
             for idx, track in enumerate(tracks):
                 if idx in used:
+                    continue
+                if track["class"] != cls:
                     continue
                 if not _area_compatible(area, track["area"]):
                     continue
@@ -1160,26 +1402,17 @@ def _vehicle_events_from_detections(
                     best_dist = dist
 
             if best_idx is None:
-                track = {
+                tracks.append({
+                    "class": cls,
                     "first": off,
                     "last": off,
                     "cx": cx,
                     "cy": cy,
                     "area": area,
                     "seen": 1,
-                    "scores": {},
                     "confidence": float(box.get("conf", 0.0)),
                     "box": dict(box),
-                    "zone_first": None,
-                    "zone_last": None,
-                    "zone_seen": 0,
-                    "zone_scores": {},
-                    "zone_confidence": 0.0,
-                    "zone_box": None,
-                }
-                _add_vehicle_score(track, box)
-                _add_vehicle_zone_observation(track, box, off, in_zone)
-                tracks.append(track)
+                })
                 used.add(len(tracks) - 1)
                 continue
 
@@ -1187,85 +1420,67 @@ def _vehicle_events_from_detections(
             used.add(best_idx)
             track["last"] = off
             track["seen"] += 1
-            # Let the center follow slow movement, while preserving a stable
-            # identity for parked vehicles with small detector jitter.
             track["cx"] = (track["cx"] * 0.7) + (cx * 0.3)
             track["cy"] = (track["cy"] * 0.7) + (cy * 0.3)
             track["area"] = (track["area"] * 0.7) + (area * 0.3)
-            _add_vehicle_score(track, box)
-            _add_vehicle_zone_observation(track, box, off, in_zone)
             conf = float(box.get("conf", 0.0))
             if conf >= track["confidence"]:
                 track["confidence"] = conf
                 track["box"] = dict(box)
 
-    events: list[dict] = []
+    rows: list[dict] = []
     for track in tracks:
-        seen = track["zone_seen"] if use_zones else track["seen"]
-        if seen < _VEHICLE_MIN_OBSERVATIONS:
+        if track["seen"] < _OBJECT_MIN_OBSERVATIONS:
             continue
-        if use_zones:
-            if track["zone_first"] is None or track["zone_box"] is None:
-                continue
-            scores = track["zone_scores"] or track["scores"]
-            cls = max(scores.items(), key=lambda item: item[1])[0]
-            box = dict(track["zone_box"])
-            start = float(track["zone_first"])
-            end = float(track["zone_last"])
-            confidence = float(track["zone_confidence"])
-        else:
-            cls = max(track["scores"].items(), key=lambda item: item[1])[0]
-            box = dict(track["box"])
-            start = float(track["first"])
-            end = float(track["last"])
-            confidence = float(track["confidence"])
-        box["cls"] = cls
-        events.append({
+        box = dict(track["box"])
+        box["cls"] = track["class"]
+        rows.append({
             "segment_id": segment["id"],
             "source_id": segment["source_id"],
-            "abs_ts": seg_start + start,
-            "class": cls,
-            "start_off": start,
-            "end_off": end,
-            "confidence": confidence,
+            "abs_ts": seg_start + float(track["first"]),
+            "class": track["class"],
+            "start_off": float(track["first"]),
+            "end_off": float(track["last"]),
+            "confidence": float(track["confidence"]),
+            "observations": int(track["seen"]),
             "boxes_json": json.dumps([box]),
         })
-    return events
+    rows.sort(key=lambda r: (r["abs_ts"], r["class"]))
+    return rows
 
 
-def _add_vehicle_score(track: dict, box: dict) -> None:
-    cls = box.get("cls")
-    if cls not in _VEHICLE_CLASSES:
-        return
-    track["scores"][cls] = track["scores"].get(cls, 0.0) + max(
-        0.01, float(box.get("conf", 0.0))
-    )
+def _legacy_events_from_object_events(events: list[dict]) -> list[dict]:
+    return [
+        {
+            "segment_id": event["segment_id"],
+            "source_id": event["source_id"],
+            "abs_ts": event["abs_ts"],
+            "class": event["class"],
+            "start_off": event["start_off"],
+            "end_off": event["end_off"],
+            "confidence": event["confidence"],
+            "boxes_json": event["boxes_json"],
+            "event_type": event["event_type"],
+            "track_id": str(event["track_id"]),
+        }
+        for event in events
+        if event.get("segment_id") is not None
+    ]
 
 
-def _add_vehicle_zone_observation(track: dict, box: dict, off: float, in_zone: bool) -> None:
-    if not in_zone:
-        return
-    track["zone_first"] = off if track["zone_first"] is None else min(track["zone_first"], off)
-    track["zone_last"] = off if track["zone_last"] is None else max(track["zone_last"], off)
-    track["zone_seen"] += 1
-    cls = box.get("cls")
-    if cls in _VEHICLE_CLASSES:
-        track["zone_scores"][cls] = track["zone_scores"].get(cls, 0.0) + max(
-            0.01, float(box.get("conf", 0.0))
-        )
-    conf = float(box.get("conf", 0.0))
-    if conf >= track["zone_confidence"]:
-        track["zone_confidence"] = conf
-        track["zone_box"] = dict(box)
+def _public_object_event(event: dict) -> dict:
+    row = dict(event)
+    row["id"] = f"o:{row['id']}"
+    return row
 
 
-def _event_vehicle_box(event: dict) -> dict | None:
+def _event_box(event: dict) -> dict | None:
     try:
         boxes = json.loads(event["boxes_json"]) if event.get("boxes_json") else []
     except (TypeError, json.JSONDecodeError):
         return None
     for box in boxes:
-        if isinstance(box, dict) and box.get("cls") in _VEHICLE_CLASSES:
+        if isinstance(box, dict):
             return box
     return None
 
@@ -1291,17 +1506,19 @@ def _area_compatible(area: float, other: float) -> bool:
     if area <= 0 or other <= 0:
         return False
     ratio = max(area, other) / min(area, other)
-    return ratio <= _VEHICLE_TRACK_AREA_RATIO
+    return ratio <= _OBJECT_TRACK_AREA_RATIO
 
 
 def _sanitize_zone(source_id: str, zone: dict) -> dict:
     if not isinstance(zone, dict):
         raise ValueError("zone must be an object")
-    zone_type = str(zone.get("type") or zone.get("zone_type") or "vehicle_event").strip()
-    if zone_type != "vehicle_event":
+    zone_type = str(zone.get("type") or zone.get("zone_type") or "activity_area").strip()
+    if zone_type not in {"activity_area", "vehicle_event"}:
         raise ValueError("unsupported zone type")
     polygon = _normalize_polygon(zone.get("polygon"))
-    name = str(zone.get("name") or "Vehicle zone").strip()[:80] or "Vehicle zone"
+    if zone_type == "vehicle_event":
+        zone_type = "activity_area"
+    name = str(zone.get("name") or "Activity area").strip()[:80] or "Activity area"
     return {
         "source_id": source_id,
         "name": name,
@@ -1330,20 +1547,14 @@ def _normalize_polygon(raw) -> list[dict]:
     return points
 
 
-def _vehicle_event_allowed_by_zones(event: dict, zones: list[list[dict]]) -> bool:
-    if event.get("class") not in _VEHICLE_CLASSES or not zones:
+def _event_allowed_by_areas(event: dict, areas: list[list[dict]]) -> bool:
+    if not areas:
         return True
-    try:
-        boxes = json.loads(event["boxes_json"]) if event.get("boxes_json") else []
-    except (TypeError, json.JSONDecodeError):
+    box = _event_box(event)
+    if not box:
         return False
-    for box in boxes:
-        if not isinstance(box, dict) or box.get("cls") not in _VEHICLE_CLASSES:
-            continue
-        cx, cy = _box_center(box)
-        if _point_in_any_polygon(cx, cy, zones):
-            return True
-    return False
+    cx, cy = _box_center(box)
+    return _point_in_any_polygon(cx, cy, areas)
 
 
 def _point_in_any_polygon(x: float, y: float, polygons: list[list[dict]]) -> bool:

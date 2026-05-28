@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/app.css">
-    <link rel="stylesheet" href="/video2.css?v=vehicle-zones-4">
+    <link rel="stylesheet" href="/video2.css?v=episodes-1">
   </head>
   <body>
     <div id="v2LoadBar" class="v2-load-bar"></div>
@@ -55,7 +55,7 @@
             <button id="v2Boxes" class="st-btn active" type="button" title="Detection boxes" aria-label="Detection boxes">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3" y="3" width="10" height="10" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/></svg>
             </button>
-            <button id="v2Zones" class="st-btn" type="button" title="Vehicle event zone" aria-label="Vehicle event zone">
+            <button id="v2Zones" class="st-btn" type="button" title="Activity areas" aria-label="Activity areas">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 5.2 7.7 2.8 13 5.4v5.2L8.2 13.2 3 10.6V5.2Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/><circle cx="8.2" cy="8" r="1.35" fill="currentColor"/></svg>
             </button>
             <button id="v2Fullscreen" class="st-btn" type="button" title="Fullscreen" aria-label="Fullscreen">
@@ -67,9 +67,21 @@
           </div>
         </div>
         <div id="v2ZoneBar" class="v2-zone-bar" hidden>
-          <button id="v2ZoneSave" class="v2-zone-action primary" type="button">Save</button>
-          <button id="v2ZoneReset" class="v2-zone-action" type="button">Reset</button>
-          <button id="v2ZoneCancel" class="v2-zone-action" type="button">Cancel</button>
+          <div class="v2-zone-meta">
+            <span id="v2ZoneLabel">Activity area</span>
+            <span id="v2ZoneCount">0 areas</span>
+          </div>
+          <div class="v2-zone-actions compact">
+            <button id="v2ZonePrev" class="v2-zone-action icon" type="button" title="Previous area" aria-label="Previous area">‹</button>
+            <button id="v2ZoneNext" class="v2-zone-action icon" type="button" title="Next area" aria-label="Next area">›</button>
+            <button id="v2ZoneNew" class="v2-zone-action" type="button">New</button>
+            <button id="v2ZoneDelete" class="v2-zone-action" type="button">Delete</button>
+          </div>
+          <div class="v2-zone-actions">
+            <button id="v2ZoneSave" class="v2-zone-action primary" type="button">Save</button>
+            <button id="v2ZoneReset" class="v2-zone-action" type="button">Reset</button>
+            <button id="v2ZoneCancel" class="v2-zone-action" type="button">Cancel</button>
+          </div>
         </div>
       </section>
 
@@ -125,6 +137,6 @@
         </div>
       </div>
     </main>
-    <script src="/video2.js?v=vehicle-zones-4"></script>
+    <script src="/video2.js?v=episodes-1"></script>
   </body>
 </html>
