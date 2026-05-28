@@ -715,6 +715,7 @@ const el = {
   video:   $("v2Video"),
   liveVideo:$("v2LiveVideo"),
   canvas:  $("v2BoxCanvas"),
+  zoneCanvas:$("v2ZoneCanvas"),
   tlCanvas:$("v2Timeline"),
   thumb:   $("v2ThumbPreview"),
   empty:   $("v2Empty"),
@@ -737,6 +738,11 @@ const el = {
   loop:    $("v2Loop"),
   timeDisp:$("v2TimeDisp"),
   boxes:   $("v2Boxes"),
+  zones:   $("v2Zones"),
+  zoneBar: $("v2ZoneBar"),
+  zoneSave:$("v2ZoneSave"),
+  zoneReset:$("v2ZoneReset"),
+  zoneCancel:$("v2ZoneCancel"),
   fullscreen:$("v2Fullscreen"),
   download: $("v2DownloadClip"),
   status:  $("v2Status"),
@@ -757,6 +763,15 @@ const st = {
   classes:  {},
   sources:  [],
   sourceStatus: {},
+  zones: [],
+  zonesSource: null,
+  zoneEdit: {
+    active: false,
+    points: [],
+    dragPoint: null,
+    dragPoly: false,
+    last: null,
+  },
   source:   "all",
   cls:      new Set(),   // included classes (amber)
   xls:      new Set(),   // excluded classes (red)
@@ -1012,6 +1027,14 @@ async function fetchActivitySummary() {
     return;
   }
   st.summary = await r.json();
+}
+
+async function fetchZonesForSource() {
+  if (st.source === "all") return { zones: [] };
+  const p = new URLSearchParams({ source: st.source });
+  const r = await fetch(`/api/video/zones?${p}`, { cache:"no-store" }).catch(() => null);
+  if (!r?.ok) return { zones: [] };
+  return r.json();
 }
 
 function updateActivityCount() {
@@ -1436,16 +1459,21 @@ async function load() {
   const needsEventsLoad = _loadCheckTo > st.window.from && !_eventsRangesCovers(st.window.from, _loadCheckTo);
   if (needsEventsLoad) timeline.setFetchingRange(evFrom, evTo);
 
-  const [sr, evR, cr] = await Promise.all([
+  const [sr, evR, cr, zr] = await Promise.all([
     fetch(`/api/video2/timeline?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
     needsEventsLoad
       ? fetch(`/api/video/events?since=${Math.floor(evFrom)}&until=${Math.ceil(evTo)}&${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({}))
       : Promise.resolve(null),
     fetch(`/api/video/classes?${p}`, { cache:"no-store" }).then(r=>r.json()).catch(()=>({})),
+    fetchZonesForSource(),
   ]);
 
   st.segments = sr.segments || [];
   st.classes  = cr.classes  || {};
+  if (zr) {
+    st.zones = zr.zones || [];
+    st.zonesSource = st.source;
+  }
 
   if (evR) {
     // Merge new events into st.events (accumulate, don't replace)
@@ -1485,6 +1513,8 @@ async function load() {
   await fetchActivitySummary();
   updateActivityCount();
   renderClsCtrl();
+  updateZoneControl();
+  drawZones();
   renderNearScope();
   scheduleNearestEvents(true);
 
@@ -1575,9 +1605,10 @@ function renderSrcCtrl() {
     b.addEventListener("click", () => {
       if (st.source === s.id) return;
       const wasLive = liveTail.active;
+      cancelZoneEditor();
       stopLiveTail(false);
       st.source = s.id; st.initDone = false;
-      st.events = []; _eventsRangesClear();
+      st.events = []; st.zones = []; st.zonesSource = null; _eventsRangesClear();
       renderSrcCtrl(); load().then(pushState);
       if (wasLive) startLiveTail(s.id);
     });
@@ -2190,7 +2221,7 @@ function updateLiveTailClock() {
   if (!liveTail.active) return;
 
   // Recover from paused state (tab hidden, autoplay policy, etc.)
-  if (el.liveVideo.paused && !el.liveVideo.ended) {
+  if (!st.zoneEdit.active && el.liveVideo.paused && !el.liveVideo.ended) {
     el.liveVideo.play().catch(() => {});
   }
 
@@ -2200,6 +2231,7 @@ function updateLiveTailClock() {
   setTimestampChip(ts, liveTail.srcId, true);
   setStatus("LIVE");
   drawLiveBoxes();
+  drawZones();
 }
 
 // ── Player controls ───────────────────────────────────
@@ -2322,6 +2354,65 @@ el.liveVideo.addEventListener("click", togglePlayback);
 el.video.addEventListener("dblclick", toggleFullscreen);
 el.liveVideo.addEventListener("dblclick", toggleFullscreen);
 
+el.zones?.addEventListener("click", () => {
+  if (st.zoneEdit.active) cancelZoneEditor();
+  else startZoneEditor();
+});
+el.zoneSave?.addEventListener("click", saveZoneEditor);
+el.zoneReset?.addEventListener("click", resetZoneEditor);
+el.zoneCancel?.addEventListener("click", cancelZoneEditor);
+
+el.zoneCanvas?.addEventListener("pointerdown", e => {
+  if (!st.zoneEdit.active || e.button !== 0) return;
+  e.preventDefault();
+  const pt = canvasToNorm(e);
+  if (!pt) return;
+  const hit = zonePointAt(e);
+  if (hit != null) {
+    st.zoneEdit.dragPoint = hit;
+  } else if (st.zoneEdit.points.length >= 3 && pointInPoly(pt, st.zoneEdit.points)) {
+    st.zoneEdit.dragPoly = true;
+    st.zoneEdit.last = pt;
+  } else {
+    st.zoneEdit.points.push(pt);
+    st.zoneEdit.dragPoint = st.zoneEdit.points.length - 1;
+  }
+  el.zoneCanvas.setPointerCapture?.(e.pointerId);
+  updateZoneSaveState();
+  drawZones();
+});
+
+el.zoneCanvas?.addEventListener("pointermove", e => {
+  if (!st.zoneEdit.active) return;
+  const pt = canvasToNorm(e);
+  if (!pt) return;
+  if (st.zoneEdit.dragPoint != null) {
+    st.zoneEdit.points[st.zoneEdit.dragPoint] = pt;
+    drawZones();
+  } else if (st.zoneEdit.dragPoly && st.zoneEdit.last) {
+    moveZonePolygon(pt.x - st.zoneEdit.last.x, pt.y - st.zoneEdit.last.y);
+    st.zoneEdit.last = pt;
+    drawZones();
+  }
+});
+
+el.zoneCanvas?.addEventListener("pointerup", e => {
+  if (!st.zoneEdit.active) return;
+  st.zoneEdit.dragPoint = null;
+  st.zoneEdit.dragPoly = false;
+  st.zoneEdit.last = null;
+  el.zoneCanvas.releasePointerCapture?.(e.pointerId);
+});
+
+el.zoneCanvas?.addEventListener("dblclick", e => {
+  if (!st.zoneEdit.active) return;
+  const hit = zonePointAt(e);
+  if (hit == null) return;
+  st.zoneEdit.points.splice(hit, 1);
+  updateZoneSaveState();
+  drawZones();
+});
+
 // ── Player events → UI ────────────────────────────────
 player.on("play",  () => { if (!liveTail.active) setPlayIcon(true); });
 player.on("pause", () => { if (!liveTail.active) setPlayIcon(false); });
@@ -2333,6 +2424,7 @@ player.on("timeupdate", () => {
   timeline.setPlayhead(ts);
   setTimestampChip(ts, player.currentSeg?.source_id ?? null, false);
   drawBoxes(ts);
+  drawZones();
   scheduleNearestEvents();
 });
 
@@ -2420,6 +2512,188 @@ function drawBoxList(v, boxes) {
   ctx.globalAlpha=1;
 }
 
+// ── Vehicle event zones ──────────────────────────────
+function vehicleZone() {
+  return (st.zones || []).find(z => z.type === "vehicle_event" && z.enabled && (z.polygon || []).length >= 3) || null;
+}
+
+function updateZoneControl() {
+  if (!el.zones) return;
+  const singleSource = st.source !== "all";
+  el.zones.disabled = !singleSource;
+  el.zones.classList.toggle("active", st.zoneEdit.active || !!vehicleZone());
+}
+
+function activeStageVideo() {
+  return liveTail.active ? el.liveVideo : el.video;
+}
+
+function videoRenderRect(v, c) {
+  if (!v?.videoWidth || !v?.videoHeight || !c?.clientWidth || !c?.clientHeight) return null;
+  const cw = c.clientWidth, ch = c.clientHeight;
+  const scale = Math.min(cw / v.videoWidth, ch / v.videoHeight);
+  const w = v.videoWidth * scale, h = v.videoHeight * scale;
+  return { x: (cw - w) / 2, y: (ch - h) / 2, w, h };
+}
+
+function normToCanvas(pt) {
+  const rect = videoRenderRect(activeStageVideo(), el.zoneCanvas);
+  if (!rect) return null;
+  return { x: rect.x + pt.x * rect.w, y: rect.y + pt.y * rect.h };
+}
+
+function canvasToNorm(evt) {
+  const c = el.zoneCanvas;
+  const rect = videoRenderRect(activeStageVideo(), c);
+  if (!rect) return null;
+  const box = c.getBoundingClientRect();
+  const x = evt.clientX - box.left;
+  const y = evt.clientY - box.top;
+  return {
+    x: Math.max(0, Math.min(1, (x - rect.x) / rect.w)),
+    y: Math.max(0, Math.min(1, (y - rect.y) / rect.h)),
+  };
+}
+
+function zonePointAt(evt) {
+  const c = el.zoneCanvas;
+  const box = c.getBoundingClientRect();
+  const x = evt.clientX - box.left;
+  const y = evt.clientY - box.top;
+  let best = null, bestDist = 12;
+  st.zoneEdit.points.forEach((pt, idx) => {
+    const p = normToCanvas(pt);
+    if (!p) return;
+    const dist = Math.hypot(p.x - x, p.y - y);
+    if (dist <= bestDist) { best = idx; bestDist = dist; }
+  });
+  return best;
+}
+
+function drawZones() {
+  const c = el.zoneCanvas;
+  if (!c) return;
+  c.width = c.clientWidth; c.height = c.clientHeight;
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (!st.zoneEdit.active) return;
+
+  const points = st.zoneEdit.points.map(normToCanvas).filter(Boolean);
+  if (!points.length) return;
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#e8a558";
+  ctx.fillStyle = "rgba(232, 165, 88, 0.18)";
+  ctx.beginPath();
+  points.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  if (points.length >= 3) {
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.stroke();
+
+  points.forEach((p, i) => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = i === st.zoneEdit.dragPoint ? "#f3b46a" : "#e8a558";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#050709";
+    ctx.stroke();
+  });
+}
+
+function setZoneEditing(active) {
+  st.zoneEdit.active = active;
+  el.stage?.classList.toggle("zone-editing", active);
+  if (el.zoneBar) el.zoneBar.hidden = !active;
+  updateZoneControl();
+  updateZoneSaveState();
+  drawZones();
+}
+
+function updateZoneSaveState() {
+  if (!el.zoneSave) return;
+  const n = st.zoneEdit.points.length;
+  el.zoneSave.disabled = n > 0 && n < 3;
+}
+
+function startZoneEditor() {
+  if (st.source === "all") return;
+  player.pause();
+  el.liveVideo?.pause();
+  const zone = vehicleZone();
+  st.zoneEdit.points = zone ? zone.polygon.map(p => ({ x: p.x, y: p.y })) : [];
+  st.zoneEdit.dragPoint = null;
+  st.zoneEdit.dragPoly = false;
+  st.zoneEdit.last = null;
+  setZoneEditing(true);
+}
+
+function cancelZoneEditor() {
+  st.zoneEdit.points = [];
+  st.zoneEdit.dragPoint = null;
+  st.zoneEdit.dragPoly = false;
+  st.zoneEdit.last = null;
+  setZoneEditing(false);
+}
+
+async function saveZoneEditor() {
+  if (st.source === "all") return;
+  const points = st.zoneEdit.points;
+  if (points.length > 0 && points.length < 3) return;
+  const zones = points.length >= 3
+    ? [{ name: "Vehicle zone", type: "vehicle_event", enabled: true, polygon: points }]
+    : [];
+  const p = new URLSearchParams({ source: st.source });
+  const r = await fetch(`/api/video/zones?${p}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ zones }),
+  }).catch(() => null);
+  if (!r?.ok) return;
+  const data = await r.json();
+  st.zones = data.zones || [];
+  st.zonesSource = st.source;
+  cancelZoneEditor();
+}
+
+function resetZoneEditor() {
+  st.zoneEdit.points = [];
+  st.zoneEdit.dragPoint = null;
+  st.zoneEdit.dragPoly = false;
+  st.zoneEdit.last = null;
+  updateZoneSaveState();
+  drawZones();
+}
+
+function moveZonePolygon(dx, dy) {
+  const pts = st.zoneEdit.points;
+  if (!pts.length) return;
+  const minX = Math.min(...pts.map(p => p.x));
+  const maxX = Math.max(...pts.map(p => p.x));
+  const minY = Math.min(...pts.map(p => p.y));
+  const maxY = Math.max(...pts.map(p => p.y));
+  const clampedDx = Math.max(-minX, Math.min(1 - maxX, dx));
+  const clampedDy = Math.max(-minY, Math.min(1 - maxY, dy));
+  pts.forEach(p => {
+    p.x += clampedDx;
+    p.y += clampedDy;
+  });
+}
+
+function pointInPoly(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > pt.y) !== (b.y > pt.y)) {
+      const xAtY = (b.x - a.x) * (pt.y - a.y) / (b.y - a.y) + a.x;
+      if (pt.x <= xAtY) inside = !inside;
+    }
+  }
+  return inside;
+}
+
 // ── Auto-refresh ──────────────────────────────────────
 setInterval(async () => {
   setStatus(liveTail.active ? "LIVE" : "SYNC");
@@ -2434,7 +2708,10 @@ setInterval(async () => {
   setStatus(liveTail.active ? "LIVE" : "REPLAY");
 }, 15000);
 
-window.addEventListener("resize", () => timeline.draw());
+window.addEventListener("resize", () => {
+  timeline.draw();
+  drawZones();
+});
 
 // ── Deep links ────────────────────────────────────────
 function pushState() {

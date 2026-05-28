@@ -536,6 +536,32 @@ def make_app(
         summary = await asyncio.to_thread(video_db.activity_summary, source_id, since, until)
         return JSONResponse(summary)
 
+    async def api_video_zones(request: Request) -> JSONResponse:
+        if not video_db:
+            return JSONResponse({"zones": []})
+        source_id = request.query_params.get("source") or None
+        if not source_id or source_id == "all":
+            return JSONResponse({"error": "source is required"}, status_code=400)
+
+        if request.method == "GET":
+            zones = await asyncio.to_thread(video_db.list_zones, source_id)
+            return JSONResponse({"zones": zones})
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
+        zones = body.get("zones", [])
+        if not isinstance(zones, list):
+            return JSONResponse({"error": "zones must be a list"}, status_code=400)
+        try:
+            saved = await asyncio.to_thread(video_db.replace_zones, source_id, zones)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"zones": saved})
+
     def _source_statuses() -> dict:
         sources = _sources_list(config, source_db)
         now = time.time()
@@ -905,9 +931,10 @@ def make_app(
         Route("/api/video/hls-thumb/{hls_id}", api_video_hls_thumb),
         Route("/api/video/segment-at",      api_video_segment_at),
         Route("/api/video2/timeline",       api_video2_timeline),
-Route("/api/video/events",          api_video_events),
+        Route("/api/video/events",          api_video_events),
         Route("/api/video/classes",         api_video_class_counts),
         Route("/api/video/activity-summary", api_video_activity_summary),
+        Route("/api/video/zones",           api_video_zones, methods=["GET", "PUT"]),
         Route("/api/video/segments",        api_video_segments),
         Route("/api/video/detections",      api_video_detections),
         Route("/api/video/live",            api_video_live_status),

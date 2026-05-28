@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import shutil
 import signal
@@ -97,6 +98,19 @@ CREATE TABLE IF NOT EXISTS vehicle_tracks (
 );
 CREATE INDEX IF NOT EXISTS vtrk_active_source
     ON vehicle_tracks(active, source_id, last_seen);
+
+CREATE TABLE IF NOT EXISTS video_zones (
+    id           INTEGER PRIMARY KEY,
+    source_id    TEXT    NOT NULL,
+    name         TEXT    NOT NULL,
+    zone_type    TEXT    NOT NULL DEFAULT 'vehicle_event',
+    polygon_json TEXT    NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   REAL    NOT NULL DEFAULT (unixepoch('now')),
+    updated_at   REAL    NOT NULL DEFAULT (unixepoch('now'))
+);
+CREATE INDEX IF NOT EXISTS vzone_source_type
+    ON video_zones(source_id, zone_type, enabled);
 
 CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
@@ -228,6 +242,68 @@ class VideoSegmentDB:
             "boxes":   json.loads(r["boxes_json"])   if r["boxes_json"]   else [],
             "classes": json.loads(r["classes_json"]) if r["classes_json"] else [],
         } for r in rows]
+
+    def list_zones(self, source_id: str | None = None,
+                   zone_type: str | None = None) -> list[dict]:
+        where, params = ["1"], []
+        if source_id and source_id != "all":
+            where.append("source_id=?")
+            params.append(source_id)
+        if zone_type:
+            where.append("zone_type=?")
+            params.append(zone_type)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM video_zones"
+                f" WHERE {' AND '.join(where)}"
+                " ORDER BY source_id, id",
+                params,
+            ).fetchall()
+        zones: list[dict] = []
+        for row in rows:
+            try:
+                polygon = json.loads(row["polygon_json"])
+            except (TypeError, json.JSONDecodeError):
+                polygon = []
+            zones.append({
+                "id": row["id"],
+                "source_id": row["source_id"],
+                "name": row["name"],
+                "type": row["zone_type"],
+                "polygon": polygon,
+                "enabled": bool(row["enabled"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            })
+        return zones
+
+    def replace_zones(self, source_id: str, zones: list[dict]) -> list[dict]:
+        if not source_id or source_id == "all":
+            raise ValueError("source_id is required")
+        sanitized = [_sanitize_zone(source_id, z) for z in zones]
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM video_zones WHERE source_id=?", (source_id,))
+            conn.executemany(
+                "INSERT INTO video_zones"
+                " (source_id, name, zone_type, polygon_json, enabled, created_at, updated_at)"
+                " VALUES(:source_id,:name,:zone_type,:polygon_json,:enabled,:created_at,:updated_at)",
+                [
+                    {
+                        **z,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                    for z in sanitized
+                ],
+            )
+        return self.list_zones(source_id)
+
+    def vehicle_event_zones(self, source_id: str) -> list[list[dict]]:
+        return [
+            z["polygon"] for z in self.list_zones(source_id, "vehicle_event")
+            if z["enabled"] and len(z["polygon"]) >= 3
+        ]
 
     def insert_events(self, events: list[dict]) -> None:
         rows = [
@@ -581,7 +657,8 @@ class VideoSegmentDB:
 
         events: list[dict] = []
         for seg in segs:
-            rows = _events_from_detections(seg, self.detections_for_segment(seg["id"]))
+            zones = self.vehicle_event_zones(seg["source_id"])
+            rows = _events_from_detections(seg, self.detections_for_segment(seg["id"]), zones)
             for row in rows:
                 if since is not None and row["abs_ts"] < since:
                     continue
@@ -600,11 +677,23 @@ class VideoSegmentDB:
     # ── HLS real-time event store ──────────────────────────────────────────
     def insert_hls_events(self, events: list[dict]) -> None:
         """Store provisional events detected from live HLS .ts segments."""
+        zone_cache: dict[str, list[list[dict]]] = {}
+        filtered: list[dict] = []
+        for event in events:
+            source_id = event.get("source_id")
+            if not source_id:
+                continue
+            if source_id not in zone_cache:
+                zone_cache[source_id] = self.vehicle_event_zones(source_id)
+            if _vehicle_event_allowed_by_zones(event, zone_cache[source_id]):
+                filtered.append(event)
+        if not filtered:
+            return
         with self._connect() as conn:
             conn.executemany(
                 "INSERT INTO hls_events(source_id, abs_ts, class, confidence, boxes_json, thumb_jpeg)"
                 " VALUES(:source_id,:abs_ts,:class,:confidence,:boxes_json,:thumb_jpeg)",
-                events,
+                filtered,
             )
 
     def get_hls_thumb(self, hls_event_id: int) -> bytes | None:
@@ -855,7 +944,8 @@ def backfill_events(db: VideoSegmentDB, video_dir: Path | None = None,
 
 def extract_events(segment: dict, detections: list[dict], db: VideoSegmentDB) -> int:
     """Group detections into events and store them."""
-    rows = _events_from_detections(segment, detections)
+    zones = db.vehicle_event_zones(segment["source_id"])
+    rows = _events_from_detections(segment, detections, zones)
     vehicle_rows = [r for r in rows if r["class"] in _VEHICLE_CLASSES]
     rows = [r for r in rows if r["class"] not in _VEHICLE_CLASSES]
     rows.extend(db.track_vehicle_events(segment, vehicle_rows))
@@ -926,13 +1016,16 @@ def _chunks(values: list, size: int):
         yield values[i:i + size]
 
 
-def _events_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
+def _events_from_detections(
+    segment: dict,
+    detections: list[dict],
+    vehicle_zones: list[list[dict]] | None = None,
+) -> list[dict]:
     if not detections:
         return []
 
-    seg_start = segment["start_ts"]
     events = _non_vehicle_events_from_detections(segment, detections)
-    events.extend(_vehicle_events_from_detections(segment, detections))
+    events.extend(_vehicle_events_from_detections(segment, detections, vehicle_zones))
     events.sort(key=lambda r: (r["abs_ts"], r["class"]))
     return events
 
@@ -979,9 +1072,14 @@ def _non_vehicle_events_from_detections(segment: dict, detections: list[dict]) -
     } for e in events]
 
 
-def _vehicle_events_from_detections(segment: dict, detections: list[dict]) -> list[dict]:
+def _vehicle_events_from_detections(
+    segment: dict,
+    detections: list[dict],
+    vehicle_zones: list[list[dict]] | None = None,
+) -> list[dict]:
     seg_start = segment["start_ts"]
     tracks: list[dict] = []
+    use_zones = bool(vehicle_zones)
 
     for det in detections:
         off = float(det.get("ts_offset", 0.0))
@@ -995,6 +1093,7 @@ def _vehicle_events_from_detections(segment: dict, detections: list[dict]) -> li
         for box in sorted(boxes, key=lambda b: float(b.get("conf", 0.0)), reverse=True):
             cx, cy = _box_center(box)
             area = _box_area(box)
+            in_zone = _point_in_any_polygon(cx, cy, vehicle_zones or [])
             best_idx: int | None = None
             best_dist = _VEHICLE_TRACK_CENTER_DISTANCE
             for idx, track in enumerate(tracks):
@@ -1018,8 +1117,15 @@ def _vehicle_events_from_detections(segment: dict, detections: list[dict]) -> li
                     "scores": {},
                     "confidence": float(box.get("conf", 0.0)),
                     "box": dict(box),
+                    "zone_first": None,
+                    "zone_last": None,
+                    "zone_seen": 0,
+                    "zone_scores": {},
+                    "zone_confidence": 0.0,
+                    "zone_box": None,
                 }
                 _add_vehicle_score(track, box)
+                _add_vehicle_zone_observation(track, box, off, in_zone)
                 tracks.append(track)
                 used.add(len(tracks) - 1)
                 continue
@@ -1034,6 +1140,7 @@ def _vehicle_events_from_detections(segment: dict, detections: list[dict]) -> li
             track["cy"] = (track["cy"] * 0.7) + (cy * 0.3)
             track["area"] = (track["area"] * 0.7) + (area * 0.3)
             _add_vehicle_score(track, box)
+            _add_vehicle_zone_observation(track, box, off, in_zone)
             conf = float(box.get("conf", 0.0))
             if conf >= track["confidence"]:
                 track["confidence"] = conf
@@ -1041,19 +1148,33 @@ def _vehicle_events_from_detections(segment: dict, detections: list[dict]) -> li
 
     events: list[dict] = []
     for track in tracks:
-        if track["seen"] < _VEHICLE_MIN_OBSERVATIONS:
+        seen = track["zone_seen"] if use_zones else track["seen"]
+        if seen < _VEHICLE_MIN_OBSERVATIONS:
             continue
-        cls = max(track["scores"].items(), key=lambda item: item[1])[0]
-        box = dict(track["box"])
+        if use_zones:
+            if track["zone_first"] is None or track["zone_box"] is None:
+                continue
+            scores = track["zone_scores"] or track["scores"]
+            cls = max(scores.items(), key=lambda item: item[1])[0]
+            box = dict(track["zone_box"])
+            start = float(track["zone_first"])
+            end = float(track["zone_last"])
+            confidence = float(track["zone_confidence"])
+        else:
+            cls = max(track["scores"].items(), key=lambda item: item[1])[0]
+            box = dict(track["box"])
+            start = float(track["first"])
+            end = float(track["last"])
+            confidence = float(track["confidence"])
         box["cls"] = cls
         events.append({
             "segment_id": segment["id"],
             "source_id": segment["source_id"],
-            "abs_ts": seg_start + track["first"],
+            "abs_ts": seg_start + start,
             "class": cls,
-            "start_off": track["first"],
-            "end_off": track["last"],
-            "confidence": track["confidence"],
+            "start_off": start,
+            "end_off": end,
+            "confidence": confidence,
             "boxes_json": json.dumps([box]),
         })
     return events
@@ -1066,6 +1187,23 @@ def _add_vehicle_score(track: dict, box: dict) -> None:
     track["scores"][cls] = track["scores"].get(cls, 0.0) + max(
         0.01, float(box.get("conf", 0.0))
     )
+
+
+def _add_vehicle_zone_observation(track: dict, box: dict, off: float, in_zone: bool) -> None:
+    if not in_zone:
+        return
+    track["zone_first"] = off if track["zone_first"] is None else min(track["zone_first"], off)
+    track["zone_last"] = off if track["zone_last"] is None else max(track["zone_last"], off)
+    track["zone_seen"] += 1
+    cls = box.get("cls")
+    if cls in _VEHICLE_CLASSES:
+        track["zone_scores"][cls] = track["zone_scores"].get(cls, 0.0) + max(
+            0.01, float(box.get("conf", 0.0))
+        )
+    conf = float(box.get("conf", 0.0))
+    if conf >= track["zone_confidence"]:
+        track["zone_confidence"] = conf
+        track["zone_box"] = dict(box)
 
 
 def _event_vehicle_box(event: dict) -> dict | None:
@@ -1101,6 +1239,90 @@ def _area_compatible(area: float, other: float) -> bool:
         return False
     ratio = max(area, other) / min(area, other)
     return ratio <= _VEHICLE_TRACK_AREA_RATIO
+
+
+def _sanitize_zone(source_id: str, zone: dict) -> dict:
+    if not isinstance(zone, dict):
+        raise ValueError("zone must be an object")
+    zone_type = str(zone.get("type") or zone.get("zone_type") or "vehicle_event").strip()
+    if zone_type != "vehicle_event":
+        raise ValueError("unsupported zone type")
+    polygon = _normalize_polygon(zone.get("polygon"))
+    name = str(zone.get("name") or "Vehicle zone").strip()[:80] or "Vehicle zone"
+    return {
+        "source_id": source_id,
+        "name": name,
+        "zone_type": zone_type,
+        "polygon_json": json.dumps(polygon, separators=(",", ":")),
+        "enabled": 1 if zone.get("enabled", True) else 0,
+    }
+
+
+def _normalize_polygon(raw) -> list[dict]:
+    if not isinstance(raw, list) or len(raw) < 3:
+        raise ValueError("polygon must contain at least three points")
+    points: list[dict] = []
+    for point in raw:
+        if isinstance(point, dict):
+            x = float(point.get("x"))
+            y = float(point.get("y"))
+        elif isinstance(point, (list, tuple)) and len(point) >= 2:
+            x = float(point[0])
+            y = float(point[1])
+        else:
+            raise ValueError("polygon points must have x and y")
+        if not (math.isfinite(x) and math.isfinite(y) and 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+            raise ValueError("polygon points must be normalized between 0 and 1")
+        points.append({"x": x, "y": y})
+    return points
+
+
+def _vehicle_event_allowed_by_zones(event: dict, zones: list[list[dict]]) -> bool:
+    if event.get("class") not in _VEHICLE_CLASSES or not zones:
+        return True
+    try:
+        boxes = json.loads(event["boxes_json"]) if event.get("boxes_json") else []
+    except (TypeError, json.JSONDecodeError):
+        return False
+    for box in boxes:
+        if not isinstance(box, dict) or box.get("cls") not in _VEHICLE_CLASSES:
+            continue
+        cx, cy = _box_center(box)
+        if _point_in_any_polygon(cx, cy, zones):
+            return True
+    return False
+
+
+def _point_in_any_polygon(x: float, y: float, polygons: list[list[dict]]) -> bool:
+    return any(_point_in_polygon(x, y, polygon) for polygon in polygons)
+
+
+def _point_in_polygon(x: float, y: float, polygon: list[dict]) -> bool:
+    inside = False
+    n = len(polygon)
+    if n < 3:
+        return False
+    j = n - 1
+    for i in range(n):
+        xi, yi = float(polygon[i]["x"]), float(polygon[i]["y"])
+        xj, yj = float(polygon[j]["x"]), float(polygon[j]["y"])
+        if _point_on_segment(x, y, xi, yi, xj, yj):
+            return True
+        intersects = (yi > y) != (yj > y)
+        if intersects:
+            x_at_y = (xj - xi) * (y - yi) / (yj - yi) + xi
+            if x <= x_at_y:
+                inside = not inside
+        j = i
+    return inside
+
+
+def _point_on_segment(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> bool:
+    cross = (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+    if abs(cross) > 1e-9:
+        return False
+    dot = (px - ax) * (px - bx) + (py - ay) * (py - by)
+    return dot <= 1e-9
 
 
 class VideoWorker:
