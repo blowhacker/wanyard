@@ -2370,12 +2370,24 @@ el.zoneCanvas?.addEventListener("pointerdown", e => {
   const hit = zonePointAt(e);
   if (hit != null) {
     st.zoneEdit.dragPoint = hit;
-  } else if (st.zoneEdit.points.length >= 3 && pointInPoly(pt, st.zoneEdit.points)) {
-    st.zoneEdit.dragPoly = true;
-    st.zoneEdit.last = pt;
   } else {
-    st.zoneEdit.points.push(pt);
-    st.zoneEdit.dragPoint = st.zoneEdit.points.length - 1;
+    const nearEdge = zoneEdgeAt(e, 14);
+    if (nearEdge != null) {
+      st.zoneEdit.points.splice(nearEdge + 1, 0, pt);
+      st.zoneEdit.dragPoint = nearEdge + 1;
+    } else if (st.zoneEdit.points.length >= 3 && pointInPoly(pt, st.zoneEdit.points)) {
+      st.zoneEdit.dragPoly = true;
+      st.zoneEdit.last = pt;
+    } else {
+      const edge = zoneEdgeAt(e);
+      if (edge != null) {
+        st.zoneEdit.points.splice(edge + 1, 0, pt);
+        st.zoneEdit.dragPoint = edge + 1;
+      } else {
+        st.zoneEdit.points.push(pt);
+        st.zoneEdit.dragPoint = st.zoneEdit.points.length - 1;
+      }
+    }
   }
   el.zoneCanvas.setPointerCapture?.(e.pointerId);
   updateZoneSaveState();
@@ -2570,6 +2582,34 @@ function zonePointAt(evt) {
   return best;
 }
 
+function zoneEdgeAt(evt, maxDist = Infinity) {
+  const pts = st.zoneEdit.points.map(normToCanvas);
+  if (pts.length < 2 || pts.some(p => !p)) return null;
+  const c = el.zoneCanvas;
+  const box = c.getBoundingClientRect();
+  const p = { x: evt.clientX - box.left, y: evt.clientY - box.top };
+  let best = null, bestDist = maxDist;
+  const edgeCount = pts.length >= 3 ? pts.length : pts.length - 1;
+  for (let i = 0; i < edgeCount; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    const dist = distToSegment(p, a, b);
+    if (dist < bestDist) {
+      best = i;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function distToSegment(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (!lenSq) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
 function drawZones() {
   const c = el.zoneCanvas;
   if (!c) return;
@@ -2656,6 +2696,9 @@ async function saveZoneEditor() {
   st.zones = data.zones || [];
   st.zonesSource = st.source;
   cancelZoneEditor();
+  st.events = [];
+  _eventsRangesClear();
+  await load();
 }
 
 function resetZoneEditor() {

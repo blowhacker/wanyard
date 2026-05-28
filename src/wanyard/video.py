@@ -305,6 +305,29 @@ class VideoSegmentDB:
             if z["enabled"] and len(z["polygon"]) >= 3
         ]
 
+    def has_vehicle_event_zones(self, source_id: str | None = None) -> bool:
+        return any(
+            z["enabled"] and len(z["polygon"]) >= 3
+            for z in self.list_zones(source_id, "vehicle_event")
+        )
+
+    def filter_events_by_zones(self, events: list[dict]) -> list[dict]:
+        zone_cache: dict[str, list[list[dict]]] = {}
+        filtered: list[dict] = []
+        for event in events:
+            if event.get("class") not in _VEHICLE_CLASSES:
+                filtered.append(event)
+                continue
+            source_id = event.get("source_id")
+            if not source_id:
+                filtered.append(event)
+                continue
+            if source_id not in zone_cache:
+                zone_cache[source_id] = self.vehicle_event_zones(source_id)
+            if _vehicle_event_allowed_by_zones(event, zone_cache[source_id]):
+                filtered.append(event)
+        return filtered
+
     def insert_events(self, events: list[dict]) -> None:
         rows = [
             {
@@ -490,7 +513,7 @@ class VideoSegmentDB:
         params.append(limit)
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        return self.filter_events_by_zones([dict(r) for r in rows])[:limit]
 
     def nearest_events(self, around: float, source_id: str | None = None,
                        classes: list[str] | None = None,
@@ -518,16 +541,19 @@ class VideoSegmentDB:
             " FROM video_events e JOIN segments s ON s.id=e.segment_id"
             f" WHERE {base}"
         )
+        query_limit = limit
+        if self.has_vehicle_event_zones(source_id):
+            query_limit = max(limit * 20, 200)
         with self._connect() as conn:
             before = conn.execute(
                 f"{select} AND e.abs_ts<=? ORDER BY e.abs_ts DESC LIMIT ?",
-                (*params, around, limit),
+                (*params, around, query_limit),
             ).fetchall()
             after = conn.execute(
                 f"{select} AND e.abs_ts>? ORDER BY e.abs_ts ASC LIMIT ?",
-                (*params, around, limit),
+                (*params, around, query_limit),
             ).fetchall()
-        rows = [dict(r) for r in before] + [dict(r) for r in after]
+        rows = self.filter_events_by_zones([dict(r) for r in before] + [dict(r) for r in after])
         rows.sort(key=lambda r: (abs(r["abs_ts"] - around), r["abs_ts"]))
         return rows[:limit]
 
@@ -565,17 +591,32 @@ class VideoSegmentDB:
 
     def class_counts(self, source_id: str | None = None,
                      include_provisional: bool = True) -> dict[str, int]:
-        with self._connect() as conn:
+        if self.has_vehicle_event_zones(source_id):
+            where, params = ["1"], []
             if source_id and source_id != "all":
+                where.append("source_id=?")
+                params.append(source_id)
+            with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT class, COUNT(*) as n FROM video_events WHERE source_id=? GROUP BY class",
-                    (source_id,),
+                    "SELECT source_id, class, boxes_json FROM video_events"
+                    f" WHERE {' AND '.join(where)}",
+                    params,
                 ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT class, COUNT(*) as n FROM video_events GROUP BY class"
-                ).fetchall()
-        counts = {r["class"]: r["n"] for r in rows}
+            counts: dict[str, int] = {}
+            for event in self.filter_events_by_zones([dict(r) for r in rows]):
+                counts[event["class"]] = counts.get(event["class"], 0) + 1
+        else:
+            with self._connect() as conn:
+                if source_id and source_id != "all":
+                    rows = conn.execute(
+                        "SELECT class, COUNT(*) as n FROM video_events WHERE source_id=? GROUP BY class",
+                        (source_id,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT class, COUNT(*) as n FROM video_events GROUP BY class"
+                    ).fetchall()
+            counts = {r["class"]: r["n"] for r in rows}
         if include_provisional:
             for evt in self.provisional_events(source_id):
                 counts[evt["class"]] = counts.get(evt["class"], 0) + 1
@@ -591,14 +632,25 @@ class VideoSegmentDB:
             where.append("abs_ts>=?"); params.append(since)
         if until is not None:
             where.append("abs_ts<?"); params.append(until)
-        sql = (
-            "SELECT class, COUNT(*) as n FROM video_events"
-            f" WHERE {' AND '.join(where)}"
-            " GROUP BY class"
-        )
-        with self._connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
-        classes = {r["class"]: r["n"] for r in rows}
+        if self.has_vehicle_event_zones(source_id):
+            sql = (
+                "SELECT source_id, class, boxes_json FROM video_events"
+                f" WHERE {' AND '.join(where)}"
+            )
+            with self._connect() as conn:
+                rows = conn.execute(sql, params).fetchall()
+            classes: dict[str, int] = {}
+            for event in self.filter_events_by_zones([dict(r) for r in rows]):
+                classes[event["class"]] = classes.get(event["class"], 0) + 1
+        else:
+            sql = (
+                "SELECT class, COUNT(*) as n FROM video_events"
+                f" WHERE {' AND '.join(where)}"
+                " GROUP BY class"
+            )
+            with self._connect() as conn:
+                rows = conn.execute(sql, params).fetchall()
+            classes = {r["class"]: r["n"] for r in rows}
         for evt in self.provisional_events(source_id, since):
             if until is not None and evt["abs_ts"] >= until:
                 continue
@@ -720,7 +772,7 @@ class VideoSegmentDB:
                 " ORDER BY abs_ts DESC",
                 params,
             ).fetchall()
-        return [{
+        events = [{
             "id":          f"h:{r['source_id']}:{r['abs_ts']:.2f}",
             "hls_id":      r["id"],
             "source_id":   r["source_id"],
@@ -733,6 +785,7 @@ class VideoSegmentDB:
             "end_off":     _LIVE_HLS_SEGMENT_SECONDS,
             "segment_id":  None,
         } for r in rows]
+        return self.filter_events_by_zones(events)
 
     def delete_hls_events(self, source_id: str, since: float, until: float) -> int:
         with self._connect() as conn:

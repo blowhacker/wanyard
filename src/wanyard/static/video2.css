@@ -347,6 +347,9 @@ body {
   backdrop-filter: blur(10px);
   transform: translateX(-50%);
 }
+.v2-zone-bar[hidden] {
+  display: none;
+}
 .v2-zone-action {
   height: 32px;
   padding: 0 12px;
