@@ -2338,20 +2338,15 @@ function downloadCurrentFrame() {
     const ox = (bc.width - rw) / 2, oy = (bc.height - rh) / 2;
     ctx.drawImage(bc, ox, oy, rw, rh, 0, 0, c.width, c.height);
   }
-  el.downloadFrame?.classList.add("loading");
-  c.toBlob(blob => {
-    el.downloadFrame?.classList.remove("loading");
-    if (!blob) { setStatus("NONE"); return; }
-    const ts = liveTail.active ? liveTailCurrentTs() : player.reliableTs;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `frame-${Math.floor(ts || Date.now() / 1000)}.png`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }, "image/png");
+  // Use a data: URL rather than a blob: URL — browsers flag blob downloads
+  // over plain HTTP as insecure, but data: URLs download fine.
+  const ts = liveTail.active ? liveTailCurrentTs() : player.reliableTs;
+  const a = document.createElement("a");
+  a.href = c.toDataURL("image/png");
+  a.download = `frame-${Math.floor(ts || Date.now() / 1000)}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 el.fullscreen?.addEventListener("click", toggleFullscreen);
 el.download?.addEventListener("click", downloadCurrentClip);
