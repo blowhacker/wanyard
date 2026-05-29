@@ -739,7 +739,6 @@ const el = {
   timeDisp:$("v2TimeDisp"),
   boxes:   $("v2Boxes"),
   zones:   $("v2Zones"),
-  zonesEdit: $("v2ZonesEdit"),
   zoneBar: $("v2ZoneBar"),
   zoneName: $("v2ZoneName"),
   zoneTriggerLabel: $("v2ZoneTriggerLabel"),
@@ -755,6 +754,7 @@ const el = {
   zoneCancel:$("v2ZoneCancel"),
   fullscreen:$("v2Fullscreen"),
   download: $("v2DownloadClip"),
+  downloadFrame: $("v2DownloadFrame"),
   status:  $("v2Status"),
   liveBtn: $("v2LiveBtn"),
   stage:   document.querySelector(".v2-stage"),
@@ -2317,8 +2317,45 @@ function downloadCurrentClip() {
   a.remove();
   setTimeout(() => el.download?.classList.remove("loading"), 1200);
 }
+function downloadCurrentFrame() {
+  const v = liveTail.active ? el.liveVideo : el.video;
+  if (!v || !v.videoWidth) {
+    setStatus("NONE");
+    return;
+  }
+  const c = document.createElement("canvas");
+  c.width = v.videoWidth;
+  c.height = v.videoHeight;
+  const ctx = c.getContext("2d");
+  ctx.drawImage(v, 0, 0, c.width, c.height);
+  // Bake in detection boxes if currently shown. The box canvas renders the
+  // image letterboxed inside its display rect; crop to that rect and stretch
+  // to native frame size so boxes line up.
+  const bc = el.canvas;
+  if (st.showBoxes && bc?.width) {
+    const scale = Math.min(bc.width / c.width, bc.height / c.height);
+    const rw = c.width * scale, rh = c.height * scale;
+    const ox = (bc.width - rw) / 2, oy = (bc.height - rh) / 2;
+    ctx.drawImage(bc, ox, oy, rw, rh, 0, 0, c.width, c.height);
+  }
+  el.downloadFrame?.classList.add("loading");
+  c.toBlob(blob => {
+    el.downloadFrame?.classList.remove("loading");
+    if (!blob) { setStatus("NONE"); return; }
+    const ts = liveTail.active ? liveTailCurrentTs() : player.reliableTs;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `frame-${Math.floor(ts || Date.now() / 1000)}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, "image/png");
+}
 el.fullscreen?.addEventListener("click", toggleFullscreen);
 el.download?.addEventListener("click", downloadCurrentClip);
+el.downloadFrame?.addEventListener("click", downloadCurrentFrame);
 
 // Speed pills
 function buildSpeedPills() {
@@ -2372,11 +2409,6 @@ el.zones?.addEventListener("click", (e) => {
   e.stopPropagation();
   if (st.zoneEdit.active) { cancelZoneEditor(); return; }
   toggleZoneMenu();
-});
-el.zonesEdit?.addEventListener("click", () => {
-  closeZoneMenu();
-  if (st.zoneEdit.active) cancelZoneEditor();
-  else startZoneEditor();
 });
 document.addEventListener("click", (e) => {
   if (!el.zoneMenu || el.zoneMenu.hidden) return;
@@ -2627,10 +2659,6 @@ function ensureDraftZone() {
 function updateZoneControl() {
   const singleSource = st.source !== "all";
   if (el.zones) el.zones.disabled = !singleSource;
-  if (el.zonesEdit) {
-    el.zonesEdit.disabled = !singleSource;
-    el.zonesEdit.classList.toggle("active", st.zoneEdit.active);
-  }
   renderZonePicker();
   drawZones();
 }
