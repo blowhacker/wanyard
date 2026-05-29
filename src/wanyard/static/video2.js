@@ -2434,11 +2434,15 @@ el.zoneCanvas?.addEventListener("pointerdown", e => {
   if (hit != null) {
     st.zoneEdit.dragPoint = hit;
   } else {
-    const clickedZone = zoneUnderPointer(e);
-    if (clickedZone != null && clickedZone !== st.zoneEdit.selected) {
-      selectZone(clickedZone);
-    }
     let points = selectedPoints();
+    const draftingZone = !selectedDraftZone() || points.length < 3;
+    if (!draftingZone) {
+      const clickedZone = zoneUnderPointer(e);
+      if (clickedZone != null && clickedZone !== st.zoneEdit.selected) {
+        selectZone(clickedZone);
+        points = selectedPoints();
+      }
+    }
     const nearEdge = zoneEdgeAt(e, 14);
     if (nearEdge != null) {
       points.splice(nearEdge + 1, 0, pt);
