@@ -1043,8 +1043,8 @@ async function fetchActivitySummary() {
 }
 
 async function fetchZonesForSource() {
-  if (st.source === "all") return { zones: [] };
-  const p = new URLSearchParams({ source: st.source });
+  const p = new URLSearchParams();
+  if (st.source !== "all") p.set("source", st.source);
   const r = await fetch(`/api/video/zones?${p}`, { cache:"no-store" }).catch(() => null);
   if (!r?.ok) return { zones: [] };
   return r.json();
@@ -2656,8 +2656,7 @@ function ensureDraftZone() {
 }
 
 function updateZoneControl() {
-  const singleSource = st.source !== "all";
-  if (el.zones) el.zones.disabled = !singleSource;
+  if (el.zones) el.zones.disabled = false;
   renderZonePicker();
   drawZones();
 }
@@ -2672,13 +2671,16 @@ function renderZonePicker() {
   if (!el.zones) return;
   const singleSource = st.source !== "all";
   const zones = completedActivityZones();
-  if (!singleSource) {
+
+  // "All" mode with no zones anywhere → nothing to pick.
+  if (!singleSource && zones.length === 0) {
     if (el.zonePicker) el.zonePicker.hidden = true;
     if (st.activeZoneId != null) { st.activeZoneId = null; pushState(); }
     closeZoneMenu();
     return;
   }
   if (el.zonePicker) el.zonePicker.hidden = false;
+
   const validIds = new Set(zones.map(z => z.id));
   if (st.activeZoneId != null && !validIds.has(st.activeZoneId)) {
     st.activeZoneId = null;
@@ -2686,8 +2688,19 @@ function renderZonePicker() {
   }
   if (el.zoneTriggerLabel) el.zoneTriggerLabel.textContent = activeZoneName();
   if (!el.zoneMenu) return;
+
+  const srcNames = {};
+  st.sources.forEach(s => srcNames[s.id] = s.name || s.id);
+
   el.zoneMenu.innerHTML = "";
-  const items = [{ id: null, name: "All areas" }, ...zones.map(z => ({ id: z.id, name: z.name || `Area ${z.id}` }))];
+  const allItem = { id: null, source: null, name: singleSource ? "All areas" : "All cameras" };
+  const items = [allItem, ...zones.map(z => ({
+    id: z.id,
+    source: z.source_id,
+    name: singleSource
+      ? (z.name || `Area ${z.id}`)
+      : `${srcNames[z.source_id] || z.source_id} · ${z.name || `Area ${z.id}`}`,
+  }))];
   items.forEach(t => {
     const b = document.createElement("button");
     b.type = "button";
@@ -2702,9 +2715,12 @@ function renderZonePicker() {
       tick.textContent = "✓";
       b.appendChild(tick);
     }
-    b.addEventListener("click", () => { closeZoneMenu(); setActiveZone(t.id); });
+    b.addEventListener("click", () => { closeZoneMenu(); setActiveZone(t.id, t.source); });
     el.zoneMenu.appendChild(b);
   });
+
+  // Editing is per-camera; only offer it when a single source is selected.
+  if (!singleSource) return;
   if (zones.length > 0) {
     const div = document.createElement("div");
     div.className = "st-menu-divider";
@@ -2757,7 +2773,20 @@ function closeZoneMenu() {
   el.zones?.setAttribute("aria-expanded", "false");
 }
 
-function setActiveZone(id) {
+function setActiveZone(id, sourceId = null) {
+  // Picking a zone from another camera (e.g. in "All" mode) switches to it.
+  if (sourceId && sourceId !== st.source) {
+    const wasLive = liveTail.active;
+    cancelZoneEditor();
+    stopLiveTail(false);
+    st.source = sourceId; st.initDone = false;
+    st.events = []; st.zones = []; st.zonesSource = null; st.activeZoneId = id;
+    _eventsRangesClear();
+    renderSrcCtrl();
+    load().then(pushState);
+    if (wasLive) startLiveTail(sourceId);
+    return;
+  }
   if (st.activeZoneId === id) return;
   st.activeZoneId = id;
   pushState();

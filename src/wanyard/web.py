@@ -580,12 +580,15 @@ def make_app(
         if not video_db:
             return JSONResponse({"zones": []})
         source_id = request.query_params.get("source") or None
-        if not source_id or source_id == "all":
-            return JSONResponse({"error": "source is required"}, status_code=400)
 
         if request.method == "GET":
-            zones = await asyncio.to_thread(video_db.list_zones, source_id)
+            # source omitted / "all" → zones across every camera
+            lookup = None if not source_id or source_id == "all" else source_id
+            zones = await asyncio.to_thread(video_db.list_zones, lookup)
             return JSONResponse({"zones": zones})
+
+        if not source_id or source_id == "all":
+            return JSONResponse({"error": "source is required"}, status_code=400)
 
         try:
             body = await request.json()
